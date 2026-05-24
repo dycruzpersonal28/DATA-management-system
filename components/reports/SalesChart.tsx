@@ -71,7 +71,7 @@ export default function SalesChart({ data, isLoading }: Props) {
                 width={48}
               />
               <Tooltip
-                formatter={(value: number, name: string) => [
+                formatter={(value: any, name: string) => [
                   formatCurrency(value),
                   name === 'grossSales' ? 'Gross Sales' : 'Net Sales',
                 ]}
