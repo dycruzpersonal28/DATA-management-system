@@ -17,7 +17,6 @@ type Props = {
   levels: ItemLevel[]
   categories: Category[]
   shopId: string
-  currencySymbol: string
   onClose: () => void
   onSaved: () => void
 }
@@ -49,7 +48,7 @@ function calcBomCost(
   }, 0)
 }
 
-export default function ItemEditor({ item, allItems, levels, categories, shopId, currencySymbol, onClose, onSaved }: Props) {
+export default function ItemEditor({ item, allItems, levels, categories, shopId, onClose, onSaved }: Props) {
   const supabase = createClient()
   const isNew = !item
   const [saving, setSaving] = useState(false)
@@ -326,7 +325,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs text-gray-500 mb-1.5 block">
-                  Price ({currencySymbol}){!isFinalProduct && <span className="text-gray-300 ml-1">Final Products only</span>}
+                  Price (₱){!isFinalProduct && <span className="text-gray-300 ml-1">Final Products only</span>}
                 </Label>
                 <Input
                   type="number" min="0" step="0.01"
@@ -338,7 +337,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
               </div>
               <div>
                 <Label className="text-xs text-gray-500 mb-1.5 block">
-                  Cost ({currencySymbol}){form.is_composite && <span className="text-gray-300 ml-1">auto from BOM</span>}
+                  Cost (₱){form.is_composite && <span className="text-gray-300 ml-1">auto from BOM</span>}
                 </Label>
                 <Input
                   type="number" min="0" step="0.01"
@@ -405,7 +404,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                                 className="w-20 text-right border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                               />
                             </td>
-                            <td className="py-2 text-right text-gray-600 text-xs">{currencySymbol}{lineCost.toFixed(2)}</td>
+                            <td className="py-2 text-right text-gray-600 text-xs">₱{lineCost.toFixed(2)}</td>
                             <td className="py-2 pl-2">
                               <button
                                 onClick={() => removeIngredient(ing.ingredient_id)}
@@ -421,7 +420,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                     <tfoot>
                       <tr className="border-t border-gray-100">
                         <td colSpan={2} className="pt-2 text-right text-xs text-gray-400">Total BOM cost</td>
-                        <td className="pt-2 text-right text-sm font-semibold text-gray-800">{currencySymbol}{bomCost.toFixed(2)}</td>
+                        <td className="pt-2 text-right text-sm font-semibold text-gray-800">₱{bomCost.toFixed(2)}</td>
                         <td />
                       </tr>
                     </tfoot>
@@ -463,7 +462,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                                   <span className="text-sm font-medium text-gray-800">{i.name}</span>
                                   {i.sku && <span className="ml-2 text-xs text-gray-400">SKU: {i.sku}</span>}
                                 </span>
-                                <span className="text-xs text-gray-400">{currencySymbol}{(i.cost ?? 0).toFixed(2)}/unit</span>
+                                <span className="text-xs text-gray-400">₱{(i.cost ?? 0).toFixed(2)}/unit</span>
                               </button>
                             </li>
                           ))}

@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -10,11 +10,10 @@ import { useRouter } from 'next/navigation'
 
 interface Props {
   total: number
-  currencySymbol: string
   onClose: () => void
 }
 
-export default function PaymentModal({ total, currencySymbol, onClose }: Props) {
+export default function PaymentModal({ total, onClose }: Props) {
   const router = useRouter()
   const supabase = createClient()
   const { items, customerId, discountAmount, clearCart, subtotal } = useCart()
@@ -33,6 +32,7 @@ export default function PaymentModal({ total, currencySymbol, onClose }: Props) 
       .order('sort_order')
       .then(({ data }) => {
         const types = data || []
+        // Default payment types if none exist
         if (types.length === 0) {
           setPaymentTypes([
             { id: 'cash', name: 'Cash' },
@@ -61,6 +61,7 @@ export default function PaymentModal({ total, currencySymbol, onClose }: Props) 
       const { data: shop } = await supabase.from('shops').select('id').single()
       if (!shop) throw new Error('No shop found')
 
+      // Get next receipt number
       const { count } = await supabase
         .from('receipts')
         .select('*', { count: 'exact', head: true })
@@ -68,6 +69,7 @@ export default function PaymentModal({ total, currencySymbol, onClose }: Props) 
 
       const receiptNumber = `R-${String((count || 0) + 1).padStart(6, '0')}`
 
+      // Get employee from localStorage
       let employeeId = null
       try {
         const emp = JSON.parse(localStorage.getItem('pos_employee') || 'null')
@@ -76,6 +78,7 @@ export default function PaymentModal({ total, currencySymbol, onClose }: Props) 
 
       const sub = subtotal()
 
+      // Create receipt
       const { data: receipt, error } = await supabase
         .from('receipts')
         .insert({
@@ -99,6 +102,7 @@ export default function PaymentModal({ total, currencySymbol, onClose }: Props) 
 
       if (error) throw error
 
+      // Create receipt items
       const receiptItems = items.map(item => ({
         receipt_id: receipt.id,
         item_id: item.itemId,
@@ -134,7 +138,7 @@ export default function PaymentModal({ total, currencySymbol, onClose }: Props) 
           {isCash && change > 0 && (
             <div className="bg-gray-50 rounded-xl p-4">
               <p className="text-sm text-gray-500">Change due</p>
-              <p className="text-3xl font-bold text-gray-900">{currencySymbol}{change.toFixed(2)}</p>
+              <p className="text-3xl font-bold text-gray-900">${change.toFixed(2)}</p>
             </div>
           )}
           <Button className="w-full" onClick={onClose}>
@@ -160,7 +164,7 @@ export default function PaymentModal({ total, currencySymbol, onClose }: Props) 
           {/* Total */}
           <div className="text-center">
             <p className="text-sm text-gray-500">Total due</p>
-            <p className="text-4xl font-bold text-gray-900">{currencySymbol}{total.toFixed(2)}</p>
+            <p className="text-4xl font-bold text-gray-900">${total.toFixed(2)}</p>
           </div>
 
           {/* Payment type selection */}
@@ -202,14 +206,14 @@ export default function PaymentModal({ total, currencySymbol, onClose }: Props) 
                       onClick={() => setCashInput(amount.toFixed(2))}
                       className="py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700"
                     >
-                      {currencySymbol}{amount.toFixed(0)}
+                      ${amount.toFixed(0)}
                     </button>
                   ))}
               </div>
               {cashAmount > 0 && (
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500">Change</span>
-                  <span className="font-semibold text-green-600">{currencySymbol}{changeAmount.toFixed(2)}</span>
+                  <span className="font-semibold text-green-600">${changeAmount.toFixed(2)}</span>
                 </div>
               )}
             </div>

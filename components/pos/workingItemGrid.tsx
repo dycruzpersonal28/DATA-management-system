@@ -1,14 +1,13 @@
-'use client'
+﻿'use client'
 
 import { useCart } from '@/lib/hooks/useCart'
 import { toast } from 'sonner'
 
 interface Props {
   items: any[]
-  currencySymbol: string
 }
 
-export default function ItemGrid({ items, currencySymbol }: Props) {
+export default function ItemGrid({ items }: Props) {
   const { addItem } = useCart()
 
   function handleAdd(item: any) {
@@ -31,6 +30,7 @@ export default function ItemGrid({ items, currencySymbol }: Props) {
           onClick={() => handleAdd(item)}
           className="bg-white rounded-xl border border-gray-200 p-3 text-left hover:border-indigo-300 hover:shadow-sm active:scale-95 transition-all"
         >
+          {/* Color bar from category */}
           <div
             className="w-full h-1 rounded-full mb-2"
             style={{ backgroundColor: item.categories?.color || '#e5e7eb' }}
@@ -40,7 +40,7 @@ export default function ItemGrid({ items, currencySymbol }: Props) {
             <p className="text-xs text-gray-400 truncate">{item.categories.name}</p>
           )}
           <p className="text-sm font-semibold text-indigo-600 mt-1">
-            {currencySymbol}{Number(item.price).toFixed(2)}
+            ${Number(item.price).toFixed(2)}
           </p>
         </button>
       ))}

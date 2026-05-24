@@ -15,12 +15,14 @@ export default function POSPage() {
   const [items, setItems] = useState<any[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [currencySymbol, setCurrencySymbol] = useState<string>('₱')
   const { itemCount } = useCart()
 
   useEffect(() => {
     async function load() {
-      const { data: shop } = await supabase.from('shops').select('id').single()
+      const { data: shop } = await supabase.from('shops').select('id, currency_symbol').single()
       if (!shop) return
+      setCurrencySymbol(shop.currency_symbol || '₱')
 
       const { data: cats } = await supabase
         .from('categories')
@@ -36,7 +38,6 @@ export default function POSPage() {
         .order('name')
 
       setCategories(cats || [])
-      // only show items whose level is marked as sellable (Final Product)
       setItems((itms || []).filter((i: any) => i.level?.is_sellable === true))
       setLoading(false)
     }
@@ -81,14 +82,14 @@ export default function POSPage() {
               </Link>
             </div>
           ) : (
-            <ItemGrid items={filteredItems} />
+            <ItemGrid items={filteredItems} currencySymbol={currencySymbol} />
           )}
         </div>
       </div>
 
       {/* Right: Cart */}
       <div className="w-80 bg-white border-l border-gray-200 flex flex-col flex-shrink-0">
-        <Cart />
+        <Cart currencySymbol={currencySymbol} />
       </div>
     </div>
   )

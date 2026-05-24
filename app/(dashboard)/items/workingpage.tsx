@@ -21,47 +21,74 @@ export default function ItemsPage() {
   const [catFilter, setCatFilter] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
-  const [editingItem, setEditingItem] = useState<Item | null | undefined>(undefined) // undefined = closed, null = new
+  const [editingItem, setEditingItem] = useState<Item | null | undefined>(undefined)
   const fileRef = useRef<HTMLInputElement>(null)
 
   async function loadData() {
-    // get shop
-    const { data: shop } = await supabase.from('shops').select('id').single()
-    if (shop) setShopId(shop.id)
+    setLoading(true)
+    try {
+      // ── shop ──────────────────────────────────────────────────────────────
+      const { data: shop } = await supabase.from('shops').select('id').single()
+      if (!shop) { setLoading(false); return }
+      setShopId(shop.id)
 
-    // load levels
-    const { data: lvls } = await supabase
-      .from('item_levels')
-      .select('*')
-      .eq('shop_id', shop?.id)
-      .order('sort_order')
-    setLevels(lvls ?? [])
+      // ── levels ────────────────────────────────────────────────────────────
+      const { data: lvls } = await supabase
+        .from('item_levels')
+        .select('*')
+        .eq('shop_id', shop.id)
+        .order('sort_order')
+      setLevels(lvls ?? [])
 
-    // load categories
-    const { data: cats } = await supabase
-      .from('categories')
-      .select('*')
-      .eq('shop_id', shop?.id)
-      .order('name')
-    setCategories(cats ?? [])
+      // ── categories ────────────────────────────────────────────────────────
+      const { data: cats } = await supabase
+        .from('categories')
+        .select('*')
+        .eq('shop_id', shop.id)
+        .order('name')
+      setCategories(cats ?? [])
 
-    // load items with joins
-    const { data } = await supabase
-      .from('items')
-      .select(`
-        *,
-        categories(id, name, color),
-        level:item_levels(id, name, sort_order, is_sellable),
-        inventory_levels(quantity, low_stock_alert),
-        ingredients:item_ingredients(
-          id, ingredient_id, quantity,
-          ingredient:items!item_ingredients_ingredient_id_fkey(id, name, sku, cost)
-        )
-      `)
-      .eq('shop_id', shop?.id)
-      .order('name')
-    setItems((data as Item[]) ?? [])
-    setLoading(false)
+      // ── items — same simple select as POS, plus level join ────────────────
+      const { data: rawItems, error: itemsErr } = await supabase
+        .from('items')
+        .select('*, categories(id, name, color), level:item_levels(id, name, sort_order, is_sellable)')
+        .eq('shop_id', shop.id)
+        .order('name')
+      if (itemsErr) { console.error('[items] error:', itemsErr); setLoading(false); return }
+
+      // ── ingredients — separate query, no ambiguous FK ─────────────────────
+      const { data: ings } = await supabase
+        .from('item_ingredients')
+        .select('id, item_id, ingredient_id, quantity')
+        .eq('shop_id', shop.id)
+
+      // build a lookup: item_id → ingredients[]
+      const ingMap: Record<string, any[]> = {}
+      if (ings) {
+        for (const ing of ings) {
+          if (!ingMap[ing.item_id]) ingMap[ing.item_id] = []
+          ingMap[ing.item_id].push(ing)
+        }
+      }
+
+      // attach ingredients + resolve ingredient details from rawItems
+      const itemsById: Record<string, any> = {}
+      for (const item of rawItems ?? []) itemsById[item.id] = item
+
+      const enriched = (rawItems ?? []).map(item => ({
+        ...item,
+        ingredients: (ingMap[item.id] ?? []).map(ing => ({
+          ...ing,
+          ingredient: itemsById[ing.ingredient_id] ?? null,
+        })),
+      }))
+
+      setItems(enriched as Item[])
+    } catch (e) {
+      console.error('[items] loadData threw:', e)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { loadData() }, [])
@@ -151,7 +178,7 @@ export default function ItemsPage() {
     e.target.value = ''
   }
 
-  // ── level badge helper ─────────────────────────────────────────────────────
+  // ── level badge ────────────────────────────────────────────────────────────
   function LevelBadge({ item }: { item: Item }) {
     const level = (item as any).level as ItemLevel | undefined
     if (!level) return <span className="text-xs text-gray-300">—</span>

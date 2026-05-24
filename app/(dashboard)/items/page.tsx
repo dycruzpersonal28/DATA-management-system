@@ -16,6 +16,7 @@ export default function ItemsPage() {
   const [levels, setLevels] = useState<ItemLevel[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [shopId, setShopId] = useState<string>('')
+  const [currencySymbol, setCurrencySymbol] = useState<string>('₱')
   const [search, setSearch] = useState('')
   const [levelFilter, setLevelFilter] = useState('')
   const [catFilter, setCatFilter] = useState('')
@@ -28,9 +29,10 @@ export default function ItemsPage() {
     setLoading(true)
     try {
       // ── shop ──────────────────────────────────────────────────────────────
-      const { data: shop } = await supabase.from('shops').select('id').single()
+      const { data: shop } = await supabase.from('shops').select('id, currency_symbol').single()
       if (!shop) { setLoading(false); return }
       setShopId(shop.id)
+      setCurrencySymbol(shop.currency_symbol || '₱')
 
       // ── levels ────────────────────────────────────────────────────────────
       const { data: lvls } = await supabase
@@ -338,12 +340,12 @@ export default function ItemsPage() {
                     </td>
                     <td className="px-4 py-3 text-right" onClick={() => setEditingItem(item)}>
                       {level?.is_sellable && item.price
-                        ? <span className="text-sm font-semibold text-gray-900">₱{Number(item.price).toFixed(2)}</span>
+                        ? <span className="text-sm font-semibold text-gray-900">{currencySymbol}{Number(item.price).toFixed(2)}</span>
                         : <span className="text-xs text-gray-300">—</span>}
                     </td>
                     <td className="px-4 py-3 text-right" onClick={() => setEditingItem(item)}>
                       <span className="text-sm text-gray-600">
-                        ₱{displayCost.toFixed(2)}
+                        {currencySymbol}{displayCost.toFixed(2)}
                         {item.is_composite && <span className="text-xs text-gray-400 ml-1">(BOM)</span>}
                       </span>
                     </td>
@@ -380,6 +382,7 @@ export default function ItemsPage() {
           levels={levels}
           categories={categories}
           shopId={shopId}
+          currencySymbol={currencySymbol}
           onClose={() => setEditingItem(undefined)}
           onSaved={loadData}
         />
