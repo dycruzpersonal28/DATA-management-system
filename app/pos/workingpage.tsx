@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -30,13 +30,14 @@ export default function POSPage() {
 
       const { data: itms } = await supabase
         .from('items')
-        .select('*, categories(name, color)')
+        .select('*, categories(name, color), level:item_levels(id, is_sellable)')
         .eq('shop_id', shop.id)
         .eq('is_active', true)
         .order('name')
 
       setCategories(cats || [])
-      setItems(itms || [])
+      // only show items whose level is marked as sellable (Final Product)
+      setItems((itms || []).filter((i: any) => i.level?.is_sellable === true))
       setLoading(false)
     }
     load()

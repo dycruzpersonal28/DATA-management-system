@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { X, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
+import { useShop } from '@/lib/hooks/useShop'
 
 interface Props {
   total: number
@@ -17,6 +18,7 @@ export default function PaymentModal({ total, onClose }: Props) {
   const router = useRouter()
   const supabase = createClient()
   const { items, customerId, discountAmount, clearCart, subtotal } = useCart()
+  const { currencySymbol } = useShop()
   const [paymentTypes, setPaymentTypes] = useState<any[]>([])
   const [selectedType, setSelectedType] = useState<any>(null)
   const [cashInput, setCashInput] = useState('')
@@ -138,7 +140,7 @@ export default function PaymentModal({ total, onClose }: Props) {
           {isCash && change > 0 && (
             <div className="bg-gray-50 rounded-xl p-4">
               <p className="text-sm text-gray-500">Change due</p>
-              <p className="text-3xl font-bold text-gray-900">${change.toFixed(2)}</p>
+              <p className="text-3xl font-bold text-gray-900">{currencySymbol}{change.toFixed(2)}</p>
             </div>
           )}
           <Button className="w-full" onClick={onClose}>
@@ -164,8 +166,7 @@ export default function PaymentModal({ total, onClose }: Props) {
           {/* Total */}
           <div className="text-center">
             <p className="text-sm text-gray-500">Total due</p>
-            <p className="text-4xl font-bold text-gray-900">${total.toFixed(2)}</p>
-          </div>
+            <p className="text-4xl font-bold text-gray-900">{currencySymbol}{total.toFixed(2)}</p>          </div>
 
           {/* Payment type selection */}
           <div className="grid grid-cols-2 gap-2">
@@ -206,14 +207,14 @@ export default function PaymentModal({ total, onClose }: Props) {
                       onClick={() => setCashInput(amount.toFixed(2))}
                       className="py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700"
                     >
-                      ${amount.toFixed(0)}
+                      {currencySymbol}{amount.toFixed(0)}
                     </button>
                   ))}
               </div>
               {cashAmount > 0 && (
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500">Change</span>
-                  <span className="font-semibold text-green-600">${changeAmount.toFixed(2)}</span>
+                  <span className="font-semibold text-green-600">{currencySymbol}{changeAmount.toFixed(2)}</span>
                 </div>
               )}
             </div>
@@ -225,7 +226,7 @@ export default function PaymentModal({ total, onClose }: Props) {
             onClick={handleCharge}
             disabled={loading || (isCash && cashAmount < total)}
           >
-            {loading ? 'Processing...' : `Confirm ${selectedType?.name || ''} Payment`}
+            {loading ? 'Processing...' : `Confirm {selectedType?.name || ''} Payment`}
           </Button>
         </div>
       </div>

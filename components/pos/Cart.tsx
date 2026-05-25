@@ -4,11 +4,13 @@ import { useState } from 'react'
 import { useCart } from '@/lib/hooks/useCart'
 import { Trash2, Plus, Minus, ShoppingCart } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useShop } from '@/lib/hooks/useShop'
 import PaymentModal from './PaymentModal'
 
 export default function Cart() {
   const { items, removeItem, updateQuantity, subtotal, total, discountAmount, clearCart } = useCart()
   const [showPayment, setShowPayment] = useState(false)
+  const { currencySymbol } = useShop()
 
   const sub = subtotal()
   const tot = total()
@@ -45,7 +47,7 @@ export default function Cart() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
-                    <p className="text-xs text-gray-500">${item.price.toFixed(2)} each</p>
+                    <p className="text-xs text-gray-500">{currencySymbol}{item.price.toFixed(2)} each</p>
                   </div>
                   <button
                     onClick={() => removeItem(item.id)}
@@ -70,9 +72,7 @@ export default function Cart() {
                       <Plus className="w-3 h-3" />
                     </button>
                   </div>
-                  <p className="text-sm font-semibold text-gray-900">
-                    ${item.lineTotal.toFixed(2)}
-                  </p>
+                  <p className="text-sm font-semibold text-gray-900">{currencySymbol}{item.lineTotal.toFixed(2)}</p>
                 </div>
               </div>
             ))}
@@ -85,17 +85,17 @@ export default function Cart() {
         <div className="space-y-1.5 text-sm">
           <div className="flex justify-between text-gray-500">
             <span>Subtotal</span>
-            <span>${sub.toFixed(2)}</span>
+            <span>{currencySymbol}{sub.toFixed(2)}</span>
           </div>
           {discountAmount > 0 && (
             <div className="flex justify-between text-green-600">
               <span>Discount</span>
-              <span>-${discountAmount.toFixed(2)}</span>
+              <span>-{currencySymbol}{discountAmount.toFixed(2)}</span>
             </div>
           )}
           <div className="flex justify-between font-semibold text-gray-900 text-base pt-1 border-t border-gray-100">
             <span>Total</span>
-            <span>${tot.toFixed(2)}</span>
+            <span>{currencySymbol}{tot.toFixed(2)}</span>
           </div>
         </div>
 
@@ -105,7 +105,7 @@ export default function Cart() {
           disabled={items.length === 0}
           onClick={() => setShowPayment(true)}
         >
-          Charge ${tot.toFixed(2)}
+          Charge {currencySymbol}{tot.toFixed(2)}
         </Button>
       </div>
 
