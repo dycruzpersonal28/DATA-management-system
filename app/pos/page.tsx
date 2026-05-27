@@ -1,17 +1,446 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useCart } from '@/lib/hooks/useCart'
 import { useShop } from '@/lib/hooks/useShop'
 import Cart from '@/components/pos/Cart'
-import { ArrowLeft, Tag, ChevronLeft, Search, LayoutGrid, List } from 'lucide-react'
+import {
+  ArrowLeft, Tag, ChevronLeft, Search, LayoutGrid, List, X,
+  ChevronRight, Plus, Minus, Clock, DollarSign, Ticket,
+  UtensilsCrossed, LogIn, LogOut, ArrowDownCircle, ArrowUpCircle,
+  Save, FolderOpen, Trash2, AlertTriangle, TrendingUp, ShoppingCart,
+} from 'lucide-react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+type Variant = { id: string; name: string; price: number; cost: number }
+type AddonItem = { id: string; name: string; price: number; selected: boolean; quantity: number }
+
+type PickerProps = {
+  item: any
+  variants: Variant[]
+  addonItems: AddonItem[]
+  onConfirm: (variant: Variant | null, note: string, addons: AddonItem[]) => void
+  onClose: () => void
+  currencySymbol: string
+}
+
+// ── Variant Picker Modal ──────────────────────────────────────────────────────
+function VariantPickerModal({ item, variants, addonItems: initialAddons, onConfirm, onClose, currencySymbol }: PickerProps) {
+  const [selected, setSelected] = useState<Variant | null>(null)
+  const [note, setNote] = useState('')
+  const [showAddons, setShowAddons] = useState(false)
+  const [addons, setAddons] = useState<AddonItem[]>(initialAddons)
+  const hasVariants = variants.length > 0
+  const hasAddons = initialAddons.length > 0
+  const selectedAddons = addons.filter(a => a.selected)
+  const addonsTotal = selectedAddons.reduce((sum, a) => sum + a.price * a.quantity, 0)
+  const basePrice = selected ? selected.price : Number(item.price)
+  const grandTotal = basePrice + addonsTotal
+
+  function toggleAddon(id: string) {
+    setAddons(prev => prev.map(a => a.id === id ? { ...a, selected: !a.selected, quantity: !a.selected ? 1 : 0 } : a))
+  }
+  function changeQty(id: string, delta: number) {
+    setAddons(prev => prev.map(a => a.id !== id ? a : { ...a, quantity: Math.max(1, a.quantity + delta) }))
+  }
+  function handleConfirm() {
+    if (hasVariants && !selected) { toast.error('Please select a variant'); return }
+    onConfirm(selected, note, addons.filter(a => a.selected))
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white rounded-2xl shadow-2xl border border-gray-100 w-full max-w-sm flex flex-col overflow-hidden" style={{ maxHeight: '85vh' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 flex-shrink-0">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">{item.name}</h3>
+            {hasVariants && <p className="text-xs text-gray-400 mt-0.5">Select a variant to continue</p>}
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {hasVariants && (
+            <div>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Variants</p>
+              <div className="space-y-2">
+                {variants.map(v => (
+                  <button key={v.id} onClick={() => setSelected(v)} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all text-left ${selected?.id === v.id ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-indigo-200 hover:bg-gray-50'}`}>
+                    <span className="text-sm font-medium text-gray-800">{v.name}</span>
+                    <span className={`text-sm font-semibold ${selected?.id === v.id ? 'text-indigo-600' : 'text-gray-600'}`}>{currencySymbol}{Number(v.price).toFixed(2)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {hasAddons && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Add-Ons</p>
+                <button onClick={() => setShowAddons(v => !v)} className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${showAddons ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                  {showAddons ? 'Hide' : 'Add-Ons?'}
+                </button>
+              </div>
+              {showAddons && (
+                <div className="space-y-1.5">
+                  {addons.map(a => (
+                    <div key={a.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all ${a.selected ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-white'}`}>
+                      <button onClick={() => toggleAddon(a.id)} className={`w-5 h-5 rounded-md border-2 flex-shrink-0 flex items-center justify-center transition-colors ${a.selected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300'}`}>
+                        {a.selected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                      </button>
+                      <div className="flex-1 min-w-0" onClick={() => toggleAddon(a.id)}>
+                        <p className="text-sm font-medium text-gray-800 truncate">{a.name}</p>
+                        <p className="text-xs text-indigo-600 font-semibold">+{currencySymbol}{Number(a.price).toFixed(2)}</p>
+                      </div>
+                      {a.selected && (
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <button onClick={() => changeQty(a.id, -1)} className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"><Minus className="w-3 h-3" /></button>
+                          <span className="text-sm font-medium w-4 text-center">{a.quantity}</span>
+                          <button onClick={() => changeQty(a.id, 1)} className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"><Plus className="w-3 h-3" /></button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Note <span className="text-gray-300 font-normal normal-case">(optional)</span></p>
+            <textarea rows={2} placeholder="e.g. No onions, extra sauce…" value={note} onChange={e => setNote(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder:text-gray-300" />
+          </div>
+        </div>
+        <div className="px-5 pb-5 pt-3 border-t border-gray-100 flex-shrink-0 space-y-3">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-500">{item.name}{selected ? ` (${selected.name})` : ''}{selectedAddons.length > 0 ? ` + ${selectedAddons.length} add-on${selectedAddons.length > 1 ? 's' : ''}` : ''}</span>
+            <span className="font-semibold text-gray-900">{currencySymbol}{grandTotal.toFixed(2)}</span>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
+            <button onClick={handleConfirm} disabled={hasVariants && !selected} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5">
+              Add to cart <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Shift Clock-In Modal ──────────────────────────────────────────────────────
+function ShiftModal({
+  mode,
+  currentUser,
+  currencySymbol,
+  onClockIn,
+  onClockOut,
+  onCashIn,
+  onCashOut,
+  onClose,
+}: {
+  mode: 'clockin' | 'clockout' | 'cashin' | 'cashout'
+  currentUser: any
+  currencySymbol: string
+  onClockIn: (openingCash: number) => void
+  onClockOut: (shiftId: string, closingCash: number, note: string) => void
+  onCashIn: (shiftId: string, amount: number, note: string) => void
+  onCashOut: (shiftId: string, amount: number, note: string) => void
+  onClose: () => void
+}) {
+  const [openingCash, setOpeningCash] = useState('')
+  const [closingCash, setClosingCash] = useState('')
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
+  const [activeShiftId, setActiveShiftId] = useState('')
+  const supabase = createClient()
+
+  useEffect(() => {
+    if (mode !== 'clockin' && currentUser?.id) {
+      supabase.from('shifts').select('*')
+        .eq('status', 'open')
+        .eq('app_user_id', currentUser.id)
+        .order('clock_in', { ascending: false })
+        .limit(1).maybeSingle()
+        .then(({ data }) => { if (data) setActiveShiftId(data.id) })
+    }
+  }, [mode, currentUser])
+
+  const title = { clockin: 'Clock In / Open Shift', clockout: 'Clock Out / Close Shift', cashin: 'Cash In', cashout: 'Cash Out' }[mode]
+  const icon = { clockin: LogIn, clockout: LogOut, cashin: ArrowDownCircle, cashout: ArrowUpCircle }[mode]
+  const IconComp = icon
+
+  function handleSubmit() {
+    if (mode === 'clockin') {
+      onClockIn(parseFloat(openingCash) || 0)
+    } else if (mode === 'clockout') {
+      onClockOut(activeShiftId, parseFloat(closingCash) || 0, note)
+    } else if (mode === 'cashin') {
+      if (!amount || parseFloat(amount) <= 0) { toast.error('Enter an amount'); return }
+      onCashIn(activeShiftId, parseFloat(amount), note)
+    } else if (mode === 'cashout') {
+      if (!amount || parseFloat(amount) <= 0) { toast.error('Enter an amount'); return }
+      onCashOut(activeShiftId, parseFloat(amount), note)
+    }
+  }
+
+  const colorMap = {
+    clockin: 'bg-green-100 text-green-600',
+    clockout: 'bg-red-100 text-red-600',
+    cashin: 'bg-blue-100 text-blue-600',
+    cashout: 'bg-orange-100 text-orange-600',
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${colorMap[mode]}`}>
+            <IconComp className="w-5 h-5" />
+          </div>
+          <h2 className="text-base font-semibold text-gray-900">{title}</h2>
+          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="space-y-4">
+          {mode === 'clockin' && (
+            <>
+              <div className="bg-gray-50 rounded-xl px-4 py-3 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-700 font-semibold text-sm flex-shrink-0">
+                  {currentUser?.name?.charAt(0).toUpperCase() || '?'}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">{currentUser?.name || 'Unknown'}</p>
+                  <p className="text-xs text-gray-400 capitalize">{currentUser?.role}</p>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-500 block mb-1.5">Opening Cash ({currencySymbol})</label>
+                <input type="number" min="0" step="0.01" value={openingCash} onChange={e => setOpeningCash(e.target.value)} placeholder="0.00" autoFocus className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              </div>
+            </>
+          )}
+          {mode === 'clockout' && (
+            <div>
+              <label className="text-xs font-medium text-gray-500 block mb-1.5">Closing Cash ({currencySymbol})</label>
+              <input type="number" min="0" step="0.01" value={closingCash} onChange={e => setClosingCash(e.target.value)} placeholder="0.00" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+          )}
+          {(mode === 'cashin' || mode === 'cashout') && (
+            <div>
+              <label className="text-xs font-medium text-gray-500 block mb-1.5">Amount ({currencySymbol})</label>
+              <input type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" autoFocus className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+          )}
+          {(mode === 'clockout' || mode === 'cashin' || mode === 'cashout') && (
+            <div>
+              <label className="text-xs font-medium text-gray-500 block mb-1.5">Note <span className="text-gray-300 font-normal">(optional)</span></label>
+              <input type="text" value={note} onChange={e => setNote(e.target.value)} placeholder="Add a note…" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2 mt-6">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button onClick={handleSubmit} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all">
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Dining Option Modal ───────────────────────────────────────────────────────
+function DiningOptionModal({ options, onSelect, onSkip }: { options: any[]; onSelect: (opt: any) => void; onSkip: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-9 h-9 bg-teal-100 rounded-xl flex items-center justify-center">
+            <UtensilsCrossed className="w-4 h-4 text-teal-600" />
+          </div>
+          <h2 className="text-sm font-semibold text-gray-900">Dining Option</h2>
+        </div>
+        <p className="text-xs text-gray-500 mb-4">Select how this order will be served.</p>
+        <div className="space-y-2 mb-4">
+          {options.map(opt => (
+            <button key={opt.id} onClick={() => onSelect(opt)} className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-teal-50 border border-gray-200 hover:border-teal-300 rounded-xl text-sm font-medium text-gray-800 transition-all">
+              {opt.name}
+            </button>
+          ))}
+        </div>
+        <button onClick={onSkip} className="w-full py-2 text-xs text-gray-400 hover:text-gray-600 transition-colors">Skip for now</button>
+      </div>
+    </div>
+  )
+}
+
+// ── Open Tickets Modal ────────────────────────────────────────────────────────
+function OpenTicketsModal({
+  tickets,
+  currencySymbol,
+  onLoad,
+  onDelete,
+  onClose,
+}: {
+  tickets: any[]
+  currencySymbol: string
+  onLoad: (ticket: any) => void
+  onDelete: (id: string) => void
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden" style={{ maxHeight: '75vh' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+              <Ticket className="w-4 h-4 text-purple-600" />
+            </div>
+            <h2 className="text-sm font-semibold text-gray-900">Open Tickets</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {tickets.length === 0 ? (
+            <div className="text-center py-10 text-gray-400">
+              <Ticket className="w-8 h-8 mx-auto mb-2 opacity-40" />
+              <p className="text-sm">No saved tickets</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {tickets.map(t => (
+                <div key={t.id} className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{t.name || `Ticket #${t.ticket_number}`}</p>
+                      {t.dining_option_name && (
+                        <span className="px-2 py-0.5 bg-teal-100 text-teal-700 rounded-lg text-xs font-medium flex-shrink-0">{t.dining_option_name}</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400">{t.item_count} item{t.item_count !== 1 ? 's' : ''} · {currencySymbol}{Number(t.total).toFixed(2)}</p>
+                    <p className="text-xs text-gray-300 mt-0.5">{new Date(t.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                  </div>
+                  <div className="flex gap-1.5 flex-shrink-0">
+                    <button onClick={() => onLoad(t)} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition-colors">
+                      <FolderOpen className="w-3.5 h-3.5" /> Load
+                    </button>
+                    <button onClick={() => onDelete(t.id)} className="p-1.5 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 transition-colors">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Save Ticket Modal ─────────────────────────────────────────────────────────
+function SaveTicketModal({ onSave, onClose }: { onSave: (name: string) => void; onClose: () => void }) {
+  const [name, setName] = useState('')
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-9 h-9 bg-purple-100 rounded-xl flex items-center justify-center">
+            <Save className="w-4 h-4 text-purple-600" />
+          </div>
+          <h2 className="text-sm font-semibold text-gray-900">Save Ticket</h2>
+          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>
+        </div>
+        <label className="text-xs font-medium text-gray-500 block mb-1.5">Ticket name <span className="text-gray-300 font-normal">(optional)</span></label>
+        <input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && onSave(name)} placeholder="e.g. Table 3, John" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 mb-5" />
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button onClick={() => onSave(name)} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all">
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Cart Bottom Sheet (tablet) ────────────────────────────────────────────────
+function CartBottomSheet({
+  open,
+  onClose,
+  cartItemCount,
+  cartTotal,
+  currencySymbol,
+  diningOption,
+  activeShiftId,
+  onPaymentComplete,
+}: {
+  open: boolean
+  onClose: () => void
+  cartItemCount: number
+  cartTotal: number
+  currencySymbol: string
+  diningOption?: any
+  activeShiftId?: string | null
+  onPaymentComplete?: () => void
+}) {
+  return (
+    <>
+      {/* Backdrop — only visible when sheet is open */}
+      {open && (
+        <div
+          className="fixed inset-0 z-30 bg-black/30 lg:hidden"
+          onClick={onClose}
+        />
+      )}
+
+      {/* Bottom sheet — tablet & mobile */}
+      <div
+        className={`
+          fixed bottom-0 left-0 right-0 z-40 bg-white rounded-t-2xl shadow-2xl border-t border-gray-200
+          transition-transform duration-300 ease-in-out
+          lg:hidden
+          flex flex-col
+          ${open ? 'translate-y-0' : 'translate-y-full'}
+        `}
+        style={{ maxHeight: '80vh' }}
+      >
+        {/* Drag handle + header */}
+        <div className="flex flex-col items-center pt-3 pb-2 flex-shrink-0">
+          <div className="w-10 h-1 bg-gray-200 rounded-full mb-3" />
+          <div className="w-full flex items-center justify-between px-4 pb-2">
+            <span className="text-sm font-semibold text-gray-900">Order</span>
+            <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Cart content fills remaining space */}
+        <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+          <Cart
+            diningOption={diningOption}
+            activeShiftId={activeShiftId}
+            onPaymentComplete={() => {
+              onClose()
+              onPaymentComplete?.()
+            }}
+          />
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ── Main POS Page ─────────────────────────────────────────────────────────────
 export default function POSPage() {
   const supabase = createClient()
-  const { addItem } = useCart()
+  const router = useRouter()
+  const { addItem, items: cartItems, clearCart, loadItems } = useCart()
   const { currencySymbol } = useShop()
 
   const [categories, setCategories] = useState<any[]>([])
@@ -21,56 +450,298 @@ export default function POSPage() {
   const [search, setSearch] = useState('')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [userName, setUserName] = useState('')
-  const [now, setNow] = useState(new Date())
+  const [now, setNow] = useState<Date | null>(null)
+  const [shopId, setShopId] = useState('')
 
-  // Real-time clock
+  // Feature flags
+  const [featureShifts, setFeatureShifts] = useState(false)
+  const [featureDiningOptions, setFeatureDiningOptions] = useState(false)
+  const [featureOpenTickets, setFeatureOpenTickets] = useState(false)
+
+  // Shift state
+  const [activeShift, setActiveShift] = useState<any | null>(null)
+  const [currentUser, setCurrentUser] = useState<any | null>(null)
+  const [shiftModal, setShiftModal] = useState<'clockin' | 'clockout' | 'cashin' | 'cashout' | null>(null)
+
+  // Dining options
+  const [diningOptions, setDiningOptions] = useState<any[]>([])
+  const [showDiningModal, setShowDiningModal] = useState(false)
+  const [selectedDiningOption, setSelectedDiningOption] = useState<any | null>(null)
+
+  // Open tickets
+  const [openTickets, setOpenTickets] = useState<any[]>([])
+  const [showTicketsModal, setShowTicketsModal] = useState(false)
+  const [showSaveModal, setShowSaveModal] = useState(false)
+
+  // Picker
+  const [pickerItem, setPickerItem] = useState<any | null>(null)
+  const [pickerVariants, setPickerVariants] = useState<Variant[]>([])
+  const [pickerAddons, setPickerAddons] = useState<AddonItem[]>([])
+  const [pickerLoading, setPickerLoading] = useState(false)
+
+  // Cart bottom sheet (tablet)
+  const [cartSheetOpen, setCartSheetOpen] = useState(false)
+
   useEffect(() => {
+    setNow(new Date())
     const timer = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(timer)
   }, [])
 
-  const formattedTime = now.toLocaleTimeString('en-US', {
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  })
-  const formattedDate = now.toLocaleDateString('en-US', {
-    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-  })
+  const formattedTime = now ? now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''
+  const formattedDate = now ? now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : ''
 
-  // Load user + shop data
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('full_name')
-          .eq('id', user.id)
-          .single()
-        setUserName(profile?.full_name || user.email?.split('@')[0] || 'there')
+      if (!user) return
+
+      const { data: appUser } = await supabase
+        .from('app_users')
+        .select('*')
+        .eq('auth_user_id', user.id)
+        .single()
+
+      if (appUser) {
+        setCurrentUser(appUser)
+        setUserName(appUser.name)
+      } else {
+        router.push('/login')
+        return
       }
 
-      const { data: shop } = await supabase.from('shops').select('id').single()
+      const shopId = appUser?.shop_id
+      if (!shopId) return
+
+      const { data: shop } = await supabase.from('shops').select('*').eq('id', shopId).single()
       if (!shop) return
+      setShopId(shop.id)
 
-      const { data: cats } = await supabase
-        .from('categories')
-        .select('*')
-        .eq('shop_id', shop.id)
-        .order('sort_order')
+      setFeatureShifts(shop.feature_shifts === true)
+      setFeatureDiningOptions(shop.feature_dining_options === true)
+      setFeatureOpenTickets(shop.feature_open_tickets === true)
 
+      const { data: cats } = await supabase.from('categories').select('*').eq('shop_id', shop.id).order('sort_order')
       const { data: itms } = await supabase
         .from('items')
-        .select('*, categories(name, color), level:item_levels(id, is_sellable)')
+        .select('*, categories!items_category_id_fkey(name, color), item_levels!items_level_id_fkey(id, is_sellable)')
         .eq('shop_id', shop.id)
         .eq('is_active', true)
         .order('name')
 
       setCategories(cats || [])
-      setItems((itms || []).filter((i: any) => i.level?.is_sellable === true))
+      setItems((itms || []).filter((i: any) => {
+        const level = i.item_levels
+        return !level || level.is_sellable === true
+      }))
       setLoading(false)
+
+      if (shop.feature_shifts) {
+        const { data: shift } = await supabase
+          .from('shifts')
+          .select('*')
+          .eq('shop_id', shop.id)
+          .eq('status', 'open')
+          .eq('app_user_id', appUser.id)
+          .order('clock_in', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        setActiveShift(shift || null)
+      }
+
+      if (shop.feature_dining_options) {
+        const { data: opts } = await supabase
+          .from('dining_options')
+          .select('*')
+          .eq('shop_id', shop.id)
+          .eq('is_active', true)
+          .order('sort_order')
+        console.log('dining options loaded:', opts)
+        setDiningOptions(opts || [])
+      }
+
+      if (shop.feature_open_tickets) {
+        const { data: tickets } = await supabase
+          .from('open_tickets')
+          .select('*')
+          .eq('shop_id', shop.id)
+          .order('created_at', { ascending: false })
+        setOpenTickets(tickets || [])
+      }
     }
     load()
   }, [])
+
+  // ── Shift Handlers ─────────────────────────────────────────────────────────
+  async function handleClockIn(openingCash: number) {
+    if (!currentUser) { toast.error('User not loaded'); return }
+    const { data, error } = await supabase.from('shifts').insert({
+      shop_id: shopId,
+      app_user_id: currentUser.id,
+      employee_id: null,
+      opening_cash: openingCash,
+      status: 'open',
+      clock_in: new Date().toISOString(),
+    }).select().single()
+    if (error) { toast.error('Failed to open shift'); return }
+    setActiveShift(data)
+    localStorage.setItem('pos_active_shift', JSON.stringify(data))
+    setShiftModal(null)
+    toast.success('Shift started')
+  }
+
+  async function handleClockOut(shiftId: string, closingCash: number, note: string) {
+    if (!shiftId) { toast.error('No active shift found'); return }
+    const { error } = await supabase.from('shifts').update({
+      closing_cash: closingCash,
+      status: 'closed',
+      clock_out: new Date().toISOString(),
+      note,
+    }).eq('id', shiftId)
+    if (error) { toast.error('Failed to close shift'); return }
+    setActiveShift(null)
+    localStorage.removeItem('pos_active_shift')
+    setShiftModal(null)
+    setSelectedDiningOption(null)
+    setSelectedCategory(null)
+    toast.success('Shift closed')
+  }
+
+  async function handleCashIn(shiftId: string, amount: number, note: string) {
+    if (!shiftId) { toast.error('No active shift'); return }
+    await supabase.from('shift_cash_movements').insert({
+      shift_id: shiftId,
+      shop_id: shopId,
+      type: 'cash_in',
+      amount,
+      note,
+    })
+    setShiftModal(null)
+    toast.success(`Cash In: ${currencySymbol}${amount.toFixed(2)} recorded`)
+  }
+
+  async function handleCashOut(shiftId: string, amount: number, note: string) {
+    if (!shiftId) { toast.error('No active shift'); return }
+    await supabase.from('shift_cash_movements').insert({
+      shift_id: shiftId,
+      shop_id: shopId,
+      type: 'cash_out',
+      amount,
+      note,
+    })
+    setShiftModal(null)
+    toast.success(`Cash Out: ${currencySymbol}${amount.toFixed(2)} recorded`)
+  }
+
+  // ── New Transaction ────────────────────────────────────────────────────────
+  function handleNewTransaction() {
+    console.log('featureDiningOptions:', featureDiningOptions)
+    console.log('diningOptions:', diningOptions)
+    console.log('featureShifts:', featureShifts)
+    console.log('activeShift:', activeShift)
+    clearCart()
+    setSelectedCategory(null)
+    if (featureDiningOptions && diningOptions.length > 0) {
+      setSelectedDiningOption(null)
+      setShowDiningModal(true)
+    } else {
+      setSelectedDiningOption(null)
+    }
+  }
+
+  function handleDiningSelect(opt: any) {
+    setSelectedDiningOption(opt)
+    setShowDiningModal(false)
+    clearCart()
+  }
+
+  function handleDiningSkip() {
+    setSelectedDiningOption(null)
+    setShowDiningModal(false)
+    clearCart()
+  }
+
+  // ── Open Tickets ───────────────────────────────────────────────────────────
+  async function handleSaveTicket(name: string) {
+    if (cartItems.length === 0) { toast.error('Cart is empty'); return }
+    const total = cartItems.reduce((sum: number, i: any) => sum + i.lineTotal, 0)
+    const { data, error } = await supabase.from('open_tickets').insert({
+      shop_id: shopId,
+      name: name.trim() || null,
+      cart_items: cartItems,
+      dining_option_id: selectedDiningOption?.id || null,
+      dining_option_name: selectedDiningOption?.name || null,
+      total,
+      item_count: cartItems.length,
+    }).select().single()
+    if (error) { toast.error('Failed to save ticket'); return }
+    setOpenTickets(prev => [data, ...prev])
+    clearCart()
+    setSelectedDiningOption(null)
+    setSelectedCategory(null)
+    setShowSaveModal(false)
+    toast.success('Ticket saved')
+  }
+
+  async function handleLoadTicket(ticket: any) {
+    loadItems(ticket.cart_items || [])
+    if (ticket.dining_option_id) {
+      setSelectedDiningOption({ id: ticket.dining_option_id, name: ticket.dining_option_name })
+    }
+    await supabase.from('open_tickets').delete().eq('id', ticket.id)
+    setOpenTickets(prev => prev.filter(t => t.id !== ticket.id))
+    setShowTicketsModal(false)
+    toast.success(`Loaded: ${ticket.name || 'ticket'}`)
+  }
+
+  async function handleDeleteTicket(id: string) {
+    await supabase.from('open_tickets').delete().eq('id', id)
+    setOpenTickets(prev => prev.filter(t => t.id !== id))
+    toast.success('Ticket deleted')
+  }
+
+  // ── Item tap ───────────────────────────────────────────────────────────────
+  async function handleItemTap(item: any) {
+    setPickerLoading(true)
+    setPickerItem(item)
+    setPickerVariants([])
+    setPickerAddons([])
+
+    const [variantRes, addonRes] = await Promise.all([
+      item.has_variants
+        ? supabase.from('item_variants').select('id, name, price, cost').eq('item_id', item.id).eq('is_active', true).order('sort_order')
+        : Promise.resolve({ data: [] }),
+      item.offer_addons && item.addon_category_id
+        ? supabase.from('items').select('id, name, price').eq('category_id', item.addon_category_id).eq('is_active', true).order('name')
+        : Promise.resolve({ data: [] }),
+    ])
+
+    setPickerVariants((variantRes as any).data || [])
+    setPickerAddons(((addonRes as any).data || []).map((a: any) => ({ id: a.id, name: a.name, price: Number(a.price), selected: false, quantity: 1 })))
+    setPickerLoading(false)
+  }
+
+  function handlePickerConfirm(variant: Variant | null, note: string, addons: AddonItem[]) {
+    if (!pickerItem) return
+    const basePrice = variant ? Number(variant.price) : Number(pickerItem.price)
+    const baseName = variant ? `${pickerItem.name} (${variant.name})` : pickerItem.name
+    addItem({
+      itemId: pickerItem.id,
+      name: baseName,
+      price: basePrice,
+      quantity: 1,
+      modifiers: [],
+      addons: addons.map(a => ({ id: a.id, name: a.name, price: a.price, quantity: a.quantity })),
+      trackStock: pickerItem.track_stock,
+      note: note.trim() || undefined,
+      variantId: variant?.id,
+    })
+    const addonCount = addons.length
+    toast.success(`${baseName} added${addonCount > 0 ? ` + ${addonCount} add-on${addonCount > 1 ? 's' : ''}` : ''}`)
+    setPickerItem(null)
+    setPickerVariants([])
+    setPickerAddons([])
+  }
 
   const itemsByCategory = useMemo(() => {
     const map = new Map<string, any[]>()
@@ -96,32 +767,65 @@ export default function POSPage() {
     return base.filter((i: any) => i.name.toLowerCase().includes(q))
   }, [selectedCategory, itemsByCategory, search])
 
-  function handleAdd(item: any) {
-    addItem({
-      itemId: item.id,
-      name: item.name,
-      price: Number(item.price),
-      quantity: 1,
-      modifiers: [],
-      trackStock: item.track_stock,
-    })
-    toast.success(`${item.name} added`)
-  }
+  const readyToOrder = (!featureShifts || !!activeShift) && (!featureDiningOptions || !!selectedDiningOption)
+
+  // Cart summary for the FAB
+  const cartSubtotal = cartItems.reduce((sum: number, i: any) => sum + i.lineTotal, 0)
+  const cartItemCount = cartItems.reduce((sum: number, i: any) => sum + i.quantity, 0)
 
   return (
+    // ── Outer shell: full screen, two-col on desktop, single-col on tablet ──
     <div className="flex h-screen bg-gray-100 overflow-hidden">
-      {/* Left panel */}
+
+      {/* ── Modals (unchanged) ── */}
+      {pickerItem && !pickerLoading && (
+        <VariantPickerModal
+          item={pickerItem} variants={pickerVariants} addonItems={pickerAddons}
+          currencySymbol={currencySymbol}
+          onConfirm={handlePickerConfirm}
+          onClose={() => { setPickerItem(null); setPickerVariants([]); setPickerAddons([]) }}
+        />
+      )}
+      {pickerLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
+          <div className="bg-white rounded-2xl px-6 py-4 shadow-xl text-sm text-gray-500">Loading…</div>
+        </div>
+      )}
+      {shiftModal && (
+        <ShiftModal
+          mode={shiftModal}
+          currentUser={currentUser}
+          currencySymbol={currencySymbol}
+          onClockIn={handleClockIn}
+          onClockOut={handleClockOut}
+          onCashIn={handleCashIn}
+          onCashOut={handleCashOut}
+          onClose={() => setShiftModal(null)}
+        />
+      )}
+      {showDiningModal && (
+        <DiningOptionModal options={diningOptions} onSelect={handleDiningSelect} onSkip={handleDiningSkip} />
+      )}
+      {showTicketsModal && (
+        <OpenTicketsModal
+          tickets={openTickets}
+          currencySymbol={currencySymbol}
+          onLoad={handleLoadTicket}
+          onDelete={handleDeleteTicket}
+          onClose={() => setShowTicketsModal(false)}
+        />
+      )}
+      {showSaveModal && (
+        <SaveTicketModal onSave={handleSaveTicket} onClose={() => setShowSaveModal(false)} />
+      )}
+
+      {/* ── Left / main panel (full width on tablet, flex-1 on desktop) ── */}
       <div className="flex-1 flex flex-col min-w-0">
 
         {/* Top bar */}
-        <div className="bg-white border-b border-gray-200 px-4 py-2.5 flex items-center gap-3">
-
-          {/* Back button */}
+        <div className="bg-white border-b border-gray-200 px-3 py-2 flex items-center gap-2 flex-wrap">
           {selectedCategory ? (
-            <button
-              onClick={() => { setSelectedCategory(null); setSearch('') }}
-              className="text-gray-400 hover:text-gray-600 flex-shrink-0"
-            >
+            <button onClick={() => { setSelectedCategory(null); setSearch('') }} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
               <ChevronLeft className="w-5 h-5" />
             </button>
           ) : (
@@ -130,85 +834,153 @@ export default function POSPage() {
             </Link>
           )}
 
-          {/* Clock + greeting */}
           <div className="flex flex-col leading-tight min-w-0">
-            <span className="text-xs text-gray-400">{formattedDate} · {formattedTime}</span>
+            <span className="text-xs text-gray-400 hidden sm:block">{formattedDate} · {formattedTime}</span>
             <span className="text-sm font-semibold text-gray-800 truncate">
               Hi, {userName}
-              {selectedCategory && (
-                <span className="text-gray-400 font-normal"> · {selectedCategory.name}</span>
-              )}
+              {selectedCategory && <span className="text-gray-400 font-normal"> · {selectedCategory.name}</span>}
             </span>
           </div>
 
           <div className="flex-1" />
 
-          {/* Search bar */}
-          <div className="relative w-48 lg:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-            <input
-              type="text"
-              placeholder={selectedCategory ? 'Search items...' : 'Search categories...'}
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
-            />
-          </div>
+          {/* Shift controls */}
+          {featureShifts && (
+            <div className="flex items-center gap-1">
+              {!activeShift ? (
+                <>
+                  <button onClick={() => setShiftModal('clockin')} className="flex items-center gap-1 px-2.5 py-1.5 bg-green-600 text-white rounded-xl text-xs font-semibold hover:bg-green-700 transition-colors">
+                    <LogIn className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Clock In</span>
+                  </button>
+                  {currentUser?.role === 'cashier' && (
+                    <button
+                      onClick={async () => {
+                        await supabase.auth.signOut()
+                        router.push('/login')
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-100 text-gray-600 border border-gray-200 rounded-xl text-xs font-semibold hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
+                    >
+                      <LogOut className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Log Out</span>
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <button onClick={() => setShiftModal('cashin')} className="flex items-center gap-1 px-2 py-1.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-xl text-xs font-semibold hover:bg-blue-100 transition-colors">
+                    <ArrowDownCircle className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Cash In</span>
+                  </button>
+                  <button onClick={() => setShiftModal('cashout')} className="flex items-center gap-1 px-2 py-1.5 bg-orange-50 text-orange-600 border border-orange-200 rounded-xl text-xs font-semibold hover:bg-orange-100 transition-colors">
+                    <ArrowUpCircle className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Cash Out</span>
+                  </button>
+                  <button onClick={() => setShiftModal('clockout')} className="flex items-center gap-1 px-2 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-semibold hover:bg-red-100 transition-colors">
+                    <LogOut className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Clock Out</span>
+                  </button>
+                </>
+              )}
+            </div>
+          )}
 
-          {/* Grid / List toggle */}
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden flex-shrink-0">
-            <button
-              onClick={() => setViewMode('grid')}
-              className={`p-1.5 transition-colors ${viewMode === 'grid' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-50'}`}
-            >
-              <LayoutGrid className="w-4 h-4" />
+          {/* Sales Report */}
+          {featureShifts && activeShift && (
+            <button onClick={() => router.push(`/pos/shift-report?shiftId=${activeShift.id}`)} className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 transition-colors">
+              <TrendingUp className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Report</span>
             </button>
-            <button
-              onClick={() => setViewMode('list')}
-              className={`p-1.5 transition-colors ${viewMode === 'list' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-50'}`}
-            >
-              <List className="w-4 h-4" />
+          )}
+
+          {/* Open Tickets */}
+          {featureOpenTickets && readyToOrder && (
+            <div className="flex items-center gap-1">
+              <button onClick={() => setShowSaveModal(true)} title="Save current cart as ticket" className="flex items-center gap-1 px-2 py-1.5 bg-purple-50 text-purple-600 border border-purple-200 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-colors">
+                <Save className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Save</span>
+              </button>
+              <button onClick={() => setShowTicketsModal(true)} className="flex items-center gap-1 px-2 py-1.5 bg-purple-50 text-purple-600 border border-purple-200 rounded-xl text-xs font-semibold hover:bg-purple-100 transition-colors relative">
+                <Ticket className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Tickets</span>
+                {openTickets.length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-purple-600 text-white rounded-full text-[9px] font-bold flex items-center justify-center">{openTickets.length}</span>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Dining option indicator */}
+          {featureDiningOptions && selectedDiningOption && (
+            <button onClick={() => setShowDiningModal(true)} className="flex items-center gap-1 px-2.5 py-1.5 bg-teal-50 text-teal-700 border border-teal-200 rounded-xl text-xs font-semibold hover:bg-teal-100 transition-colors">
+              <UtensilsCrossed className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{selectedDiningOption.name}</span>
             </button>
-          </div>
+          )}
+
+          {/* Search */}
+          {readyToOrder && (
+            <div className="relative w-32 sm:w-44 lg:w-56">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+              <input
+                type="text"
+                placeholder={selectedCategory ? 'Search items...' : 'Search...'}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full pl-7 pr-3 py-1.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
+              />
+            </div>
+          )}
+
+          {/* View toggle */}
+          {readyToOrder && (
+            <div className="flex rounded-lg border border-gray-200 overflow-hidden flex-shrink-0">
+              <button onClick={() => setViewMode('grid')} className={`p-1.5 transition-colors ${viewMode === 'grid' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-50'}`}>
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+              <button onClick={() => setViewMode('list')} className={`p-1.5 transition-colors ${viewMode === 'list' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-50'}`}>
+                <List className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4">
+        {/* Item grid — full width, padded bottom on tablet to clear the FAB */}
+        <div className="flex-1 overflow-y-auto p-3 pb-24 lg:pb-4">
           {loading ? (
             <div className="flex items-center justify-center h-full text-gray-400">Loading...</div>
 
+          ) : featureShifts && !activeShift ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
+              <LogIn className="w-12 h-12 opacity-40" />
+              <p className="text-base font-medium text-gray-500">Clock in to start taking orders</p>
+              <button onClick={() => setShiftModal('clockin')} className="px-5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700 transition-colors flex items-center gap-2">
+                <LogIn className="w-4 h-4" /> Clock In
+              </button>
+            </div>
+
+          ) : featureDiningOptions && !selectedDiningOption ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
+              <UtensilsCrossed className="w-12 h-12 opacity-40" />
+              <p className="text-base font-medium text-gray-500">Start a new transaction to begin</p>
+              <button onClick={handleNewTransaction} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-colors flex items-center gap-2">
+                <Plus className="w-4 h-4" /> New Transaction
+              </button>
+            </div>
+
           ) : !selectedCategory ? (
-            /* Category view */
             filteredCategories.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
                 <Tag className="w-10 h-10" />
                 <p>{search ? 'No categories match your search' : 'No categories found'}</p>
-                {!search && (
-                  <Link href="/categories" className="text-indigo-600 text-sm hover:underline">
-                    Add categories in back office
-                  </Link>
-                )}
+                {!search && <Link href="/categories" className="text-indigo-600 text-sm hover:underline">Add categories in back office</Link>}
               </div>
             ) : viewMode === 'grid' ? (
-              <div className="grid grid-cols-3 gap-4">
+              // ── Category grid: 2 cols on tablet, 3 on desktop ──
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                 {filteredCategories.map(cat => {
                   const count = itemsByCategory.get(cat.id)?.length ?? 0
                   return (
-                    <button
-                      key={cat.id}
-                      onClick={() => { setSelectedCategory(cat); setSearch('') }}
-                      className="bg-white rounded-2xl border border-gray-200 p-5 text-left hover:shadow-md active:scale-95 transition-all group"
-                    >
-                      <div className="w-10 h-10 rounded-xl mb-3 flex items-center justify-center"
-                        style={{ backgroundColor: `${cat.color}20` }}>
+                    <button key={cat.id} onClick={() => { setSelectedCategory(cat); setSearch('') }}
+                      className="bg-white rounded-2xl border border-gray-200 p-4 text-left hover:shadow-md active:scale-95 transition-all group">
+                      <div className="w-9 h-9 rounded-xl mb-2.5 flex items-center justify-center" style={{ backgroundColor: `${cat.color}20` }}>
                         <div className="w-4 h-4 rounded-full" style={{ backgroundColor: cat.color || '#6366f1' }} />
                       </div>
-                      <p className="font-semibold text-gray-900 text-sm group-hover:text-indigo-700 transition-colors">
-                        {cat.name}
-                      </p>
+                      <p className="font-semibold text-gray-900 text-sm group-hover:text-indigo-700 transition-colors">{cat.name}</p>
                       <p className="text-xs text-gray-400 mt-0.5">{count} item{count !== 1 ? 's' : ''}</p>
-                      <div className="w-full h-1 rounded-full mt-3 opacity-60"
-                        style={{ backgroundColor: cat.color || '#6366f1' }} />
+                      <div className="w-full h-1 rounded-full mt-2.5 opacity-60" style={{ backgroundColor: cat.color || '#6366f1' }} />
                     </button>
                   )
                 })}
@@ -218,23 +990,16 @@ export default function POSPage() {
                 {filteredCategories.map(cat => {
                   const count = itemsByCategory.get(cat.id)?.length ?? 0
                   return (
-                    <button
-                      key={cat.id}
-                      onClick={() => { setSelectedCategory(cat); setSearch('') }}
-                      className="w-full bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-4 hover:shadow-sm active:scale-[0.99] transition-all group text-left"
-                    >
-                      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                        style={{ backgroundColor: `${cat.color}20` }}>
+                    <button key={cat.id} onClick={() => { setSelectedCategory(cat); setSearch('') }}
+                      className="w-full bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-4 hover:shadow-sm active:scale-[0.99] transition-all group text-left">
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${cat.color}20` }}>
                         <div className="w-3 h-3 rounded-full" style={{ backgroundColor: cat.color || '#6366f1' }} />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-gray-900 text-sm group-hover:text-indigo-700 transition-colors">
-                          {cat.name}
-                        </p>
+                        <p className="font-semibold text-gray-900 text-sm group-hover:text-indigo-700 transition-colors">{cat.name}</p>
                         <p className="text-xs text-gray-400">{count} item{count !== 1 ? 's' : ''}</p>
                       </div>
-                      <div className="w-16 h-1 rounded-full opacity-60"
-                        style={{ backgroundColor: cat.color || '#6366f1' }} />
+                      <div className="w-16 h-1 rounded-full opacity-60" style={{ backgroundColor: cat.color || '#6366f1' }} />
                     </button>
                   )
                 })}
@@ -242,48 +1007,44 @@ export default function POSPage() {
             )
 
           ) : (
-            /* Items view */
             categoryItems.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
                 <Tag className="w-10 h-10" />
                 <p>{search ? 'No items match your search' : 'No items in this category'}</p>
-                {!search && (
-                  <Link href="/items" className="text-indigo-600 text-sm hover:underline">
-                    Add items in back office
-                  </Link>
-                )}
+                {!search && <Link href="/items" className="text-indigo-600 text-sm hover:underline">Add items in back office</Link>}
               </div>
             ) : viewMode === 'grid' ? (
-              <div className="grid grid-cols-3 gap-4">
+              // ── Item grid: 2 cols on tablet, 3 on desktop ──
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                 {categoryItems.map((item: any) => (
-                  <button
-                    key={item.id}
-                    onClick={() => handleAdd(item)}
-                    className="bg-white rounded-xl border border-gray-200 p-3 text-left hover:border-indigo-300 hover:shadow-sm active:scale-95 transition-all"
-                  >
-                    <div className="w-full h-1 rounded-full mb-2"
-                      style={{ backgroundColor: selectedCategory.color || '#e5e7eb' }} />
+                  <button key={item.id} onClick={() => handleItemTap(item)}
+                    className="bg-white rounded-xl border border-gray-200 p-3 text-left hover:border-indigo-300 hover:shadow-sm active:scale-95 transition-all">
+                    <div className="w-full h-1 rounded-full mb-2" style={{ backgroundColor: selectedCategory.color || '#e5e7eb' }} />
                     <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
-                    <p className="text-sm font-semibold text-indigo-600 mt-1">
-                      {currencySymbol}{Number(item.price).toFixed(2)}
-                    </p>
+                    {item.has_variants ? (
+                      <p className="text-xs text-indigo-400 mt-1 font-medium">Multiple variants</p>
+                    ) : (
+                      <p className="text-sm font-semibold text-indigo-600 mt-1">{currencySymbol}{Number(item.price).toFixed(2)}</p>
+                    )}
+                    {item.offer_addons && <p className="text-xs text-emerald-500 mt-0.5 font-medium">+ Add-ons</p>}
                   </button>
                 ))}
               </div>
             ) : (
               <div className="space-y-2">
                 {categoryItems.map((item: any) => (
-                  <button
-                    key={item.id}
-                    onClick={() => handleAdd(item)}
-                    className="w-full bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-4 hover:border-indigo-300 hover:shadow-sm active:scale-[0.99] transition-all text-left"
-                  >
-                    <div className="w-2 self-stretch rounded-full flex-shrink-0"
-                      style={{ backgroundColor: selectedCategory.color || '#6366f1' }} />
-                    <p className="flex-1 text-sm font-medium text-gray-900 truncate">{item.name}</p>
-                    <p className="text-sm font-semibold text-indigo-600 flex-shrink-0">
-                      {currencySymbol}{Number(item.price).toFixed(2)}
-                    </p>
+                  <button key={item.id} onClick={() => handleItemTap(item)}
+                    className="w-full bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-4 hover:border-indigo-300 hover:shadow-sm active:scale-[0.99] transition-all text-left">
+                    <div className="w-2 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: selectedCategory.color || '#6366f1' }} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
+                      {item.offer_addons && <p className="text-xs text-emerald-500 font-medium">+ Add-ons available</p>}
+                    </div>
+                    {item.has_variants ? (
+                      <p className="text-xs text-indigo-400 font-medium flex-shrink-0">Variants</p>
+                    ) : (
+                      <p className="text-sm font-semibold text-indigo-600 flex-shrink-0">{currencySymbol}{Number(item.price).toFixed(2)}</p>
+                    )}
                   </button>
                 ))}
               </div>
@@ -292,10 +1053,54 @@ export default function POSPage() {
         </div>
       </div>
 
-      {/* Right: Cart */}
-      <div className="w-80 bg-white border-l border-gray-200 flex flex-col flex-shrink-0">
-        <Cart />
+      {/* ── Desktop: side cart panel (hidden on tablet/mobile) ── */}
+      <div className="hidden lg:flex w-80 xl:w-96 bg-white border-l border-gray-200 flex-col flex-shrink-0">
+        <Cart
+          diningOption={selectedDiningOption}
+          activeShiftId={activeShift?.id || null}
+          onPaymentComplete={() => {
+            handleNewTransaction()
+            window.location.reload()
+          }}
+        />
       </div>
+
+      {/* ── Tablet/Mobile: floating cart button ── */}
+      <div className="lg:hidden fixed bottom-5 right-5 z-20">
+        <button
+          onClick={() => setCartSheetOpen(true)}
+          className="relative flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-2xl shadow-lg px-4 py-3 transition-all"
+        >
+          <ShoppingCart className="w-5 h-5" />
+          {cartItemCount > 0 && (
+            <>
+              <span className="text-sm font-semibold">{currencySymbol}{cartSubtotal.toFixed(2)}</span>
+              <span className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center">
+                {cartItemCount}
+              </span>
+            </>
+          )}
+          {cartItemCount === 0 && (
+            <span className="text-sm font-medium opacity-80">Cart</span>
+          )}
+        </button>
+      </div>
+
+      {/* ── Cart bottom sheet (tablet/mobile) ── */}
+      <CartBottomSheet
+        open={cartSheetOpen}
+        onClose={() => setCartSheetOpen(false)}
+        cartItemCount={cartItemCount}
+        cartTotal={cartSubtotal}
+        currencySymbol={currencySymbol}
+        diningOption={selectedDiningOption}
+        activeShiftId={activeShift?.id || null}
+        onPaymentComplete={() => {
+          setCartSheetOpen(false)
+          handleNewTransaction()
+          window.location.reload()
+        }}
+      />
     </div>
   )
 }

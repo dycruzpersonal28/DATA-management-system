@@ -1,12 +1,11 @@
-﻿'use client'
+'use client'
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useCart } from '@/lib/hooks/useCart'
 import { Button } from '@/components/ui/button'
-import { X, Check } from 'lucide-react'
+import { X, Check, Printer } from 'lucide-react'
 import { toast } from 'sonner'
-import { useRouter } from 'next/navigation'
 import { useShop } from '@/lib/hooks/useShop'
 
 interface Props {
@@ -14,36 +13,143 @@ interface Props {
   onClose: () => void
 }
 
+// ── ESC/POS helpers (works for network + browser print fallback) ─────────────
+function buildReceiptText(receipt: any, items: any[], shop: any, currencySymbol: string, change: number, paymentName: string): string {
+  const line = '--------------------------------'
+  const center = (s: string) => s.padStart(Math.floor((32 + s.length) / 2)).padEnd(32)
+  const row = (left: string, right: string) => {
+    const space = 32 - left.length - right.length
+    return left + ' '.repeat(Math.max(1, space)) + right
+  }
+
+  const lines: string[] = [
+    center(shop?.name || 'Receipt'),
+    shop?.address ? center(shop.address) : '',
+    shop?.phone ? center(shop.phone) : '',
+    '',
+    center(`Receipt #${receipt.receipt_number}`),
+    center(new Date(receipt.created_at).toLocaleString()),
+    line,
+  ]
+
+  for (const item of items) {
+    lines.push(row(`${item.quantity}x ${item.item_name}`, `${currencySymbol}${item.line_total.toFixed(2)}`))
+    if (item.addons && item.addons.length > 0) {
+      for (const a of item.addons) {
+        lines.push(`   + ${a.name}${a.quantity > 1 ? ` x${a.quantity}` : ''}  ${currencySymbol}${(a.price * a.quantity).toFixed(2)}`)
+      }
+    }
+    if (item.note) lines.push(`   📝 ${item.note}`)
+  }
+
+  lines.push(
+    line,
+    row('Subtotal', `${currencySymbol}${receipt.subtotal.toFixed(2)}`),
+    receipt.discount_amount > 0 ? row('Discount', `-${currencySymbol}${receipt.discount_amount.toFixed(2)}`) : '',
+    row('TOTAL', `${currencySymbol}${receipt.total.toFixed(2)}`),
+    row('Payment', paymentName),
+    change > 0 ? row('Change', `${currencySymbol}${change.toFixed(2)}`) : '',
+    line,
+    shop?.receipt_footer ? center(shop.receipt_footer) : center('Thank you!'),
+    '',
+    '',
+  )
+
+  return lines.filter(l => l !== '').join('\n')
+}
+
+function buildKDSText(receipt: any, items: any[]): string {
+  const line = '================================'
+  const lines: string[] = [
+    `ORDER #${receipt.receipt_number}`,
+    new Date(receipt.created_at).toLocaleTimeString(),
+    line,
+  ]
+
+  for (const item of items) {
+    lines.push(`${item.quantity}x ${item.item_name}`)
+    if (item.addons && item.addons.length > 0) {
+      for (const a of item.addons) {
+        lines.push(`  + ${a.name}${a.quantity > 1 ? ` x${a.quantity}` : ''}`)
+      }
+    }
+    // Show BOM ingredients if available
+    if (item.ingredients && item.ingredients.length > 0) {
+      for (const ing of item.ingredients) {
+        lines.push(`    [${ing.name} x${ing.quantity}]`)
+      }
+    }
+    if (item.note) lines.push(`  >> NOTE: ${item.note}`)
+    lines.push('')
+  }
+
+  lines.push(line, '', '')
+  return lines.join('\n')
+}
+
+async function sendToNetworkPrinter(ip: string, text: string): Promise<boolean> {
+  try {
+    // ESC/POS raw over network — requires a relay endpoint or direct TCP
+    // We use a fetch to a local relay at /api/print if available, else fallback
+    const res = await fetch('/api/print', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip, text }),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+function printViaWindow(text: string, title: string) {
+  const win = window.open('', '_blank', 'width=400,height=600')
+  if (!win) return
+  win.document.write(`
+    <html><head><title>${title}</title>
+    <style>
+      body { font-family: 'Courier New', monospace; font-size: 12px; white-space: pre; margin: 16px; }
+      @media print { @page { margin: 0; } body { margin: 8mm; } }
+    </style></head>
+    <body>${text.replace(/</g, '&lt;')}</body></html>
+  `)
+  win.document.close()
+  win.focus()
+  win.print()
+}
+
 export default function PaymentModal({ total, onClose }: Props) {
-  const router = useRouter()
   const supabase = createClient()
   const { items, customerId, discountAmount, clearCart, subtotal } = useCart()
-  const { currencySymbol } = useShop()
   const [paymentTypes, setPaymentTypes] = useState<any[]>([])
   const [selectedType, setSelectedType] = useState<any>(null)
   const [cashInput, setCashInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
   const [change, setChange] = useState(0)
+  const [shop, setShop] = useState<any>(null)
+  const { shop: shopFromHook, currencySymbol } = useShop()
 
-  useEffect(() => {
-    supabase
-      .from('payment_types')
+useEffect(() => {
+  if (shopFromHook) setShop(shopFromHook)
+}, [shopFromHook])
+
+useEffect(() => {
+  supabase
+    .from('payment_types')
       .select('*')
       .eq('is_active', true)
       .order('sort_order')
       .then(({ data }) => {
         const types = data || []
-        // Default payment types if none exist
         if (types.length === 0) {
-          setPaymentTypes([
-            { id: 'cash', name: 'Cash' },
-            { id: 'card', name: 'Card' },
-          ])
+          const defaults = [{ id: 'cash', name: 'Cash' }, { id: 'card', name: 'Card' }]
+          setPaymentTypes(defaults)
+          setSelectedType(defaults[0])
         } else {
           setPaymentTypes(types)
+          setSelectedType(types[0])
         }
-        setSelectedType(types[0] || { id: 'cash', name: 'Cash' })
       })
   }, [])
 
@@ -52,18 +158,12 @@ export default function PaymentModal({ total, onClose }: Props) {
   const changeAmount = isCash ? Math.max(0, cashAmount - total) : 0
 
   async function handleCharge() {
-    if (isCash && cashAmount < total) {
-      toast.error('Cash amount is less than total')
-      return
-    }
-
+    if (isCash && cashAmount < total) { toast.error('Cash amount is less than total'); return }
     setLoading(true)
 
     try {
-      const { data: shop } = await supabase.from('shops').select('id').single()
       if (!shop) throw new Error('No shop found')
 
-      // Get next receipt number
       const { count } = await supabase
         .from('receipts')
         .select('*', { count: 'exact', head: true })
@@ -71,16 +171,47 @@ export default function PaymentModal({ total, onClose }: Props) {
 
       const receiptNumber = `R-${String((count || 0) + 1).padStart(6, '0')}`
 
-      // Get employee from localStorage
       let employeeId = null
       try {
         const emp = JSON.parse(localStorage.getItem('pos_employee') || 'null')
         employeeId = emp?.id || null
       } catch {}
 
+      let activeShiftId = null
+      try {
+        const shift = JSON.parse(localStorage.getItem('pos_active_shift') || 'null')
+        activeShiftId = shift?.id || null
+      } catch {}
+
+      // Resolve app_user_id from the logged-in auth user so it shows up in the shift report
+      let appUserId: string | null = null
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+          const { data: appUser } = await supabase
+            .from('app_users').select('id').eq('auth_user_id', user.id).single()
+          appUserId = appUser?.id || null
+        }
+      } catch {}
+
+      // If no shiftId from localStorage, look up the active open shift for this user
+      if (!activeShiftId && appUserId) {
+        try {
+          const { data: openShift } = await supabase
+            .from('shifts')
+            .select('id')
+            .eq('app_user_id', appUserId)
+            .eq('status', 'open')
+            .order('clock_in', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          if (openShift) activeShiftId = openShift.id
+        } catch {}
+      }
+
       const sub = subtotal()
 
-      // Create receipt
+      // ── Create receipt ──────────────────────────────────────────────────────
       const { data: receipt, error } = await supabase
         .from('receipts')
         .insert({
@@ -91,12 +222,13 @@ export default function PaymentModal({ total, onClose }: Props) {
           subtotal: sub,
           discount_amount: discountAmount,
           tax_amount: 0,
-          total: total,
+          total,
           payment_type_id: selectedType?.id !== 'cash' && selectedType?.id !== 'card' ? selectedType.id : null,
           amount_tendered: isCash ? cashAmount : total,
           change_amount: changeAmount,
           loyalty_points_earned: Math.floor(total),
           loyalty_points_redeemed: 0,
+          shift_id: activeShiftId,
           status: 'completed',
         })
         .select()
@@ -104,20 +236,87 @@ export default function PaymentModal({ total, onClose }: Props) {
 
       if (error) throw error
 
-      // Create receipt items
+      // ── Create receipt items (with addons embedded) ─────────────────────────
       const receiptItems = items.map(item => ({
         receipt_id: receipt.id,
         item_id: item.itemId,
+        variant_id: item.variantId || null,
         item_name: item.name,
         unit_price: item.price,
         quantity: item.quantity,
         discount_amount: 0,
         tax_amount: 0,
         line_total: item.lineTotal,
-        modifiers: item.modifiers,
+        modifiers: item.modifiers || [],
+        addons: (item.addons || []).map(a => ({ id: a.id, name: a.name, price: a.price, quantity: a.quantity })),
+        note: item.note || null,
       }))
 
       await supabase.from('receipt_items').insert(receiptItems)
+
+      // ── Inventory deduction + logging ───────────────────────────────────────
+      for (const item of items) {
+        if (!item.trackStock || !item.itemId) continue
+        const { data: inv } = await supabase
+          .from('inventory_levels')
+          .select('id, quantity')
+          .eq('item_id', item.itemId)
+          .is('variant_id', item.variantId ? null : null)
+          .maybeSingle()
+
+        if (inv) {
+          const beforeQty = inv.quantity
+          const afterQty = Math.max(0, beforeQty - item.quantity)
+          await supabase.from('inventory_levels').update({ quantity: afterQty }).eq('id', inv.id)
+          await supabase.from('inventory_logs').insert({
+            shop_id: shop.id,
+            receipt_id: receipt.id,
+            item_id: item.itemId,
+            item_name: item.name,
+            before_qty: beforeQty,
+            after_qty: afterQty,
+            change_qty: -(item.quantity),
+          })
+        }
+      }
+
+      // ── Printing ────────────────────────────────────────────────────────────
+      const receiptText = buildReceiptText(receipt, receiptItems, shop, currencySymbol, changeAmount, selectedType?.name || '')
+      const kdsText = buildKDSText(receipt, receiptItems)
+
+      // Receipt printer
+      if (shop.printer_enabled) {
+        if (shop.receipt_printer_type === 'network' && shop.receipt_printer_address) {
+          const ok = await sendToNetworkPrinter(shop.receipt_printer_address, receiptText)
+          if (!ok) printViaWindow(receiptText, `Receipt ${receiptNumber}`)
+        } else if (shop.receipt_printer_type === 'bluetooth') {
+          // Bluetooth Web API (Chrome only)
+          try {
+            const device = await (navigator as any).bluetooth.requestDevice({
+              filters: [{ services: ['000018f0-0000-1000-8000-00805f9b34fb'] }],
+            })
+            const server = await device.gatt.connect()
+            const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb')
+            const characteristic = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb')
+            const encoder = new TextEncoder()
+            await characteristic.writeValue(encoder.encode(receiptText))
+          } catch {
+            printViaWindow(receiptText, `Receipt ${receiptNumber}`)
+          }
+        } else {
+          printViaWindow(receiptText, `Receipt ${receiptNumber}`)
+        }
+      }
+
+      // KDS printer
+      if (shop.kds_enabled) {
+        if (shop.kds_printer_type === 'network' && shop.kds_printer_address) {
+          const ok = await sendToNetworkPrinter(shop.kds_printer_address, kdsText)
+          if (!ok) printViaWindow(kdsText, `KDS ${receiptNumber}`)
+        } else if (shop.kds_printer_type === 'browser') {
+          printViaWindow(kdsText, `KDS ${receiptNumber}`)
+        }
+      }
 
       setChange(changeAmount)
       setDone(true)
@@ -143,9 +342,15 @@ export default function PaymentModal({ total, onClose }: Props) {
               <p className="text-3xl font-bold text-gray-900">{currencySymbol}{change.toFixed(2)}</p>
             </div>
           )}
-          <Button className="w-full" onClick={onClose}>
-            New order
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={() => {
+              const receiptText = `Receipt printed`
+              printViaWindow(receiptText, 'Reprint')
+            }}>
+              <Printer className="w-4 h-4 mr-1.5" />Reprint
+            </Button>
+            <Button className="flex-1" onClick={onClose}>New order</Button>
+          </div>
         </div>
       </div>
     )
@@ -154,59 +359,43 @@ export default function PaymentModal({ total, onClose }: Props) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden">
-        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-100">
           <h2 className="font-semibold text-gray-900">Payment</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <X className="w-5 h-5" />
-          </button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="p-4 space-y-4">
-          {/* Total */}
           <div className="text-center">
             <p className="text-sm text-gray-500">Total due</p>
-            <p className="text-4xl font-bold text-gray-900">{currencySymbol}{total.toFixed(2)}</p>          </div>
+            <p className="text-4xl font-bold text-gray-900">{currencySymbol}{total.toFixed(2)}</p>
+          </div>
 
-          {/* Payment type selection */}
           <div className="grid grid-cols-2 gap-2">
             {paymentTypes.map(pt => (
-              <button
-                key={pt.id}
-                onClick={() => setSelectedType(pt)}
+              <button key={pt.id} onClick={() => setSelectedType(pt)}
                 className={`py-3 rounded-xl text-sm font-medium border-2 transition-colors ${
                   selectedType?.id === pt.id
                     ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
                     : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                }`}
-              >
+                }`}>
                 {pt.name}
               </button>
             ))}
           </div>
 
-          {/* Cash input */}
           {isCash && (
             <div className="space-y-2">
               <label className="text-sm text-gray-500">Cash tendered</label>
-              <input
-                type="number"
-                value={cashInput}
-                onChange={e => setCashInput(e.target.value)}
+              <input type="number" value={cashInput} onChange={e => setCashInput(e.target.value)}
                 placeholder="0.00"
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 text-lg font-medium text-center focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                autoFocus
-              />
-              {/* Quick cash buttons */}
+                autoFocus />
               <div className="grid grid-cols-4 gap-1.5">
                 {[total, Math.ceil(total / 5) * 5, Math.ceil(total / 10) * 10, Math.ceil(total / 20) * 20]
                   .filter((v, i, arr) => arr.indexOf(v) === i)
                   .map(amount => (
-                    <button
-                      key={amount}
-                      onClick={() => setCashInput(amount.toFixed(2))}
-                      className="py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700"
-                    >
+                    <button key={amount} onClick={() => setCashInput(amount.toFixed(2))}
+                      className="py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700">
                       {currencySymbol}{amount.toFixed(0)}
                     </button>
                   ))}
@@ -220,13 +409,9 @@ export default function PaymentModal({ total, onClose }: Props) {
             </div>
           )}
 
-          <Button
-            className="w-full"
-            size="lg"
-            onClick={handleCharge}
-            disabled={loading || (isCash && cashAmount < total)}
-          >
-            {loading ? 'Processing...' : `Confirm {selectedType?.name || ''} Payment`}
+          <Button className="w-full" size="lg" onClick={handleCharge}
+            disabled={loading || (isCash && cashAmount < total)}>
+            {loading ? 'Processing...' : `Confirm ${selectedType?.name || ''} Payment`}
           </Button>
         </div>
       </div>

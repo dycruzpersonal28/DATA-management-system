@@ -235,15 +235,21 @@ export default function InventoryPage() {
   const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null)
 
   const load = useCallback(async () => {
-    const { data: cats } = await supabase.from('categories').select('*').order('name')
-    setCategories(cats || [])
-    const { data } = await supabase
-      .from('items')
-      .select('id, name, sku, category_id, categories(name, color), inventory_levels(id, quantity, low_stock_alert)')
-      .order('name')
-    setItems((data as any) || [])
-    setLoading(false)
-  }, [])
+  const { data: cats } = await supabase.from('categories').select('*').order('name')
+  setCategories(cats || [])
+
+  const { data: { session } } = await supabase.auth.getSession()
+  console.log('session uid:', session?.user?.id)
+
+  const { data, error } = await supabase
+  .from('items')
+  .select('id, name, sku, category_id, categories!items_category_id_fkey(name, color), inventory_levels(id, quantity, low_stock_alert)')
+  .order('name')
+
+  console.log('data:', data, 'error:', error)
+  setItems((data as any) || [])
+  setLoading(false)
+}, [])
 
   useEffect(() => { load() }, [load])
 

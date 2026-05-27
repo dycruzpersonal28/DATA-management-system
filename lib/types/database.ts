@@ -1,3 +1,4 @@
+// ── Core shop ────────────────────────────────────────────────────────────────
 export interface Shop {
   id: string
   owner_id: string
@@ -17,10 +18,15 @@ export interface Shop {
   receipt_footer: string | null
   points_per_dollar: number
   points_redemption_rate: number
+  // Feature flags (Batch 6)
+  feature_shifts: boolean
+  feature_dining_options: boolean
+  feature_open_tickets: boolean
   created_at: string
   updated_at: string
 }
 
+// ── Staff ─────────────────────────────────────────────────────────────────────
 export interface Employee {
   id: string
   shop_id: string
@@ -36,6 +42,7 @@ export interface Employee {
   created_at: string
 }
 
+// ── Catalogue ─────────────────────────────────────────────────────────────────
 export interface Category {
   id: string
   shop_id: string
@@ -45,25 +52,22 @@ export interface Category {
   created_at: string
 }
 
-// NEW: item level (Raw, Level 1, Level 2, Final Product, etc.)
 export interface ItemLevel {
   id: string
   shop_id: string
   name: string
   sort_order: number
-  is_sellable: boolean   // true = shows on POS
+  is_sellable: boolean
   created_at: string
 }
 
-// NEW: one BOM row linking a composite item to an ingredient
 export interface ItemIngredient {
   id: string
   shop_id: string
-  item_id: string        // the composite/parent item
-  ingredient_id: string  // the component item
+  item_id: string
+  ingredient_id: string
   quantity: number
   created_at: string
-  // joined
   ingredient?: Item
 }
 
@@ -71,7 +75,7 @@ export interface Item {
   id: string
   shop_id: string
   category_id: string | null
-  level_id: string | null        // NEW
+  level_id: string | null
   name: string
   description: string | null
   price: number
@@ -81,7 +85,7 @@ export interface Item {
   image_url: string | null
   track_stock: boolean
   is_active: boolean
-  is_composite: boolean          // NEW
+  is_composite: boolean
   sold_by_weight: boolean
   tax_rate: number
   created_at: string
@@ -102,6 +106,7 @@ export interface InventoryLevel {
   low_stock_alert: number
 }
 
+// ── Customers ─────────────────────────────────────────────────────────────────
 export interface Customer {
   id: string
   shop_id: string
@@ -115,6 +120,15 @@ export interface Customer {
   notes: string | null
   created_at: string
   updated_at: string
+}
+
+// ── Sales ─────────────────────────────────────────────────────────────────────
+export interface PaymentType {
+  id: string
+  shop_id: string
+  name: string
+  is_active: boolean
+  sort_order: number
 }
 
 export interface Receipt {
@@ -135,6 +149,7 @@ export interface Receipt {
   note: string | null
   status: 'completed' | 'voided' | 'refunded'
   created_at: string
+  // joined
   employees?: Employee
   customers?: Customer
   payment_types?: PaymentType
@@ -157,14 +172,7 @@ export interface ReceiptItem {
   note: string | null
 }
 
-export interface PaymentType {
-  id: string
-  shop_id: string
-  name: string
-  is_active: boolean
-  sort_order: number
-}
-
+// ── Cart (client-side only) ───────────────────────────────────────────────────
 export interface CartItem {
   id: string
   itemId: string
@@ -177,4 +185,53 @@ export interface CartItem {
   note?: string
   lineTotal: number
   trackStock: boolean
+}
+
+// ── Dining Options (Batch 6) ──────────────────────────────────────────────────
+export interface DiningOption {
+  id: string
+  shop_id: string
+  name: string
+  is_active: boolean
+  sort_order: number
+  created_at: string
+}
+
+// ── Shifts (Batch 6) ──────────────────────────────────────────────────────────
+export interface Shift {
+  id: string
+  shop_id: string
+  employee_id: string | null
+  opening_cash: number
+  closing_cash: number | null
+  status: 'open' | 'closed'
+  note: string | null
+  started_at: string
+  ended_at: string | null
+  created_at: string
+  // joined
+  employees?: Employee
+}
+
+export interface ShiftCashMovement {
+  id: string
+  shift_id: string
+  shop_id: string
+  type: 'cash_in' | 'cash_out'
+  amount: number
+  note: string | null
+  created_at: string
+}
+
+// ── Open Tickets / Saved Carts (Batch 6) ─────────────────────────────────────
+export interface OpenTicket {
+  id: string
+  shop_id: string
+  name: string | null
+  cart_items: CartItem[]
+  dining_option_id: string | null
+  dining_option_name: string | null
+  total: number
+  item_count: number
+  created_at: string
 }

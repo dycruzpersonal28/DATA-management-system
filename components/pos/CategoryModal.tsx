@@ -30,6 +30,7 @@ export default function CategoryModal({ category, items, onClose }: Props) {
       quantity: 1,
       modifiers: [],
       trackStock: item.track_stock,
+      addons: [],
     })
     toast.success(`${item.name} added`)
   }

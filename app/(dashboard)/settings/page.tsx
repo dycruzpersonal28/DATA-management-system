@@ -1,18 +1,86 @@
-﻿'use client'
+'use client'
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Switch } from '@/components/ui/switch'
-import { toast } from 'sonner'
-import { Store, Save } from 'lucide-react'
+import {
+  Zap, CreditCard, Heart, Percent, Receipt, Printer, UtensilsCrossed,
+  Monitor, Settings, ChevronRight
+} from 'lucide-react'
+
+// Sub-pages
+import FeaturesPage from './features/page'
+import PaymentTypesPage from './payment-types/page'
+import LoyaltyPage from './loyalty/page'
+import TaxesDiscountsPage from './taxes-discounts/page'
+import ReceiptPage from './receipt/page'
+import KitchenPrintersPage from './kitchen-printers/page'
+import DiningOptionsPage from './dining-options/page'
+import POSSettingsPage from './pos-settings/page'
+
+const NAV_ITEMS = [
+  {
+    id: 'features',
+    label: 'Features',
+    desc: 'Toggle available features on and off',
+    icon: Zap,
+    color: 'bg-violet-100 text-violet-600',
+  },
+  {
+    id: 'payment-types',
+    label: 'Payment Types',
+    desc: 'Create payment methods for checkout',
+    icon: CreditCard,
+    color: 'bg-emerald-100 text-emerald-600',
+  },
+  {
+    id: 'loyalty',
+    label: 'Loyalty',
+    desc: 'Customer loyalty points program',
+    icon: Heart,
+    color: 'bg-pink-100 text-pink-600',
+  },
+  {
+    id: 'taxes-discounts',
+    label: 'Taxes & Discounts',
+    desc: 'Manage tax rates and discount options',
+    icon: Percent,
+    color: 'bg-amber-100 text-amber-600',
+  },
+  {
+    id: 'receipt',
+    label: 'Receipt',
+    desc: 'Customize receipt layout and branding',
+    icon: Receipt,
+    color: 'bg-blue-100 text-blue-600',
+  },
+  {
+    id: 'kitchen-printers',
+    label: 'Kitchen Printers',
+    desc: 'Set up printers and printer groups',
+    icon: Printer,
+    color: 'bg-orange-100 text-orange-600',
+    featureGated: 'feature_kitchen_printers',
+  },
+  {
+    id: 'dining-options',
+    label: 'Dining Options',
+    desc: 'Dine in, takeout, delivery options',
+    icon: UtensilsCrossed,
+    color: 'bg-teal-100 text-teal-600',
+    featureGated: 'feature_dining_options',
+  },
+  {
+    id: 'pos-settings',
+    label: 'Users & POS Settings',
+    desc: 'POS terminals, permissions, printer control',
+    icon: Monitor,
+    color: 'bg-indigo-100 text-indigo-600',
+  },
+]
 
 export default function SettingsPage() {
   const supabase = createClient()
-  const [loading, setLoading] = useState(false)
+  const [active, setActive] = useState('features')
   const [shop, setShop] = useState<any>(null)
 
   useEffect(() => {
@@ -21,119 +89,70 @@ export default function SettingsPage() {
     })
   }, [])
 
-  function handleChange(field: string, value: any) {
-    setShop((prev: any) => ({ ...prev, [field]: value }))
-  }
+  const visibleNav = NAV_ITEMS.filter(item => {
+    if (!item.featureGated) return true
+    return shop?.[item.featureGated] === true
+  })
 
-  async function handleSave() {
-    setLoading(true)
-    const { error } = await supabase
-      .from('shops')
-      .update({
-        name: shop.name,
-        address: shop.address,
-        phone: shop.phone,
-        email: shop.email,
-        currency: shop.currency,
-        currency_symbol: shop.currency_symbol,
-        timezone: shop.timezone,
-        receipt_header: shop.receipt_header,
-        receipt_footer: shop.receipt_footer,
-        loyalty_enabled: shop.loyalty_enabled,
-        kds_enabled: shop.kds_enabled,
-        printer_enabled: shop.printer_enabled,
-        tax_inclusive: shop.tax_inclusive,
-        points_per_dollar: shop.points_per_dollar,
-        points_redemption_rate: shop.points_redemption_rate,
-      })
-      .eq('id', shop.id)
-
-    if (error) {
-      toast.error('Failed to save settings')
-    } else {
-      toast.success('Settings saved')
+  const ActivePage = () => {
+    switch (active) {
+      case 'features': return <FeaturesPage shop={shop} onShopUpdate={setShop} />
+      case 'payment-types': return <PaymentTypesPage />
+      case 'loyalty': return <LoyaltyPage />
+      case 'taxes-discounts': return <TaxesDiscountsPage />
+      case 'receipt': return <ReceiptPage shop={shop} onShopUpdate={setShop} />
+      case 'kitchen-printers': return <KitchenPrintersPage />
+      case 'dining-options': return <DiningOptionsPage />
+      case 'pos-settings': return <POSSettingsPage />
+      default: return null
     }
-    setLoading(false)
   }
-
-  if (!shop) return <div className="p-6 text-gray-500">Loading...</div>
 
   return (
-    <div className="p-6 max-w-2xl space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Settings</h1>
-          <p className="text-sm text-gray-500 mt-1">Manage your store details</p>
+    <div className="flex h-screen bg-gray-50 overflow-hidden">
+      {/* Sidebar */}
+      <div className="w-64 bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
+        <div className="px-5 py-5 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Settings className="w-5 h-5 text-gray-500" />
+            <h1 className="text-base font-semibold text-gray-900">Settings</h1>
+          </div>
         </div>
-        <Button onClick={handleSave} disabled={loading}>
-          <Save className="w-4 h-4 mr-2" />
-          {loading ? 'Saving...' : 'Save changes'}
-        </Button>
+        <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
+          {visibleNav.map(item => {
+            const Icon = item.icon
+            const isActive = active === item.id
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActive(item.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all group ${
+                  isActive
+                    ? 'bg-indigo-50 text-indigo-700'
+                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${item.color}`}>
+                  <Icon className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-medium truncate ${isActive ? 'text-indigo-700' : 'text-gray-800'}`}>
+                    {item.label}
+                  </p>
+                </div>
+                {isActive && <ChevronRight className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />}
+              </button>
+            )
+          })}
+        </nav>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Store className="w-4 h-4" /> Store details
-          </CardTitle>
-          <CardDescription>This appears on your receipts and reports</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Store name</Label>
-            <Input value={shop.name || ''} onChange={e => handleChange('name', e.target.value)} placeholder="My Store" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Address</Label>
-            <Input value={shop.address || ''} onChange={e => handleChange('address', e.target.value)} placeholder="123 Main St" />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label>Phone</Label>
-              <Input value={shop.phone || ''} onChange={e => handleChange('phone', e.target.value)} placeholder="+1 234 567 8900" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Email</Label>
-              <Input value={shop.email || ''} onChange={e => handleChange('email', e.target.value)} placeholder="store@example.com" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label>Currency code</Label>
-              <Input value={shop.currency || ''} onChange={e => handleChange('currency', e.target.value)} placeholder="USD" maxLength={3} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Currency symbol</Label>
-              <Input value={shop.currency_symbol || ''} onChange={e => handleChange('currency_symbol', e.target.value)} placeholder="$" maxLength={3} />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Features</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {[
-            { field: 'loyalty_enabled', label: 'Customer loyalty points', desc: 'Earn and redeem points on purchases' },
-            { field: 'kds_enabled', label: 'Kitchen Display System', desc: 'Show orders on kitchen screen' },
-            { field: 'printer_enabled', label: 'Receipt printer', desc: 'Print physical receipts at checkout' },
-            { field: 'tax_inclusive', label: 'Tax-inclusive pricing', desc: 'Prices already include tax' },
-          ].map(({ field, label, desc }) => (
-            <div key={field} className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-900">{label}</p>
-                <p className="text-xs text-gray-500">{desc}</p>
-              </div>
-              <Switch
-                checked={shop[field] ?? false}
-                onCheckedChange={v => handleChange(field, v)}
-              />
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto">
+        {shop ? <ActivePage /> : (
+          <div className="flex items-center justify-center h-full text-gray-400 text-sm">Loading...</div>
+        )}
+      </div>
     </div>
   )
 }

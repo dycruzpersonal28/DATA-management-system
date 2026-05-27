@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -17,27 +17,18 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [isSignUp, setIsSignUp] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
 
-    if (isSignUp) {
-      const { error } = await supabase.auth.signUp({ email, password })
-      if (error) {
-        toast.error(error.message)
-      } else {
-        toast.success('Account created! Please check your email to confirm.')
-      }
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+
+    if (error) {
+      toast.error('Invalid email or password')
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) {
-        toast.error('Invalid email or password')
-      } else {
-        router.push('/dashboard')
-        router.refresh()
-      }
+      router.push('/dashboard')
+      router.refresh()
     }
 
     setLoading(false)
@@ -56,12 +47,8 @@ export default function LoginPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>{isSignUp ? 'Create account' : 'Sign in'}</CardTitle>
-            <CardDescription>
-              {isSignUp
-                ? 'Create your account to get started'
-                : 'Enter your credentials to access your store'}
-            </CardDescription>
+            <CardTitle>Sign in</CardTitle>
+            <CardDescription>Enter your credentials to access the dashboard</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -83,11 +70,11 @@ export default function LoginPage() {
                   <Input
                     id="password"
                     type={showPassword ? 'text' : 'password'}
-                    placeholder="........"
+                    placeholder="········"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    autoComplete={isSignUp ? 'new-password' : 'current-password'}
+                    autoComplete="current-password"
                     className="pr-10"
                   />
                   <button
@@ -99,26 +86,15 @@ export default function LoginPage() {
                   </button>
                 </div>
               </div>
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Please wait...' : isSignUp ? 'Create account' : 'Sign in'}
+              <Button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700" disabled={loading}>
+                {loading ? 'Signing in…' : 'Sign in'}
               </Button>
             </form>
-            <div className="mt-4 text-center text-sm">
-              <span className="text-gray-500">
-                {isSignUp ? 'Already have an account?' : "Don't have an account?"}
-              </span>{' '}
-              <button
-                onClick={() => setIsSignUp(!isSignUp)}
-                className="text-indigo-600 hover:underline font-medium"
-              >
-                {isSignUp ? 'Sign in' : 'Create one'}
-              </button>
-            </div>
           </CardContent>
         </Card>
 
         <p className="text-center text-sm text-gray-500">
-          Are you an employee?{' '}
+          POS employee?{' '}
           <a href="/pin" className="text-indigo-600 hover:underline">
             Use PIN login
           </a>

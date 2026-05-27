@@ -51,7 +51,7 @@ export default function ItemsPage() {
       // ── items — same simple select as POS, plus level join ────────────────
       const { data: rawItems, error: itemsErr } = await supabase
         .from('items')
-        .select('*, categories(id, name, color), level:item_levels(id, name, sort_order, is_sellable)')
+        .select('*, categories!items_category_id_fkey(id, name, color), level:item_levels(id, name, sort_order, is_sellable)')
         .eq('shop_id', shop.id)
         .order('name')
       if (itemsErr) { console.error('[items] error:', itemsErr); setLoading(false); return }
