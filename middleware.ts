@@ -62,7 +62,12 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
+  const { data, error } = await supabase.auth.getUser()
+if (error || !data) {
+  // Auth service is down — fail safe, let the request through or redirect
+  return supabaseResponse 
+}
+const { user } = data
 
   const pathname          = request.nextUrl.pathname
   const isAuthPage        = pathname === '/login' || pathname === '/pin'
