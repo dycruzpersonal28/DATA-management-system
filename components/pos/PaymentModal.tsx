@@ -73,7 +73,6 @@ function buildKDSText(receipt: any, items: any[]): string {
         lines.push(`  + ${a.name}${a.quantity > 1 ? ` x${a.quantity}` : ''}`)
       }
     }
-    // Show BOM ingredients if available
     if (item.ingredients && item.ingredients.length > 0) {
       for (const ing of item.ingredients) {
         lines.push(`    [${ing.name} x${ing.quantity}]`)
@@ -89,8 +88,6 @@ function buildKDSText(receipt: any, items: any[]): string {
 
 async function sendToNetworkPrinter(ip: string, text: string): Promise<boolean> {
   try {
-    // ESC/POS raw over network — requires a relay endpoint or direct TCP
-    // We use a fetch to a local relay at /api/print if available, else fallback
     const res = await fetch('/api/print', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -130,13 +127,13 @@ export default function PaymentModal({ total, onClose }: Props) {
   const [shop, setShop] = useState<any>(null)
   const { shop: shopFromHook, currencySymbol } = useShop()
 
-useEffect(() => {
-  if (shopFromHook) setShop(shopFromHook)
-}, [shopFromHook])
+  useEffect(() => {
+    if (shopFromHook) setShop(shopFromHook)
+  }, [shopFromHook])
 
-useEffect(() => {
-  supabase
-    .from('payment_types')
+  useEffect(() => {
+    supabase
+      .from('payment_types')
       .select('*')
       .eq('is_active', true)
       .order('sort_order')
@@ -164,6 +161,7 @@ useEffect(() => {
     try {
       if (!shop) throw new Error('No shop found')
 
+      // Receipt number
       const { count } = await supabase
         .from('receipts')
         .select('*', { count: 'exact', head: true })
@@ -171,19 +169,21 @@ useEffect(() => {
 
       const receiptNumber = `R-${String((count || 0) + 1).padStart(6, '0')}`
 
+      // Employee
       let employeeId = null
       try {
         const emp = JSON.parse(localStorage.getItem('pos_employee') || 'null')
         employeeId = emp?.id || null
       } catch {}
 
+      // Shift
       let activeShiftId = null
       try {
         const shift = JSON.parse(localStorage.getItem('pos_active_shift') || 'null')
         activeShiftId = shift?.id || null
       } catch {}
 
-      // Resolve app_user_id from the logged-in auth user so it shows up in the shift report
+      // App user / fallback shift lookup
       let appUserId: string | null = null
       try {
         const { data: { user } } = await supabase.auth.getUser()
@@ -194,7 +194,6 @@ useEffect(() => {
         }
       } catch {}
 
-      // If no shiftId from localStorage, look up the active open shift for this user
       if (!activeShiftId && appUserId) {
         try {
           const { data: openShift } = await supabase
@@ -211,10 +210,11 @@ useEffect(() => {
 
       const sub = subtotal()
 
-      // ── Create receipt ──────────────────────────────────────────────────────
-      const { data: receipt, error } = await supabase
-        .from('receipts')
-        .insert({
+      // ── Call the API route — handles receipt, stock, COGS, financial entries ──
+      const res = await fetch('/api/receipts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           shop_id: shop.id,
           employee_id: employeeId,
           customer_id: customerId || null,
@@ -223,74 +223,35 @@ useEffect(() => {
           discount_amount: discountAmount,
           tax_amount: 0,
           total,
-          payment_type_id: selectedType?.id !== 'cash' && selectedType?.id !== 'card' ? selectedType.id : null,
+          payment_type_id: selectedType?.id !== 'cash' && selectedType?.id !== 'card'
+            ? selectedType.id
+            : null,
           amount_tendered: isCash ? cashAmount : total,
           change_amount: changeAmount,
           loyalty_points_earned: Math.floor(total),
           loyalty_points_redeemed: 0,
           shift_id: activeShiftId,
           status: 'completed',
-        })
-        .select()
-        .single()
+          items,
+        }),
+      })
 
-      if (error) throw error
-
-      // ── Create receipt items (with addons embedded) ─────────────────────────
-      const receiptItems = items.map(item => ({
-        receipt_id: receipt.id,
-        item_id: item.itemId,
-        variant_id: item.variantId || null,
-        item_name: item.name,
-        unit_price: item.price,
-        quantity: item.quantity,
-        discount_amount: 0,
-        tax_amount: 0,
-        line_total: item.lineTotal,
-        modifiers: item.modifiers || [],
-        addons: (item.addons || []).map(a => ({ id: a.id, name: a.name, price: a.price, quantity: a.quantity })),
-        note: item.note || null,
-      }))
-
-      await supabase.from('receipt_items').insert(receiptItems)
-
-      // ── Inventory deduction + logging ───────────────────────────────────────
-      for (const item of items) {
-        if (!item.trackStock || !item.itemId) continue
-        const { data: inv } = await supabase
-          .from('inventory_levels')
-          .select('id, quantity')
-          .eq('item_id', item.itemId)
-          .is('variant_id', item.variantId ? null : null)
-          .maybeSingle()
-
-        if (inv) {
-          const beforeQty = inv.quantity
-          const afterQty = Math.max(0, beforeQty - item.quantity)
-          await supabase.from('inventory_levels').update({ quantity: afterQty }).eq('id', inv.id)
-          await supabase.from('inventory_logs').insert({
-            shop_id: shop.id,
-            receipt_id: receipt.id,
-            item_id: item.itemId,
-            item_name: item.name,
-            before_qty: beforeQty,
-            after_qty: afterQty,
-            change_qty: -(item.quantity),
-          })
-        }
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to process payment')
       }
 
-      // ── Printing ────────────────────────────────────────────────────────────
+      const { receipt, receiptItems } = await res.json()
+
+      // ── Printing ─────────────────────────────────────────────────────────────
       const receiptText = buildReceiptText(receipt, receiptItems, shop, currencySymbol, changeAmount, selectedType?.name || '')
       const kdsText = buildKDSText(receipt, receiptItems)
 
-      // Receipt printer
       if (shop.printer_enabled) {
         if (shop.receipt_printer_type === 'network' && shop.receipt_printer_address) {
           const ok = await sendToNetworkPrinter(shop.receipt_printer_address, receiptText)
           if (!ok) printViaWindow(receiptText, `Receipt ${receiptNumber}`)
         } else if (shop.receipt_printer_type === 'bluetooth') {
-          // Bluetooth Web API (Chrome only)
           try {
             const device = await (navigator as any).bluetooth.requestDevice({
               filters: [{ services: ['000018f0-0000-1000-8000-00805f9b34fb'] }],
@@ -308,7 +269,6 @@ useEffect(() => {
         }
       }
 
-      // KDS printer
       if (shop.kds_enabled) {
         if (shop.kds_printer_type === 'network' && shop.kds_printer_address) {
           const ok = await sendToNetworkPrinter(shop.kds_printer_address, kdsText)

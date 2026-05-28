@@ -1,5 +1,46 @@
 import { createServerClient } from '@supabase/ssr'
+import { createClient as createServiceClient } from '@supabase/supabase-js'
 import { NextResponse, type NextRequest } from 'next/server'
+
+// Cache per user: { isFullAccess, allowed[], exp }
+const userCache = new Map<string, { isFullAccess: boolean; allowed: string[]; exp: number }>()
+
+// Route prefix → permission name required to access it
+// ⚠️ HR routes are under /hr/ prefix — must match actual URL structure
+const ROUTE_PERMISSION_MAP: Record<string, string> = {
+  '/dashboard':     'page_dashboard',
+  '/reports':       'page_reports',
+  '/transactions':  'page_transactions',
+  '/items':         'page_items',
+  '/categories':    'page_categories',
+  '/modifiers':     'page_modifiers',
+  '/ingredients':   'page_ingredients',
+  '/inventory':     'page_inventory',
+  '/customers':     'page_customers',
+  '/employees':     'page_employees',
+  '/settings':      'page_settings',
+  '/pos':           'page_pos',
+  '/staff':         'page_staff_dashboard',
+  // HR routes — files live under /hr/ prefix
+  '/hr/shifts':     'page_shifts',
+  '/hr/attendance': 'page_attendance',
+  '/hr/kiosk':      'page_kiosk',
+  '/hr/payroll':    'page_payroll',
+}
+
+// Role names that get full access regardless of permissions
+// Matches against the `roles.name` value (case-insensitive)
+const FULL_ACCESS_ROLES = ['owner', 'manager', 'admin']
+
+// Redirect a restricted user to the best page they have access to
+function getHomeForUser(allowed: string[]): string {
+  if (allowed.includes('page_staff_dashboard')) return '/staff'
+  if (allowed.includes('page_dashboard'))       return '/dashboard'
+  if (allowed.includes('page_pos'))             return '/pos'
+  // Fall back to the first matched route they can access
+  const first = Object.entries(ROUTE_PERMISSION_MAP).find(([, perm]) => allowed.includes(perm))
+  return first ? first[0] : '/staff'
+}
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -9,13 +50,9 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
+        getAll() { return request.cookies.getAll() },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
           supabaseResponse = NextResponse.next({ request })
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
@@ -27,46 +64,138 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  const pathname = request.nextUrl.pathname
-  const isAuthPage = pathname === '/login' || pathname === '/pin' ||
-                     pathname.startsWith('/login') || pathname.startsWith('/pin')
-  const isApiRoute = pathname.startsWith('/api')
-  const isPublic   = isAuthPage || isApiRoute
+  const pathname          = request.nextUrl.pathname
+  const isAuthPage        = pathname === '/login' || pathname === '/pin'
+  const isChangePassword  = pathname === '/change-password'
 
-  // Not logged in → redirect to login
-  if (!user && !isPublic) {
+  // ── Not logged in ─────────────────────────────────────────────────────────
+  if (!user) {
+    if (isAuthPage) return supabaseResponse
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  // Already logged in → check role before redirecting
-  if (user && isAuthPage) {
-    const { data: appUser } = await supabase
-      .from('app_users')
-      .select('role')
+  // ── Must-change-password guard ────────────────────────────────────────────
+  // Check the flag on the employee row so we don't need a full permission load
+  // for this single check. Use the service client (defined below) lazily here.
+  if (!isChangePassword && !isAuthPage) {
+    const adminForFlag = createServiceClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+    const { data: flagRow } = await adminForFlag
+      .from('employees')
+      .select('must_change_password')
       .eq('auth_user_id', user.id)
       .single()
 
+    if (flagRow?.must_change_password === true) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/change-password'
+      return NextResponse.redirect(url)
+    }
+  }
+
+  // ── If already on change-password and flag is clear, bounce to home ───────
+  if (isChangePassword) {
+    const adminForFlag = createServiceClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+    const { data: flagRow } = await adminForFlag
+      .from('employees')
+      .select('must_change_password')
+      .eq('auth_user_id', user.id)
+      .single()
+
+    if (!flagRow?.must_change_password) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/dashboard'
+      return NextResponse.redirect(url)
+    }
+    // Flag still true → let them through to the change-password page
+    return supabaseResponse
+  }
+
+  // ── Load role + permissions (cached 60s) ──────────────────────────────────
+  let isFullAccess = false
+  let allowed: string[] = []
+
+  const cached = userCache.get(user.id)
+  if (cached && cached.exp > Date.now()) {
+    isFullAccess = cached.isFullAccess
+    allowed      = cached.allowed
+  } else {
+    const admin = createServiceClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+
+    // 1. Get email + role_id from app_users
+    const { data: appUser } = await admin
+      .from('app_users')
+      .select('email, role_id')
+      .eq('auth_user_id', user.id)
+      .single()
+
+    // 2. Look up the actual role name from the roles table
+    let roleName: string | undefined
+    if (appUser?.role_id) {
+      const { data: roleRow } = await admin
+        .from('roles')
+        .select('name')
+        .eq('id', appUser.role_id)
+        .single()
+      roleName = roleRow?.name
+    }
+
+    // 3. Check if this role gets full access
+    isFullAccess = FULL_ACCESS_ROLES.includes(roleName?.toLowerCase() ?? '')
+
+    if (!isFullAccess && appUser?.email) {
+      // 4. Find employee by email and load their permissions
+      const { data: employee } = await admin
+        .from('employees')
+        .select('id')
+        .eq('email', appUser.email)
+        .single()
+
+      if (employee?.id) {
+        const { data: perms } = await admin
+          .from('employee_permissions')
+          .select('permissions(name)')
+          .eq('employee_id', employee.id)
+
+        allowed = (perms ?? [])
+          .map((p: any) => p.permissions?.name)
+          .filter(Boolean)
+      }
+    }
+
+    userCache.set(user.id, { isFullAccess, allowed, exp: Date.now() + 60_000 })
+  }
+
+  // ── Logged in + on auth page → redirect to correct home ──────────────────
+  if (isAuthPage) {
     const url = request.nextUrl.clone()
-    // Cashiers go straight to POS, everyone else to dashboard
-    url.pathname = appUser?.role === 'cashier' ? '/pos' : '/dashboard'
+    url.pathname = isFullAccess ? '/dashboard' : getHomeForUser(allowed)
     return NextResponse.redirect(url)
   }
 
-  // Logged-in cashier trying to access non-POS pages → redirect to POS
-  if (user && !isPublic) {
-    const { data: appUser } = await supabase
-      .from('app_users')
-      .select('role')
-      .eq('auth_user_id', user.id)
-      .single()
+  // ── Full access roles → skip permission checks ────────────────────────────
+  if (isFullAccess) return supabaseResponse
 
-    const isPosPage = pathname.startsWith('/pos')
+  // ── Check permission for current route ───────────────────────────────────
+  const matchedRoute = Object.keys(ROUTE_PERMISSION_MAP).find(prefix =>
+    pathname === prefix || pathname.startsWith(prefix + '/')
+  )
 
-    if (appUser?.role === 'cashier' && !isPosPage) {
+  if (matchedRoute) {
+    const requiredPerm = ROUTE_PERMISSION_MAP[matchedRoute]
+    if (!allowed.includes(requiredPerm)) {
       const url = request.nextUrl.clone()
-      url.pathname = '/pos'
+      url.pathname = getHomeForUser(allowed)
       return NextResponse.redirect(url)
     }
   }
@@ -76,6 +205,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
