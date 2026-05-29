@@ -281,14 +281,18 @@ function ShiftReportContent() {
   }
 
   async function handleVoid(receipt: any, managerId: string, managerName: string) {
-    const { error } = await supabase.from('receipts').update({
-      status: 'voided',
-      voided_by: managerId,
-      voided_at: new Date().toISOString(),
-      void_note: `Voided by ${managerName}`,
-    }).eq('id', receipt.id)
-    if (error) { toast.error('Failed to void transaction'); return }
-    toast.success(`Transaction ${receipt._ref} voided`)
+    const res = await fetch(`/api/transactions/${receipt.id}/void`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        voided_by: managerId,
+        voided_at: new Date().toISOString(),
+        void_note: `Voided by ${managerName}`,
+      }),
+    })
+    const data = await res.json()
+    if (!res.ok) { toast.error(data.error || 'Failed to void transaction'); return }
+    toast.success(`Transaction ${receipt._ref} voided — ${data.items_reverted} item(s) restocked`)
     loadData()
   }
 
@@ -359,7 +363,7 @@ function ShiftReportContent() {
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
           {loading ? (
             <div className="flex items-center justify-center h-40 text-gray-400 text-sm">Loading report…</div>
           ) : (
@@ -377,7 +381,7 @@ function ShiftReportContent() {
                       <card.icon className={`w-3.5 h-3.5 ${card.text}`} />
                     </div>
                     <p className="text-xs text-gray-500">{card.label}</p>
-                    <p className={`text-base font-bold ${card.text}`}>{currencySymbol}{card.value.toFixed(2)}</p>
+                    <p className={`text-sm sm:text-base font-bold ${card.text}`}>{currencySymbol}{card.value.toFixed(2)}</p>
                   </div>
                 ))}
               </div>
@@ -420,11 +424,14 @@ function ShiftReportContent() {
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-gray-800">Shift Transactions</h3>
-                  <span className="text-xs text-gray-400">{allTransactions.length} entries</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-400 sm:hidden">← scroll →</span>
+                    <span className="text-xs text-gray-400">{allTransactions.length} entries</span>
+                  </div>
                 </div>
 
                 <div className="overflow-auto" style={{ maxHeight: '420px' }}>
-                  <table className="w-full text-xs min-w-[600px]">
+                  <table className="w-full text-xs min-w-[580px]">
                     <thead>
                       <tr className="border-b border-gray-200 bg-gray-50">
                         <th className="sticky top-0 bg-gray-50 z-10 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">Time</th>

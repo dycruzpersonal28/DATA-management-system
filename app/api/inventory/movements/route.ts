@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   const itemId  = searchParams.get('item_id')
   const type    = searchParams.get('type')  // sale | restock | adjustment | loss
 
-  // ── stock_movements: manual adjustments, restocks, losses, and sale deductions ──
+  // ── stock_movements: manual adjustments, restocks, losses ──────────────────────
   let movQuery = admin
     .from('stock_movements')
     .select(`
@@ -42,47 +42,86 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: false })
     .limit(500)
 
-  if (from) movQuery = movQuery.gte('created_at', `${from}T00:00:00`)
-  if (to)   movQuery = movQuery.lte('created_at', `${to}T23:59:59`)
+  if (from)   movQuery = movQuery.gte('created_at', `${from}T00:00:00`)
+  if (to)     movQuery = movQuery.lte('created_at', `${to}T23:59:59`)
   if (itemId) movQuery = movQuery.eq('item_id', itemId)
-  if (type)   movQuery = movQuery.eq('type', type)
+  if (type && type !== 'sale') movQuery = movQuery.eq('type', type)
 
   const { data: movements, error: movErr } = await movQuery
   if (movErr) return NextResponse.json({ error: movErr.message }, { status: 500 })
 
-  // ── For sale movements: fetch the receipt_number from receipts ──
-  // Only do this if there are sale-type movements with a reference_id
-  const saleMovements = (movements || []).filter(
-    m => m.type === 'sale' && m.reference_type === 'receipt' && m.reference_id
-  )
-  const receiptIds = [...new Set(saleMovements.map(m => m.reference_id).filter(Boolean))]
+  // ── inventory_logs: sale deductions + void reversals ────────────────────────────
+  let logQuery = admin
+    .from('inventory_logs')
+    .select('id, item_id, item_name, before_qty, after_qty, change_qty, receipt_id, created_at')
+    .eq('shop_id', shop_id)
+    .order('created_at', { ascending: false })
+    .limit(500)
 
+  if (from)   logQuery = logQuery.gte('created_at', `${from}T00:00:00`)
+  if (to)     logQuery = logQuery.lte('created_at', `${to}T23:59:59`)
+  if (itemId) logQuery = logQuery.eq('item_id', itemId)
+
+  const { data: invLogs, error: invErr } = await logQuery
+  if (invErr) return NextResponse.json({ error: invErr.message }, { status: 500 })
+
+  // Skip inventory_logs if filtering by non-sale type
+  const useInvLogs = !type || type === 'sale'
+
+  // ── Fetch receipt numbers for inventory_logs ──────────────────────────────────
+  const invReceiptIds = [...new Set((invLogs || []).map((l: any) => l.receipt_id).filter(Boolean))]
   let receiptMap: Record<string, string> = {}
-  if (receiptIds.length > 0) {
+  if (invReceiptIds.length > 0) {
     const { data: receipts } = await admin
       .from('receipts')
       .select('id, receipt_number')
-      .in('id', receiptIds)
+      .in('id', invReceiptIds)
     for (const r of receipts || []) {
       receiptMap[r.id] = r.receipt_number
     }
   }
 
-  // ── Normalise into UnifiedLog shape (matches what the page expects) ──
-  const logs = (movements || []).map(m => ({
-    id:             `move-${m.id}`,
-    source:         m.type as 'sale' | 'restock' | 'adjustment' | 'loss',
-    item_name:      (m.items as any)?.name ?? 'Unknown item',
-    item_id:        m.item_id,
-    receipt_number: m.reference_type === 'receipt' && m.reference_id
-                      ? receiptMap[m.reference_id] ?? null
-                      : null,
-    change_qty:     Number(m.quantity),
-    before_qty:     null,   // not stored — would require event-sourcing
-    after_qty:      null,
-    note:           m.note ?? null,
-    created_at:     m.created_at,
-  }))
+  // ── Normalise stock_movements into UnifiedLog shape ──────────────────────────
+  const movLogs = (movements || [])
+    .filter(m => !type || m.type === type)
+    .map((m: any) => ({
+      id:             `move-${m.id}`,
+      source:         m.type as 'sale' | 'restock' | 'adjustment' | 'loss',
+      item_name:      m.items?.name ?? 'Unknown item',
+      item_id:        m.item_id,
+      receipt_number: m.reference_type === 'receipt' && m.reference_id
+                        ? receiptMap[m.reference_id] ?? null
+                        : null,
+      change_qty:     Number(m.quantity),
+      before_qty:     null,
+      after_qty:      null,
+      note:           m.note ?? null,
+      created_at:     m.created_at,
+    }))
+
+  // ── Normalise inventory_logs into UnifiedLog shape ──────────────────────────
+  const invLogsMapped = useInvLogs ? (invLogs || []).map((l: any) => {
+    const isVoid = Number(l.change_qty) > 0
+    return {
+      id:             `inv-${l.id}`,
+      source:         'sale' as const,
+      item_name:      l.item_name ?? 'Unknown item',
+      item_id:        l.item_id,
+      receipt_number: l.receipt_id ? receiptMap[l.receipt_id] ?? null : null,
+      change_qty:     Number(l.change_qty) * (isVoid ? 1 : -1),
+      before_qty:     Number(l.before_qty ?? 0),
+      after_qty:      Number(l.after_qty ?? 0),
+      note:           isVoid
+                        ? `Void: ${l.item_name}`
+                        : `Sale: ${l.item_name}`,
+      created_at:     l.created_at,
+    }
+  }) : []
+
+  // ── Merge + sort by created_at desc ──────────────────────────────────────────
+  const logs = [...movLogs, ...invLogsMapped]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 500)
 
   // ── Summary stats ──
   const totalIn  = logs.filter(l => l.change_qty > 0).reduce((s, l) => s + l.change_qty, 0)

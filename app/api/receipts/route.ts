@@ -86,9 +86,10 @@ export async function POST(req: NextRequest) {
 
       // --- 3a. Look up BOM ingredients for this item ---
       const { data: bomRows } = await supabase
-        .from('item_bom')
+        .from('item_ingredients')
         .select('ingredient_id, quantity')
         .eq('item_id', item.itemId)
+        .eq('shop_id', shop_id)
 
       if (bomRows && bomRows.length > 0) {
         // BOM-based item: deduct ingredients from inventory_levels
@@ -124,16 +125,23 @@ export async function POST(req: NextRequest) {
           })
         }
 
-        // COGS from item_bom_cost (pre-calculated BOM cost)
-        const { data: bomCost } = await supabase
-          .from('item_bom_cost')
-          .select('bom_cost')
-          .eq('item_id', item.variantId || item.itemId)
-          .maybeSingle()
+        // COGS: compute from item_ingredients × ingredient costs
+        const ingredientIds = bomRows.map((b: any) => b.ingredient_id)
+        const { data: ingredientCosts } = await supabase
+          .from('items')
+          .select('id, cost')
+          .in('id', ingredientIds)
 
-        const cogsAmount = bomCost?.bom_cost
-          ? Number(bomCost.bom_cost) * item.quantity
-          : 0
+        const costMap: Record<string, number> = {}
+        for (const ic of ingredientCosts || []) {
+          costMap[ic.id] = Number(ic.cost) || 0
+        }
+
+        const unitBomCost = bomRows.reduce((sum: number, b: any) => {
+          return sum + (costMap[b.ingredient_id] ?? 0) * b.quantity
+        }, 0)
+
+        const cogsAmount = unitBomCost * item.quantity
 
         if (cogsAmount > 0) {
           financialEntries.push({

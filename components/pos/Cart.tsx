@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useCart } from '@/lib/hooks/useCart'
-import { Trash2, Plus, Minus, ShoppingCart, Tag, Percent, ChevronDown } from 'lucide-react'
+import { Trash2, Plus, Minus, ShoppingCart, Tag, Percent, ChevronDown, X, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useShop } from '@/lib/hooks/useShop'
 import { createClient } from '@/lib/supabase/client'
@@ -16,6 +16,94 @@ interface CartProps {
 
 type TaxRate = { id: string; name: string; rate: number; is_active: boolean }
 type Discount = { id: string; name: string; type: 'percent' | 'fixed'; value: number; is_active: boolean }
+type ItemDiscount = { discount: Discount; amount: number }
+
+// ── Item Discount Picker Modal ────────────────────────────────────────────────
+function ItemDiscountModal({
+  item,
+  discounts,
+  currentDiscount,
+  currencySymbol,
+  onApply,
+  onRemove,
+  onClose,
+}: {
+  item: any
+  discounts: Discount[]
+  currentDiscount: ItemDiscount | null
+  currencySymbol: string
+  onApply: (discount: Discount) => void
+  onRemove: () => void
+  onClose: () => void
+}) {
+  const [selected, setSelected] = useState<Discount | null>(currentDiscount?.discount || null)
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Item Discount</p>
+            <p className="text-xs text-gray-400 truncate max-w-[180px]">{item.name}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-3 space-y-1.5">
+          {discounts.map(d => {
+            const isSelected = selected?.id === d.id
+            const previewAmt = d.type === 'percent'
+              ? Math.min(item.lineTotal * (d.value / 100), item.lineTotal)
+              : Math.min(d.value, item.lineTotal)
+            return (
+              <button
+                key={d.id}
+                onClick={() => setSelected(isSelected ? null : d)}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all text-left ${
+                  isSelected
+                    ? 'border-green-400 bg-green-50'
+                    : 'border-gray-200 hover:border-green-200 hover:bg-gray-50'
+                }`}
+              >
+                <div>
+                  <p className={`text-sm font-medium ${isSelected ? 'text-green-800' : 'text-gray-800'}`}>{d.name}</p>
+                  <p className="text-xs text-gray-400">
+                    {d.type === 'percent' ? `${d.value}%` : `${currencySymbol}${d.value.toFixed(2)}`}
+                    {' '}— saves {currencySymbol}{previewAmt.toFixed(2)}
+                  </p>
+                </div>
+                {isSelected && <Check className="w-4 h-4 text-green-600 flex-shrink-0" />}
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="px-3 pb-4 flex gap-2">
+          {currentDiscount && (
+            <button
+              onClick={onRemove}
+              className="flex-1 py-2.5 rounded-xl border border-red-200 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors"
+            >
+              Remove
+            </button>
+          )}
+          <button
+            onClick={() => { if (selected) onApply(selected); else onClose() }}
+            disabled={!selected}
+            className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function Cart({ diningOption, activeShiftId, onPaymentComplete }: CartProps) {
   const supabase = createClient()
@@ -30,11 +118,15 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
   const [taxEnabled, setTaxEnabled] = useState(false)
   const [showTaxDropdown, setShowTaxDropdown] = useState(false)
 
-  // Discount state
+  // Receipt-level discount state
   const [discounts, setDiscounts] = useState<Discount[]>([])
   const [selectedDiscount, setSelectedDiscount] = useState<Discount | null>(null)
   const [discountEnabled, setDiscountEnabled] = useState(false)
   const [showDiscountDropdown, setShowDiscountDropdown] = useState(false)
+
+  // Per-item discount state: itemId → ItemDiscount
+  const [itemDiscounts, setItemDiscounts] = useState<Map<string, ItemDiscount>>(new Map())
+  const [editingItemId, setEditingItemId] = useState<string | null>(null)
 
   // Load tax rates and discounts from DB
   useEffect(() => {
@@ -66,19 +158,37 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
     load()
   }, [])
 
+  // Clear item discounts for removed items
+  useEffect(() => {
+    const itemIds = new Set(items.map(i => i.id))
+    setItemDiscounts(prev => {
+      const next = new Map(prev)
+      for (const key of next.keys()) {
+        if (!itemIds.has(key)) next.delete(key)
+      }
+      return next
+    })
+  }, [items])
+
   const sub = subtotal()
   const taxAmount = taxEnabled && selectedTax ? sub * (selectedTax.rate / 100) : 0
 
-  const computedDiscount = (() => {
+  // Total item-level discount
+  const itemDiscountTotal = Array.from(itemDiscounts.values()).reduce((sum, d) => sum + d.amount, 0)
+
+  const receiptLevelDiscount = (() => {
     if (!discountEnabled || !selectedDiscount) return 0
-    if (selectedDiscount.type === 'percent') return Math.min(sub * (selectedDiscount.value / 100), sub)
-    return Math.min(selectedDiscount.value, sub)
+    const discountableBase = Math.max(0, sub - itemDiscountTotal)
+    if (selectedDiscount.type === 'percent') return Math.min(discountableBase * (selectedDiscount.value / 100), discountableBase)
+    return Math.min(selectedDiscount.value, discountableBase)
   })()
+
+  const computedDiscount = itemDiscountTotal + receiptLevelDiscount
 
   // Keep zustand discount in sync
   useEffect(() => {
-  setDiscount(computedDiscount)
-}, [computedDiscount])
+    setDiscount(computedDiscount)
+  }, [computedDiscount])
 
   const tot = Math.max(0, sub + taxAmount - computedDiscount)
 
@@ -98,8 +208,40 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
     setShowDiscountDropdown(false)
   }
 
+  function handleApplyItemDiscount(itemId: string, lineTotal: number, discount: Discount) {
+    const amount = discount.type === 'percent'
+      ? Math.min(lineTotal * (discount.value / 100), lineTotal)
+      : Math.min(discount.value, lineTotal)
+    setItemDiscounts(prev => new Map(prev).set(itemId, { discount, amount }))
+    setEditingItemId(null)
+  }
+
+  function handleRemoveItemDiscount(itemId: string) {
+    setItemDiscounts(prev => {
+      const next = new Map(prev)
+      next.delete(itemId)
+      return next
+    })
+    setEditingItemId(null)
+  }
+
+  const editingItem = editingItemId ? items.find(i => i.id === editingItemId) || null : null
+
   return (
     <div className="flex flex-col h-full">
+      {/* Item Discount Modal */}
+      {editingItem && (
+        <ItemDiscountModal
+          item={editingItem}
+          discounts={discounts}
+          currentDiscount={itemDiscounts.get(editingItem.id) || null}
+          currencySymbol={currencySymbol}
+          onApply={d => handleApplyItemDiscount(editingItem.id, editingItem.lineTotal, d)}
+          onRemove={() => handleRemoveItemDiscount(editingItem.id)}
+          onClose={() => setEditingItemId(null)}
+        />
+      )}
+
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -127,52 +269,82 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
           </div>
         ) : (
           <div className="p-3 space-y-2">
-            {items.map(item => (
-              <div key={item.id} className="bg-gray-50 rounded-lg p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
-                    {item.addons && item.addons.length > 0 && (
-                      <div className="mt-1 space-y-0.5">
-                        {item.addons.map(a => (
-                          <p key={a.id} className="text-xs text-indigo-600">
-                            + {a.name}{a.quantity > 1 ? ` ×${a.quantity}` : ''} ({currencySymbol}{(a.price * a.quantity).toFixed(2)})
-                          </p>
-                        ))}
-                      </div>
-                    )}
-                    {item.note && (
-                      <p className="text-xs text-amber-600 mt-0.5">📝 {item.note}</p>
-                    )}
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {currencySymbol}{item.price.toFixed(2)}
-                      {item.addons?.length > 0 && <span> + addons</span>} each
-                    </p>
-                  </div>
-                  <button onClick={() => removeItem(item.id)} className="text-gray-300 hover:text-red-500 flex-shrink-0">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <div className="flex items-center justify-between mt-2">
-                  <div className="flex items-center gap-2">
+            {items.map(item => {
+              const itemDisc = itemDiscounts.get(item.id)
+              return (
+                <div
+                  key={item.id}
+                  className={`rounded-lg p-3 cursor-pointer transition-all ${
+                    itemDisc
+                      ? 'bg-green-50 border border-green-200'
+                      : 'bg-gray-50 hover:bg-gray-100 border border-transparent hover:border-gray-200'
+                  }`}
+                  onClick={() => discounts.length > 0 && setEditingItemId(item.id)}
+                  title={discounts.length > 0 ? 'Tap to apply item discount' : undefined}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
+                      {item.addons && item.addons.length > 0 && (
+                        <div className="mt-1 space-y-0.5">
+                          {item.addons.map((a: any) => (
+                            <p key={a.id} className="text-xs text-indigo-600">
+                              + {a.name}{a.quantity > 1 ? ` ×${a.quantity}` : ''} ({currencySymbol}{(a.price * a.quantity).toFixed(2)})
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      {item.note && (
+                        <p className="text-xs text-amber-600 mt-0.5">📝 {item.note}</p>
+                      )}
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {currencySymbol}{item.price.toFixed(2)}
+                        {item.addons?.length > 0 && <span> + addons</span>} each
+                      </p>
+                      {itemDisc && (
+                        <p className="text-xs text-green-600 font-medium mt-0.5">
+                          <Tag className="w-3 h-3 inline mr-0.5" />
+                          {itemDisc.discount.name} −{currencySymbol}{itemDisc.amount.toFixed(2)}
+                        </p>
+                      )}
+                    </div>
                     <button
-                      onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                      className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"
+                      onClick={e => { e.stopPropagation(); removeItem(item.id) }}
+                      className="text-gray-300 hover:text-red-500 flex-shrink-0"
                     >
-                      <Minus className="w-3 h-3" />
-                    </button>
-                    <span className="text-sm font-medium w-6 text-center">{item.quantity}</span>
-                    <button
-                      onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                      className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"
-                    >
-                      <Plus className="w-3 h-3" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                  <p className="text-sm font-semibold text-gray-900">{currencySymbol}{item.lineTotal.toFixed(2)}</p>
+                  <div className="flex items-center justify-between mt-2">
+                    <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                      <button
+                        onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                        className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <span className="text-sm font-medium w-6 text-center">{item.quantity}</span>
+                      <button
+                        onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                        className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <div className="text-right">
+                      {itemDisc ? (
+                        <div>
+                          <p className="text-xs line-through text-gray-400">{currencySymbol}{item.lineTotal.toFixed(2)}</p>
+                          <p className="text-sm font-semibold text-green-700">{currencySymbol}{(item.lineTotal - itemDisc.amount).toFixed(2)}</p>
+                        </div>
+                      ) : (
+                        <p className="text-sm font-semibold text-gray-900">{currencySymbol}{item.lineTotal.toFixed(2)}</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -230,7 +402,7 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
             </div>
           )}
 
-          {/* Discount toggle */}
+          {/* Receipt-level discount toggle */}
           {discounts.length > 0 && (
             <div className="flex items-center justify-between relative">
               <div className="flex items-center gap-2">
@@ -299,10 +471,16 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
               <span>+{currencySymbol}{taxAmount.toFixed(2)}</span>
             </div>
           )}
-          {discountEnabled && selectedDiscount && computedDiscount > 0 && (
+          {itemDiscountTotal > 0 && (
+            <div className="flex justify-between text-green-600">
+              <span>Item discounts</span>
+              <span>-{currencySymbol}{itemDiscountTotal.toFixed(2)}</span>
+            </div>
+          )}
+          {discountEnabled && selectedDiscount && receiptLevelDiscount > 0 && (
             <div className="flex justify-between text-green-600">
               <span>{selectedDiscount.name}</span>
-              <span>-{currencySymbol}{computedDiscount.toFixed(2)}</span>
+              <span>-{currencySymbol}{receiptLevelDiscount.toFixed(2)}</span>
             </div>
           )}
           <div className="flex justify-between font-semibold text-gray-900 text-base pt-1 border-t border-gray-100">
@@ -310,6 +488,10 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
             <span>{currencySymbol}{tot.toFixed(2)}</span>
           </div>
         </div>
+
+        {discounts.length > 0 && items.length > 0 && (
+          <p className="text-[10px] text-gray-400 text-center -mt-1">Tap any item to apply an item-level discount</p>
+        )}
 
         <Button
           className="w-full"

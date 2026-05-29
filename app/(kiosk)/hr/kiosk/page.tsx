@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Employee {
@@ -49,47 +50,48 @@ function getGridConfig(count: number): {
   roleText: string
   badgeText: string
 } {
+  // Breakpoints: xs=portrait phone, sm=landscape phone/portrait tablet, md=landscape tablet, lg=desktop
   if (count <= 4) return {
     cols: 'grid-cols-2 sm:grid-cols-2 md:grid-cols-4',
-    cardPadding: 'p-8',
-    avatarSize: 'w-24 h-24',
-    avatarText: 'text-3xl',
-    nameText: 'text-base',
-    roleText: 'text-sm',
-    badgeText: 'text-sm px-4 py-1.5',
+    cardPadding: 'p-5 sm:p-6 md:p-8',
+    avatarSize: 'w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24',
+    avatarText: 'text-2xl sm:text-2xl md:text-3xl',
+    nameText: 'text-sm md:text-base',
+    roleText: 'text-xs sm:text-sm',
+    badgeText: 'text-xs sm:text-sm px-3 sm:px-4 py-1 sm:py-1.5',
   }
   if (count <= 8) return {
     cols: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4',
-    cardPadding: 'p-6',
-    avatarSize: 'w-20 h-20',
-    avatarText: 'text-2xl',
-    nameText: 'text-sm',
+    cardPadding: 'p-4 sm:p-5 md:p-6',
+    avatarSize: 'w-14 h-14 sm:w-16 sm:h-16 md:w-20 md:h-20',
+    avatarText: 'text-xl sm:text-xl md:text-2xl',
+    nameText: 'text-xs sm:text-sm',
     roleText: 'text-xs',
-    badgeText: 'text-xs px-3 py-1',
+    badgeText: 'text-xs px-2 sm:px-3 py-0.5 sm:py-1',
   }
   if (count <= 12) return {
     cols: 'grid-cols-3 sm:grid-cols-4 md:grid-cols-4',
-    cardPadding: 'p-5',
-    avatarSize: 'w-16 h-16',
-    avatarText: 'text-xl',
-    nameText: 'text-sm',
+    cardPadding: 'p-3 sm:p-4 md:p-5',
+    avatarSize: 'w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16',
+    avatarText: 'text-lg sm:text-xl',
+    nameText: 'text-xs sm:text-sm',
     roleText: 'text-xs',
-    badgeText: 'text-xs px-3 py-1',
+    badgeText: 'text-xs px-2 sm:px-3 py-0.5 sm:py-1',
   }
   if (count <= 20) return {
     cols: 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5',
-    cardPadding: 'p-4',
-    avatarSize: 'w-14 h-14',
-    avatarText: 'text-lg',
+    cardPadding: 'p-3 sm:p-4',
+    avatarSize: 'w-11 h-11 sm:w-12 sm:h-12 md:w-14 md:h-14',
+    avatarText: 'text-base sm:text-lg',
     nameText: 'text-xs',
     roleText: 'text-xs',
     badgeText: 'text-xs px-2 py-0.5',
   }
   return {
     cols: 'grid-cols-4 sm:grid-cols-5 md:grid-cols-6',
-    cardPadding: 'p-3',
-    avatarSize: 'w-12 h-12',
-    avatarText: 'text-base',
+    cardPadding: 'p-2.5 sm:p-3',
+    avatarSize: 'w-10 h-10 sm:w-12 sm:h-12',
+    avatarText: 'text-sm sm:text-base',
     nameText: 'text-xs',
     roleText: 'hidden',
     badgeText: 'text-xs px-2 py-0.5',
@@ -127,14 +129,14 @@ function PinPad({
           />
         ))}
       </div>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
         {keys.map((k, i) => (
           <button
             key={i}
             onClick={() => press(k)}
             disabled={k === ''}
             className={`
-              w-20 h-20 rounded-2xl text-xl font-semibold transition-all duration-100 select-none
+              w-16 h-16 sm:w-20 sm:h-20 rounded-2xl text-lg sm:text-xl font-semibold transition-all duration-100 select-none
               ${k === ''
                 ? 'invisible'
                 : k === '⌫'
@@ -153,6 +155,7 @@ function PinPad({
 
 // ─── Main Kiosk ───────────────────────────────────────────────────────────────
 export default function KioskPage() {
+  const router = useRouter()
   const [step, setStep]                   = useState<KioskStep>('select')
   const [employees, setEmployees]         = useState<Employee[]>([])
   const [shifts, setShifts]               = useState<ShiftSchedule[]>([])
@@ -233,6 +236,11 @@ export default function KioskPage() {
     setSearch('')
   }
 
+  const handleLogout = async () => {
+    await fetch('/api/auth/signout', { method: 'POST' })
+    router.push('/login')
+  }
+
   const selectEmployee = (emp: Employee) => {
     if (!selectedShift) return   // guard — shift must be chosen first
     setSelected(emp)
@@ -306,18 +314,54 @@ export default function KioskPage() {
         <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
         {/* Header */}
-        <div className="bg-white border-b border-gray-100 px-8 py-5 flex items-center justify-between shadow-sm flex-shrink-0">
+        <div className="bg-white border-b border-gray-100 px-4 sm:px-8 py-4 sm:py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm flex-shrink-0">
           <div>
             <div className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: '#1D9E75', letterSpacing: '0.12em' }}>
               Employee Kiosk
             </div>
-            <div className="text-3xl font-semibold text-gray-900" style={{ fontFamily: "'DM Mono', monospace" }}>
+            <div className="text-2xl sm:text-3xl font-semibold text-gray-900" style={{ fontFamily: "'DM Mono', monospace" }}>
               {fmt(time)}
             </div>
+            {/* Date + hint shown below clock on tablet portrait */}
+            <div className="sm:hidden mt-1">
+              <div className="text-xs font-medium text-gray-600">{fmtDate(time)}</div>
+              <div className="text-xs text-gray-400">Select your name to clock in or out</div>
+            </div>
           </div>
-          <div className="text-right">
-            <div className="text-sm font-medium text-gray-700">{fmtDate(time)}</div>
-            <div className="text-xs text-gray-400 mt-1">Select your name to clock in or out</div>
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            {/* Date shown on right only on sm+ */}
+            <div className="hidden sm:block text-right mr-2">
+              <div className="text-sm font-medium text-gray-700">{fmtDate(time)}</div>
+              <div className="text-xs text-gray-400 mt-1">Select your name to clock in or out</div>
+            </div>
+            <button
+              onClick={() => router.push('/dashboard')}
+              className="flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-xl border border-gray-200 text-xs sm:text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              <span className="hidden sm:inline">Dashboard</span>
+            </button>
+            <button
+              onClick={() => router.push('/staff')}
+              className="flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-xl border border-gray-200 text-xs sm:text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <span className="hidden sm:inline">Staff</span>
+            </button>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium text-white transition-colors"
+              style={{ background: '#0F6E56' }}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              <span className="hidden sm:inline">Log Out</span>
+            </button>
           </div>
         </div>
 
@@ -330,7 +374,7 @@ export default function KioskPage() {
             <span className="text-sm text-gray-400">Loading employees...</span>
           </div>
         ) : (
-          <div className="flex-1 flex flex-col px-8 pt-6 pb-8 w-full max-w-6xl mx-auto">
+          <div className="flex-1 flex flex-col px-4 sm:px-8 pt-4 sm:pt-6 pb-6 sm:pb-8 w-full max-w-6xl mx-auto">
 
             {/* ── Shift selector — required ── */}
             <div className="mb-6 flex-shrink-0">
@@ -475,18 +519,18 @@ export default function KioskPage() {
     const shade = selected ? avatarShade(selected.name) : TEAL_SHADES[0]
     const fName = selected ? firstName(selected.name) : ''
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-8" style={{ background: '#f4f7f6', fontFamily: "'DM Sans', sans-serif" }}>
+      <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-8" style={{ background: '#f4f7f6', fontFamily: "'DM Sans', sans-serif" }}>
         <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
-        <div className="bg-white rounded-3xl border border-gray-100 p-10 w-full max-w-sm shadow-lg">
-          <div className="flex flex-col items-center mb-8">
+        <div className="bg-white rounded-3xl border border-gray-100 p-6 sm:p-10 w-full max-w-sm shadow-lg">
+          <div className="flex flex-col items-center mb-6 sm:mb-8">
             <div
-              className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-semibold text-white mb-4"
+              className="w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center text-xl sm:text-2xl font-semibold text-white mb-3 sm:mb-4"
               style={{ background: shade.bg, boxShadow: `0 0 0 5px ${shade.ring}` }}
             >
               {fName}
             </div>
-            <div className="text-xl font-semibold text-gray-900">{selected?.name}</div>
+            <div className="text-lg sm:text-xl font-semibold text-gray-900">{selected?.name}</div>
             <div
               className="text-sm font-medium mt-2 px-4 py-1 rounded-full"
               style={isClockedIn
@@ -498,10 +542,10 @@ export default function KioskPage() {
             </div>
           </div>
 
-          <p className="text-center text-sm text-gray-400 mb-6">Enter your PIN</p>
+          <p className="text-center text-sm text-gray-400 mb-5 sm:mb-6">Enter your PIN</p>
           <PinPad value={employeePin} onChange={setEmployeePin} />
 
-          <div className="flex gap-3 mt-8">
+          <div className="flex gap-3 mt-6 sm:mt-8">
             <button
               onClick={resetKiosk}
               className="flex-1 py-3 rounded-2xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
@@ -525,11 +569,11 @@ export default function KioskPage() {
   // ─── STEP: Manager PIN ──────────────────────────────────────────────────────
   if (step === 'manager_pin') {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-8" style={{ background: '#f4f7f6', fontFamily: "'DM Sans', sans-serif" }}>
+      <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-8" style={{ background: '#f4f7f6', fontFamily: "'DM Sans', sans-serif" }}>
         <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
-        <div className="bg-white rounded-3xl border border-gray-100 p-10 w-full max-w-sm shadow-lg">
-          <div className="flex flex-col items-center mb-8">
+        <div className="bg-white rounded-3xl border border-gray-100 p-6 sm:p-10 w-full max-w-sm shadow-lg">
+          <div className="flex flex-col items-center mb-6 sm:mb-8">
             <div
               className="w-16 h-16 rounded-full flex items-center justify-center text-2xl mb-4"
               style={{ background: '#FFF8E1', border: '1px solid #FAC775' }}
@@ -544,7 +588,7 @@ export default function KioskPage() {
 
           <PinPad value={managerPin} onChange={setManagerPin} />
 
-          <div className="flex gap-3 mt-8">
+          <div className="flex gap-3 mt-6 sm:mt-8">
             <button
               onClick={() => { setManagerPin(''); setStep('employee_pin') }}
               className="flex-1 py-3 rounded-2xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"

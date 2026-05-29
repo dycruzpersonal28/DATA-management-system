@@ -3,8 +3,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   TrendingUp, TrendingDown, DollarSign, ShoppingBag,
-  Users, Percent, RefreshCw, ChevronDown,
+  Users, Percent, RefreshCw, ChevronDown, Receipt, ExternalLink,
 } from 'lucide-react'
+import Link from 'next/link'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -13,10 +14,12 @@ import {
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Summary = {
   totalRevenue: number
+  totalOtherIncome: number
   totalCogs: number
   totalPayroll: number
   totalDiscount: number
   totalTax: number
+  totalOperatingExpenses: number   // journal expenses + labor
   grossProfit: number
   netProfit: number
   profitMargin: number
@@ -29,15 +32,14 @@ type DailyRow = {
   cogs: number
   payroll: number
   discount: number
+  expenses: number
   net: number
 }
 
 type Preset = 'today' | '7d' | '30d' | 'mtd' | 'custom'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function toDateStr(d: Date) {
-  return d.toISOString().split('T')[0]
-}
+function toDateStr(d: Date) { return d.toISOString().split('T')[0] }
 
 function presetRange(p: Preset): { from: string; to: string } {
   const now = new Date()
@@ -57,8 +59,8 @@ function presetRange(p: Preset): { from: string; to: string } {
   return { from: today, to: today }
 }
 
-function fmt(n: number, sym = '₱') {
-  return `${sym}${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+function fmt(n: number | undefined | null, sym = '₱') {
+  return `${sym}${(n ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function shortDate(d: string) {
@@ -67,7 +69,7 @@ function shortDate(d: string) {
 
 // ── Stat card ─────────────────────────────────────────────────────────────────
 function StatCard({
-  label, value, sub, icon: Icon, color, bg, pulse,
+  label, value, sub, icon: Icon, color, bg, pulse, href,
 }: {
   label: string
   value: string
@@ -76,9 +78,10 @@ function StatCard({
   color: string
   bg: string
   pulse?: boolean
+  href?: string
 }) {
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4">
+  const inner = (
+    <div className="bg-white rounded-xl border border-gray-200 p-4 h-full">
       <div className={`w-9 h-9 ${bg} rounded-lg flex items-center justify-center mb-3 relative`}>
         <Icon className={`w-4 h-4 ${color}`} />
         {pulse && (
@@ -88,8 +91,14 @@ function StatCard({
       <p className="text-2xl font-semibold text-gray-900 truncate">{value}</p>
       <p className="text-xs text-gray-500 mt-0.5">{label}</p>
       {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+      {href && (
+        <p className="text-xs text-indigo-500 mt-1.5 flex items-center gap-0.5">
+          View entries <ExternalLink className="w-3 h-3" />
+        </p>
+      )}
     </div>
   )
+  return href ? <Link href={href} className="block">{inner}</Link> : inner
 }
 
 // ── Custom tooltip ────────────────────────────────────────────────────────────
@@ -120,18 +129,16 @@ export default function FinancePage() {
   const [sym, setSym]           = useState('₱')
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
 
-  // Set initial range
   useEffect(() => {
     const r = presetRange('7d')
     setFrom(r.from)
     setTo(r.to)
   }, [])
 
-  // Load shop currency symbol
   useEffect(() => {
     fetch('/api/shop')
       .then(r => r.json())
-      .then(d => { if (d?.currency_symbol) setSym(d.currency_symbol) })
+      .then(d => { if (d?.shop?.currency_symbol) setSym(d.shop.currency_symbol) })
       .catch(() => {})
   }, [])
 
@@ -140,7 +147,7 @@ export default function FinancePage() {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`/api/financial?from=${f}&to=${t}`)
+      const res = await fetch(`/api/finance?from=${f}&to=${t}`)
       if (!res.ok) throw new Error('Failed to load financial data')
       const data = await res.json()
       setSummary(data.summary)
@@ -153,16 +160,11 @@ export default function FinancePage() {
     }
   }, [])
 
-  // Load when range changes
-  useEffect(() => {
-    if (from && to) load(from, to)
-  }, [from, to, load])
+  useEffect(() => { if (from && to) load(from, to) }, [from, to, load])
 
   // Auto-refresh every 60s for live labor cost
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (from && to) load(from, to)
-    }, 60_000)
+    const interval = setInterval(() => { if (from && to) load(from, to) }, 60_000)
     return () => clearInterval(interval)
   }, [from, to, load])
 
@@ -196,14 +198,23 @@ export default function FinancePage() {
               : 'Live financial overview'}
           </p>
         </div>
-        <button
-          onClick={() => load(from, to)}
-          disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 self-start sm:self-auto"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/finance/journal"
+            className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white border border-indigo-600 rounded-xl text-sm font-medium hover:bg-indigo-700 transition-colors"
+          >
+            <Receipt className="w-3.5 h-3.5" />
+            Journal Entries
+          </Link>
+          <button
+            onClick={() => load(from, to)}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Date range controls */}
@@ -247,11 +258,18 @@ export default function FinancePage() {
       {/* Summary cards */}
       {summary && (
         <>
+          {/* Row 1: top-line numbers */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard
-              label="Total Revenue" icon={TrendingUp} color="text-green-600" bg="bg-green-50"
+              label="POS Revenue" icon={TrendingUp} color="text-green-600" bg="bg-green-50"
               value={fmt(summary.totalRevenue, sym)}
               sub={`Tax: ${fmt(summary.totalTax, sym)}`}
+            />
+            <StatCard
+              label="Other Income" icon={Receipt} color="text-emerald-600" bg="bg-emerald-50"
+              value={fmt(summary.totalOtherIncome, sym)}
+              sub="Venue, events, catering…"
+              href="/finance/journal?type=other_income"
             />
             <StatCard
               label="Gross Profit" icon={DollarSign} color="text-blue-600" bg="bg-blue-50"
@@ -265,14 +283,9 @@ export default function FinancePage() {
               value={fmt(summary.netProfit, sym)}
               sub={`Margin ${summary.profitMargin.toFixed(1)}%`}
             />
-            <StatCard
-              label="Profit Margin" icon={Percent} color="text-purple-600" bg="bg-purple-50"
-              value={`${summary.profitMargin.toFixed(1)}%`}
-              sub={`Payroll: ${fmt(summary.totalPayroll, sym)}`}
-            />
           </div>
 
-          {/* Second row: expense breakdown + live labor */}
+          {/* Row 2: expense breakdown */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard
               label="COGS" icon={ShoppingBag} color="text-orange-600" bg="bg-orange-50"
@@ -280,14 +293,15 @@ export default function FinancePage() {
               sub="Cost of goods sold"
             />
             <StatCard
-              label="Payroll Expense" icon={Users} color="text-pink-600" bg="bg-pink-50"
+              label="Payroll (finalized)" icon={Users} color="text-pink-600" bg="bg-pink-50"
               value={fmt(summary.totalPayroll, sym)}
-              sub="Finalized payroll"
+              sub="From clock-out entries"
             />
             <StatCard
-              label="Discounts Given" icon={TrendingDown} color="text-amber-600" bg="bg-amber-50"
-              value={fmt(summary.totalDiscount, sym)}
-              sub="Total discounts applied"
+              label="Operating Expenses" icon={TrendingDown} color="text-red-600" bg="bg-red-50"
+              value={fmt(summary.totalOperatingExpenses, sym)}
+              sub="Utilities, rent, supplies…"
+              href="/finance/journal?type=expense"
             />
             <StatCard
               label="Labor Today (Live)" icon={Users} color="text-teal-600" bg="bg-teal-50"
@@ -297,10 +311,10 @@ export default function FinancePage() {
             />
           </div>
 
-          {/* Revenue vs Expenses chart */}
+          {/* Charts */}
           {daily.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 p-4">
-              <h2 className="text-sm font-semibold text-gray-700 mb-4">Revenue vs Expenses — by day</h2>
+              <h2 className="text-sm font-semibold text-gray-700 mb-4">Revenue vs Net Profit — by day</h2>
               <ResponsiveContainer width="100%" height={240}>
                 <AreaChart data={daily} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
                   <defs>
@@ -318,14 +332,13 @@ export default function FinancePage() {
                   <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={v => `${sym}${v.toLocaleString()}`} width={70} />
                   <Tooltip content={<ChartTooltip sym={sym} />} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                  <Area type="monotone" dataKey="revenue" name="Revenue" stroke="#6366f1" strokeWidth={2} fill="url(#revenue)" />
+                  <Area type="monotone" dataKey="revenue" name="Revenue"    stroke="#6366f1" strokeWidth={2} fill="url(#revenue)" />
                   <Area type="monotone" dataKey="net"     name="Net Profit" stroke="#10b981" strokeWidth={2} fill="url(#net)" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           )}
 
-          {/* Expense breakdown chart */}
           {daily.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 p-4">
               <h2 className="text-sm font-semibold text-gray-700 mb-4">Expense breakdown — by day</h2>
@@ -336,23 +349,26 @@ export default function FinancePage() {
                   <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={v => `${sym}${v.toLocaleString()}`} width={70} />
                   <Tooltip content={<ChartTooltip sym={sym} />} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="cogs"     name="COGS"     stackId="a" fill="#f97316" radius={[0,0,0,0]} />
-                  <Bar dataKey="payroll"  name="Payroll"  stackId="a" fill="#ec4899" radius={[0,0,0,0]} />
-                  <Bar dataKey="discount" name="Discounts" stackId="a" fill="#f59e0b" radius={[4,4,0,0]} />
+                  <Bar dataKey="cogs"     name="COGS"             stackId="a" fill="#f97316" radius={[0,0,0,0]} />
+                  <Bar dataKey="payroll"  name="Payroll"          stackId="a" fill="#ec4899" radius={[0,0,0,0]} />
+                  <Bar dataKey="expenses" name="Oper. Expenses"   stackId="a" fill="#ef4444" radius={[0,0,0,0]} />
+                  <Bar dataKey="discount" name="Discounts"        stackId="a" fill="#f59e0b" radius={[4,4,0,0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           )}
 
-          {/* P&L summary table */}
+          {/* Full P&L summary table */}
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
               <h2 className="text-sm font-semibold text-gray-700">P&L Summary</h2>
             </div>
             <table className="w-full text-sm">
               <tbody className="divide-y divide-gray-50">
+
+                {/* Revenue section */}
                 <tr className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-gray-600">Gross Revenue</td>
+                  <td className="px-4 py-3 text-gray-600 font-medium">POS Revenue</td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">{fmt(summary.totalRevenue, sym)}</td>
                 </tr>
                 <tr className="hover:bg-gray-50">
@@ -363,20 +379,40 @@ export default function FinancePage() {
                   <td className="px-4 py-3 text-gray-500 pl-8">— Discounts given</td>
                   <td className="px-4 py-3 text-right text-red-500">−{fmt(summary.totalDiscount, sym)}</td>
                 </tr>
+                {summary.totalOtherIncome > 0 && (
+                  <tr className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-emerald-700 font-medium">+ Other Income</td>
+                    <td className="px-4 py-3 text-right text-emerald-700 font-medium">+{fmt(summary.totalOtherIncome, sym)}</td>
+                  </tr>
+                )}
+
+                {/* COGS */}
                 <tr className="hover:bg-gray-50 border-t border-gray-200">
                   <td className="px-4 py-3 text-gray-600">Cost of Goods Sold</td>
                   <td className="px-4 py-3 text-right text-red-500">−{fmt(summary.totalCogs, sym)}</td>
                 </tr>
+
+                {/* Gross Profit */}
                 <tr className="hover:bg-gray-50 bg-blue-50/50">
                   <td className="px-4 py-3 font-semibold text-gray-800">Gross Profit</td>
                   <td className={`px-4 py-3 text-right font-semibold ${summary.grossProfit >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
                     {fmt(summary.grossProfit, sym)}
                   </td>
                 </tr>
+
+                {/* Operating expenses */}
                 <tr className="hover:bg-gray-50">
                   <td className="px-4 py-3 text-gray-600">Payroll Expense</td>
                   <td className="px-4 py-3 text-right text-red-500">−{fmt(summary.totalPayroll, sym)}</td>
                 </tr>
+                {summary.totalOperatingExpenses > 0 && (
+                  <tr className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-gray-600">Operating Expenses</td>
+                    <td className="px-4 py-3 text-right text-red-500">−{fmt(summary.totalOperatingExpenses, sym)}</td>
+                  </tr>
+                )}
+
+                {/* Net Profit */}
                 <tr className="hover:bg-gray-50 bg-emerald-50/50">
                   <td className="px-4 py-3 font-bold text-gray-900">Net Profit</td>
                   <td className={`px-4 py-3 text-right font-bold text-base ${summary.netProfit >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
@@ -389,6 +425,8 @@ export default function FinancePage() {
                     {summary.profitMargin.toFixed(1)}%
                   </td>
                 </tr>
+
+                {/* Live labor */}
                 <tr className="hover:bg-gray-50 border-t border-gray-200">
                   <td className="px-4 py-3 text-teal-700 flex items-center gap-1.5">
                     <span className="w-2 h-2 bg-teal-400 rounded-full animate-pulse inline-block" />
@@ -396,6 +434,7 @@ export default function FinancePage() {
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-teal-700">{fmt(summary.laborToday, sym)}</td>
                 </tr>
+
               </tbody>
             </table>
           </div>

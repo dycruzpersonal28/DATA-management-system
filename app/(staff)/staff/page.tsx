@@ -5,7 +5,9 @@
 // Only shows tiles the user actually has permission to access
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
 import {
   ShoppingCart,
   Package,
@@ -78,13 +80,15 @@ function getGreeting() {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function StaffDashboardPage() {
+  const router = useRouter()
   const [userName, setUserName] = useState<string>('')
   const [allowedPerms, setAllowedPerms] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
-  const [time, setTime] = useState(() => new Date())
+  const [time, setTime] = useState<Date | null>(null)
 
-  // Live clock
+  // Live clock — only starts on client to avoid hydration mismatch
   useEffect(() => {
+    setTime(new Date())
     const t = setInterval(() => setTime(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
@@ -113,34 +117,45 @@ export default function StaffDashboardPage() {
 
   const { text: greetingText, Icon: GreetingIcon } = getGreeting()
 
-  const timeStr = time.toLocaleTimeString('en-PH', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  })
+  const timeStr = time
+    ? time.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true })
+    : '--:-- --'
 
-  const dateStr = time.toLocaleDateString('en-PH', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  })
+  const dateStr = time
+    ? time.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric' })
+    : ''
+
+  const handleLogout = async () => {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    window.location.href = '/login'
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
-      <header className="bg-white border-b border-gray-100 px-5 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <GreetingIcon className="w-5 h-5 text-amber-400" />
-          <div>
-            <p className="text-sm font-semibold text-gray-900 leading-tight">
+      <header className="bg-white border-b border-gray-100 px-5 py-4 flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <GreetingIcon className="w-5 h-5 text-amber-400 flex-shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900 leading-tight truncate">
               {greetingText}{userName ? `, ${userName.split(' ')[0]}` : ''}
             </p>
-            <p className="text-xs text-gray-400">{dateStr}</p>
+            <p className="text-xs text-gray-400 truncate">{dateStr}</p>
           </div>
         </div>
-        <div className="text-right">
-          <p className="text-xl font-bold text-gray-900 tabular-nums leading-tight">{timeStr}</p>
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+          <p className="text-lg sm:text-xl font-bold text-gray-900 tabular-nums leading-tight">{timeStr}</p>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200 text-xs font-medium text-gray-500 hover:bg-gray-50 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            Log Out
+          </button>
         </div>
       </header>
 

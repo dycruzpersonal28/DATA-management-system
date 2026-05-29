@@ -1,10 +1,10 @@
-// app/api/financial/route.ts
+// app/api/finance/route.ts
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-// GET /api/financial?from=YYYY-MM-DD&to=YYYY-MM-DD
+// GET /api/finance?from=YYYY-MM-DD&to=YYYY-MM-DD
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const admin = createAdminClient()
@@ -50,18 +50,22 @@ export async function GET(req: NextRequest) {
   let totalPayroll   = 0
   let totalDiscount  = 0
   let totalTax       = 0
+  let totalOtherIncome        = 0
+  let totalOperatingExpenses  = 0
 
   for (const e of rows) {
     const amt = Number(e.amount)
     if (e.type === 'revenue' && e.category === 'sales')    totalRevenue  += amt
     if (e.type === 'revenue' && e.category === 'tax')      totalTax      += amt
     if (e.type === 'cogs')                                 totalCogs     += amt
-    if (e.type === 'expense' && e.category === 'payroll')  totalPayroll  += amt
+    if ((e.type === 'expense' && e.category === 'payroll') || e.type === 'labor') totalPayroll  += amt
     if (e.type === 'expense' && e.category === 'discount') totalDiscount += amt
+    if (e.type === 'other_income')                         totalOtherIncome       += amt
+    if (e.type === 'expense' && e.category !== 'payroll' && e.category !== 'discount') totalOperatingExpenses += amt
   }
 
-  const grossProfit  = totalRevenue - totalCogs
-  const netProfit    = grossProfit - totalPayroll - totalDiscount
+  const grossProfit  = totalRevenue + totalOtherIncome - totalCogs
+  const netProfit    = grossProfit - totalPayroll - totalDiscount - totalOperatingExpenses
   const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0
 
   // ── Daily breakdown ────────────────────────────────────────────────────────
@@ -82,7 +86,7 @@ export async function GET(req: NextRequest) {
     const amt = Number(e.amount)
     if (e.type === 'revenue' && e.category === 'sales')    dailyMap[d].revenue  += amt
     if (e.type === 'cogs')                                 dailyMap[d].cogs     += amt
-    if (e.type === 'expense' && e.category === 'payroll')  dailyMap[d].payroll  += amt
+    if ((e.type === 'expense' && e.category === 'payroll') || e.type === 'labor') dailyMap[d].payroll  += amt
     if (e.type === 'expense' && e.category === 'discount') dailyMap[d].discount += amt
   }
 
@@ -96,19 +100,34 @@ export async function GET(req: NextRequest) {
   let laborToday = 0
 
   if (to >= today) {
+    // Use PHT (UTC+8) day boundaries to match kiosk clock-in timestamps
+    const todayStartPHT = `${today}T00:00:00+08:00`
+    const todayEndPHT   = `${today}T23:59:59+08:00`
+
     const { data: activeLogs } = await admin
       .from('time_logs')
-      .select('employee_id, clock_in, clock_out, total_hours, employees(hourly_rate)')
+      .select('employee_id, clock_in, clock_out, total_hours')
       .eq('shop_id', shop_id)
-      .gte('clock_in', `${today}T00:00:00`)
+      .gte('clock_in', todayStartPHT)
+      .lte('clock_in', todayEndPHT)
       .order('clock_in', { ascending: false })
 
+    // Fetch employee rates separately to avoid FK join ambiguity
+    const employeeIds = [...new Set((activeLogs || []).map((l: any) => l.employee_id))]
+    const { data: empRates } = employeeIds.length > 0
+      ? await admin.from('employees').select('id, hourly_rate').in('id', employeeIds)
+      : { data: [] }
+
+    const rateMap: Record<string, number> = Object.fromEntries(
+      (empRates || []).map((e: any) => [e.id, Number(e.hourly_rate ?? 0)])
+    )
+
     for (const log of activeLogs || []) {
-      const rate = Number((log as any).employees?.hourly_rate ?? 0)
+      const rate = rateMap[log.employee_id] ?? 0
       if (rate === 0) continue
 
       if (log.clock_out) {
-        // Completed shift — use total_hours
+        // Completed shift — use total_hours (generated column)
         laborToday += Number(log.total_hours ?? 0) * rate
       } else {
         // Still clocked in — accrue from clock_in to now
@@ -120,15 +139,17 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     summary: {
-      totalRevenue:   parseFloat(totalRevenue.toFixed(2)),
-      totalCogs:      parseFloat(totalCogs.toFixed(2)),
-      totalPayroll:   parseFloat(totalPayroll.toFixed(2)),
-      totalDiscount:  parseFloat(totalDiscount.toFixed(2)),
-      totalTax:       parseFloat(totalTax.toFixed(2)),
-      grossProfit:    parseFloat(grossProfit.toFixed(2)),
-      netProfit:      parseFloat(netProfit.toFixed(2)),
-      profitMargin:   parseFloat(profitMargin.toFixed(1)),
-      laborToday:     parseFloat(laborToday.toFixed(2)),
+      totalRevenue:            parseFloat(totalRevenue.toFixed(2)),
+      totalOtherIncome:        parseFloat(totalOtherIncome.toFixed(2)),
+      totalCogs:               parseFloat(totalCogs.toFixed(2)),
+      totalPayroll:            parseFloat(totalPayroll.toFixed(2)),
+      totalDiscount:           parseFloat(totalDiscount.toFixed(2)),
+      totalTax:                parseFloat(totalTax.toFixed(2)),
+      totalOperatingExpenses:  parseFloat(totalOperatingExpenses.toFixed(2)),
+      grossProfit:             parseFloat(grossProfit.toFixed(2)),
+      netProfit:               parseFloat(netProfit.toFixed(2)),
+      profitMargin:            parseFloat(profitMargin.toFixed(1)),
+      laborToday:              parseFloat(laborToday.toFixed(2)),
     },
     daily,
     entries: rows,

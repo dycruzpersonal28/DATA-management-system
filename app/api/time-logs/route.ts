@@ -66,10 +66,10 @@ export async function POST(req: NextRequest) {
 
     const admin = createAdminClient()
 
-    // 1. Verify employee PIN + fetch require_manager_approval flag
+    // 1. Verify employee PIN + fetch rate + require_manager_approval flag
     const { data: employee, error: empError } = await admin
       .from('employees')
-      .select('id, name, pin, role, is_active, shop_id, require_manager_approval')
+      .select('id, name, pin, role, is_active, shop_id, require_manager_approval, hourly_rate')
       .eq('id', employee_id)
       .eq('shop_id', shop_id)
       .single()
@@ -88,7 +88,6 @@ export async function POST(req: NextRequest) {
     let approverId: string | null = null
 
     if (employee.require_manager_approval) {
-      // Manager PIN is required — validate it
       if (!manager_pin) {
         return NextResponse.json({ error: 'Manager PIN is required for this employee' }, { status: 400 })
       }
@@ -119,7 +118,6 @@ export async function POST(req: NextRequest) {
 
       approverId = validManager.id
     }
-    // If require_manager_approval is false: skip manager check, approverId stays null
 
     // ✅ Always use server-side PHT time — never trust device/client time
     const { now, date } = getPHTTime()
@@ -173,7 +171,7 @@ export async function POST(req: NextRequest) {
           date,
           late_minutes,
           is_late,
-          approved_by: approverId,  // null if manager approval not required
+          approved_by: approverId,
         })
         .select()
         .single()
@@ -187,12 +185,13 @@ export async function POST(req: NextRequest) {
         .from('time_logs')
         .select('id, clock_in, shift_schedule_id')
         .eq('employee_id', employee_id)
-        .eq('date', date)
         .is('clock_out', null)
+        .order('clock_in', { ascending: false })
+        .limit(1)
         .single()
 
       if (!openLog) {
-        return NextResponse.json({ error: 'No active clock-in found for today' }, { status: 404 })
+        return NextResponse.json({ error: 'No active clock-in found' }, { status: 404 })
       }
 
       // Calculate overtime if shift is assigned
@@ -217,24 +216,58 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const clockInTime  = new Date(openLog.clock_in)
       const clockOutTime = new Date()
-      const totalHours   = parseFloat(((clockOutTime.getTime() - clockInTime.getTime()) / 3600000).toFixed(2))
 
+      // total_hours is a generated column — Postgres recomputes it from clock_in/clock_out automatically
       const { data: log, error: logError } = await admin
         .from('time_logs')
         .update({
           clock_out: clockOutTime.toISOString(),
           overtime_hours,
-          total_hours: totalHours,
-          approved_by: approverId,  // null if manager approval not required
+          approved_by: approverId,
         })
         .eq('id', openLog.id)
         .select()
         .single()
 
       if (logError) return NextResponse.json({ error: logError.message }, { status: 400 })
-      return NextResponse.json({ success: true, action: 'clock_out', log, employee: { name: employee.name } })
+
+      // ── PAYROLL: write labor cost to financial_entries on clock-out ──────────
+      // Compute actual hours worked from clock_in → clock_out
+      const clockInMs  = new Date(openLog.clock_in).getTime()
+      const clockOutMs = clockOutTime.getTime()
+      const hoursWorked = parseFloat(((clockOutMs - clockInMs) / 1000 / 3600).toFixed(4))
+
+      const hourlyRate = Number(employee.hourly_rate) || 0
+
+      if (hourlyRate > 0 && hoursWorked > 0) {
+        const laborCost = parseFloat((hoursWorked * hourlyRate).toFixed(2))
+
+        await admin.from('financial_entries').insert({
+          shop_id,
+          entry_date: date,
+          type: 'expense',
+          category: 'payroll',
+          amount: laborCost,
+          direction: 'out',
+          reference_type: 'time_log',
+          reference_id: openLog.id,
+          note: `Payroll: ${employee.name} — ${hoursWorked.toFixed(2)}h × ₱${hourlyRate}/hr`,
+        })
+      }
+      // ── end payroll ──────────────────────────────────────────────────────────
+
+      return NextResponse.json({
+        success: true,
+        action: 'clock_out',
+        log,
+        employee: { name: employee.name },
+        payroll: {
+          hours: hoursWorked,
+          rate: hourlyRate,
+          cost: parseFloat(((hoursWorked * hourlyRate)).toFixed(2)),
+        },
+      })
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
@@ -263,24 +296,10 @@ export async function PATCH(req: NextRequest) {
 
     const admin = createAdminClient()
 
-    let total_hours
-    if (clock_in && clock_out) {
-      total_hours = parseFloat(
-        ((new Date(clock_out).getTime() - new Date(clock_in).getTime()) / 3600000).toFixed(2)
-      )
-    }
-
+    // total_hours is a generated column — Postgres recomputes automatically
     const { data: log, error } = await admin
       .from('time_logs')
-      .update({
-        clock_in,
-        clock_out,
-        late_minutes,
-        is_late,
-        overtime_hours,
-        notes,
-        ...(total_hours !== undefined ? { total_hours } : {}),
-      })
+      .update({ clock_in, clock_out, late_minutes, is_late, overtime_hours, notes })
       .eq('id', id)
       .eq('shop_id', caller.shop_id)
       .select()

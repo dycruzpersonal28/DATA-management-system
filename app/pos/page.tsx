@@ -11,6 +11,7 @@ import {
   ChevronRight, Plus, Minus, Clock, DollarSign, Ticket,
   UtensilsCrossed, LogIn, LogOut, ArrowDownCircle, ArrowUpCircle,
   Save, FolderOpen, Trash2, AlertTriangle, TrendingUp, ShoppingCart,
+  LayoutDashboard,
 } from 'lucide-react'
 import Link from 'next/link'
 import { toast } from 'sonner'
@@ -168,7 +169,7 @@ function ShiftModal({
     }
   }, [mode, currentUser])
 
-  const title = { clockin: 'Clock In / Open Shift', clockout: 'Clock Out / Close Shift', cashin: 'Cash In', cashout: 'Cash Out' }[mode]
+  const title = { clockin: 'Open Shift', clockout: 'Close Shift', cashin: 'Cash In', cashout: 'Cash Out' }[mode]
   const icon = { clockin: LogIn, clockout: LogOut, cashin: ArrowDownCircle, cashout: ArrowUpCircle }[mode]
   const IconComp = icon
 
@@ -587,7 +588,7 @@ export default function POSPage() {
     setActiveShift(data)
     localStorage.setItem('pos_active_shift', JSON.stringify(data))
     setShiftModal(null)
-    toast.success('Shift started')
+    toast.success('Shift opened')
   }
 
   async function handleClockOut(shiftId: string, closingCash: number, note: string) {
@@ -604,8 +605,7 @@ export default function POSPage() {
     setShiftModal(null)
     setSelectedDiningOption(null)
     setSelectedCategory(null)
-    toast.success('Shift closed')
-  }
+    toast.success('Shift closed')  }
 
   async function handleCashIn(shiftId: string, amount: number, note: string) {
     if (!shiftId) { toast.error('No active shift'); return }
@@ -829,9 +829,14 @@ export default function POSPage() {
               <ChevronLeft className="w-5 h-5" />
             </button>
           ) : (
-            <Link href="/dashboard" className="text-gray-400 hover:text-gray-600 flex-shrink-0">
-              <ArrowLeft className="w-5 h-5" />
-            </Link>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <Link href="/dashboard" className="text-gray-400 hover:text-gray-600 p-1">
+                <ArrowLeft className="w-5 h-5" />
+              </Link>
+              <Link href="/dashboard" className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-100 text-gray-600 border border-gray-200 rounded-xl text-xs font-semibold hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 transition-colors">
+                <LayoutDashboard className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Dashboard</span>
+              </Link>
+            </div>
           )}
 
           <div className="flex flex-col leading-tight min-w-0">
@@ -850,7 +855,7 @@ export default function POSPage() {
               {!activeShift ? (
                 <>
                   <button onClick={() => setShiftModal('clockin')} className="flex items-center gap-1 px-2.5 py-1.5 bg-green-600 text-white rounded-xl text-xs font-semibold hover:bg-green-700 transition-colors">
-                    <LogIn className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Clock In</span>
+                    <LogIn className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Open Shift</span>
                   </button>
                   {currentUser?.role === 'cashier' && (
                     <button
@@ -873,7 +878,7 @@ export default function POSPage() {
                     <ArrowUpCircle className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Cash Out</span>
                   </button>
                   <button onClick={() => setShiftModal('clockout')} className="flex items-center gap-1 px-2 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-semibold hover:bg-red-100 transition-colors">
-                    <LogOut className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Clock Out</span>
+                    <LogOut className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Close Shift</span>
                   </button>
                 </>
               )}
@@ -945,9 +950,9 @@ export default function POSPage() {
           ) : featureShifts && !activeShift ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
               <LogIn className="w-12 h-12 opacity-40" />
-              <p className="text-base font-medium text-gray-500">Clock in to start taking orders</p>
+              <p className="text-base font-medium text-gray-500">Open a shift to start taking orders</p>
               <button onClick={() => setShiftModal('clockin')} className="px-5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700 transition-colors flex items-center gap-2">
-                <LogIn className="w-4 h-4" /> Clock In
+                <LogIn className="w-4 h-4" /> Open Shift
               </button>
             </div>
 

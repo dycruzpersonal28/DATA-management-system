@@ -4,10 +4,11 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   Zap, CreditCard, Heart, Percent, Receipt, Printer, UtensilsCrossed,
-  Monitor, Settings, ChevronRight
+  Monitor, Settings, ChevronRight, Store
 } from 'lucide-react'
 
 // Sub-pages
+import StoreSettingsPage from './store/page'
 import FeaturesPage from './features/page'
 import PaymentTypesPage from './payment-types/page'
 import LoyaltyPage from './loyalty/page'
@@ -18,6 +19,13 @@ import DiningOptionsPage from './dining-options/page'
 import POSSettingsPage from './pos-settings/page'
 
 const NAV_ITEMS = [
+  {
+    id: 'store',
+    label: 'Store Settings',
+    desc: 'Name, address, contact, currency, timezone',
+    icon: Store,
+    color: 'bg-indigo-100 text-indigo-600',
+  },
   {
     id: 'features',
     label: 'Features',
@@ -80,7 +88,7 @@ const NAV_ITEMS = [
 
 export default function SettingsPage() {
   const supabase = createClient()
-  const [active, setActive] = useState('features')
+  const [active, setActive] = useState('store')
   const [shop, setShop] = useState<any>(null)
 
   useEffect(() => {
@@ -96,6 +104,7 @@ export default function SettingsPage() {
 
   const ActivePage = () => {
     switch (active) {
+      case 'store': return <StoreSettingsPage shop={shop} onShopUpdate={setShop} />
       case 'features': return <FeaturesPage shop={shop} onShopUpdate={setShop} />
       case 'payment-types': return <PaymentTypesPage />
       case 'loyalty': return <LoyaltyPage />

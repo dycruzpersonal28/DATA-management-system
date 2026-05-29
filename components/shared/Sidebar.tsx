@@ -12,7 +12,7 @@ import {
   Zap, CreditCard, Heart, Percent, Receipt, Printer, UtensilsCrossed,
   CalendarClock, ClipboardList, ScanLine, ArrowLeftRight,
   ShieldCheck, KeyRound,
-  Banknote, LayoutGrid, TrendingUp, History
+  Banknote, LayoutGrid, TrendingUp, History, BookOpen, DollarSign
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -49,6 +49,11 @@ const inventorySubmenu = [
   { label: 'Inventory Log', href: '/inventory-log', icon: History },
 ]
 
+const financeSubmenu = [
+  { label: 'Overview',  href: '/finance',         icon: TrendingUp },
+  { label: 'Journal',   href: '/finance/journal',  icon: BookOpen },
+]
+
 const navItems = [
   { label: 'Transactions', href: '/transactions', icon: ArrowLeftRight },
   { label: 'Customers',    href: '/customers',    icon: Users },
@@ -56,6 +61,7 @@ const navItems = [
   { label: 'Reports',      href: '/reports',      icon: BarChart2 },
 ]
 
+const financePaths    = ['/finance']
 const itemsPaths      = ['/items', '/categories', '/modifiers', '/ingredients']
 const inventoryPaths  = ['/inventory', '/inventory-log']
 const settingsPaths   = ['/settings']
@@ -80,15 +86,18 @@ export default function Sidebar({
   const router    = useRouter()
   const supabase  = createClient()
 
+  const isFinanceActive    = financePaths.some(p => pathname.startsWith(p))
   const isItemsActive      = itemsPaths.some(p => pathname.startsWith(p))
   const isInventoryActive  = inventoryPaths.some(p => pathname.startsWith(p))
   const isSettingsActive   = settingsPaths.some(p => pathname.startsWith(p))
   const isHrActive         = hrPaths.some(p => pathname.startsWith(p))
+  const [financeOpen,   setFinanceOpen]   = useState(isFinanceActive)
   const [itemsOpen,     setItemsOpen]     = useState(isItemsActive)
   const [inventoryOpen, setInventoryOpen] = useState(isInventoryActive)
   const [settingsOpen,  setSettingsOpen]  = useState(isSettingsActive)
   const [hrOpen,        setHrOpen]        = useState(isHrActive)
 
+  useEffect(() => { setFinanceOpen(isFinanceActive) },       [pathname])
   useEffect(() => { setItemsOpen(isItemsActive) },         [pathname])
   useEffect(() => { setInventoryOpen(isInventoryActive) }, [pathname])
   useEffect(() => { setSettingsOpen(isSettingsActive) },   [pathname])
@@ -113,7 +122,7 @@ export default function Sidebar({
       <div className="p-4 border-b border-gray-100">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
-            <ShoppingCart className="w-4 h-4 text-white" />
+            <ShoppingCart className="w-2 h-2 text-white" />
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-gray-900 truncate">{shop?.name}</p>
@@ -222,9 +231,35 @@ export default function Sidebar({
           <Users className="w-4 h-4 flex-shrink-0" />Customers
         </Link>
 
-        <Link href="/finance" className={cn('flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors', pathname.startsWith('/finance') ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}>
-          <TrendingUp className="w-4 h-4 flex-shrink-0" />Finance
-        </Link>
+        {/* Finance submenu */}
+        <div>
+          <button
+            onClick={() => setFinanceOpen(prev => !prev)}
+            className={cn('w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors', isFinanceActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}
+          >
+            <div className="flex items-center gap-2.5">
+              <TrendingUp className="w-4 h-4 flex-shrink-0" />Finance
+            </div>
+            {financeOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+          {financeOpen && (
+            <div className="mt-0.5 ml-3 pl-3 border-l border-gray-200 space-y-0.5">
+              {financeSubmenu.map(sub => {
+                const Icon = sub.icon
+                const isActive = sub.href === '/finance'
+                  ? pathname === '/finance'
+                  : pathname === sub.href || pathname.startsWith(sub.href + '/')
+                return (
+                  <Link key={sub.href} href={sub.href}
+                    className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors', isActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900')}
+                  >
+                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />{sub.label}
+                  </Link>
+                )
+              })}
+            </div>
+          )}
+        </div>
 
         <Link href="/reports" className={cn('flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors', pathname.startsWith('/reports') ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}>
           <BarChart2 className="w-4 h-4 flex-shrink-0" />Reports
