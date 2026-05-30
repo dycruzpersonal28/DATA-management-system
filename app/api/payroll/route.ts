@@ -428,6 +428,25 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'Cannot delete a finalized payroll period' }, { status: 400 })
   }
 
+  // Collect payslip IDs so we can remove their financial_entries mirrors
+  const { data: payslipsToDelete } = await admin
+    .from('payslips')
+    .select('id')
+    .eq('period_id', period_id)
+    .eq('shop_id', appUser.shop_id)
+
+  const payslipIds = (payslipsToDelete ?? []).map(p => p.id)
+
+  // Remove financial_entries written when this period was finalized
+  if (payslipIds.length > 0) {
+    await admin
+      .from('financial_entries')
+      .delete()
+      .eq('shop_id', appUser.shop_id)
+      .eq('reference_type', 'payslip')
+      .in('reference_id', payslipIds)
+  }
+
   // Delete payslips first (in case no cascade)
   await admin.from('payslips').delete().eq('period_id', period_id).eq('shop_id', appUser.shop_id)
 

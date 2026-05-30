@@ -24,7 +24,6 @@ export default function ItemsPage() {
   const [editingItem, setEditingItem] = useState<Item | null | undefined>(undefined)
   const fileRef = useRef<HTMLInputElement>(null)
   const [rowsPerPage, setRowsPerPage] = useState(25)
-  const [page, setPage] = useState(1)
 
   async function loadData() {
     setLoading(true)
@@ -47,11 +46,8 @@ export default function ItemsPage() {
         .from('categories')
         .select('*')
         .eq('shop_id', shop.id)
-        .eq('show_in_items', true)
         .order('name')
       setCategories(cats ?? [])
-
-      const itemsCatIds = new Set((cats ?? []).map(c => c.id))
 
       // ── items — same simple select as POS, plus level join ────────────────
       const { data: rawItems, error: itemsErr } = await supabase
@@ -88,12 +84,7 @@ export default function ItemsPage() {
         })),
       }))
 
-      // Only show items whose category has show_in_items = true (uncategorized items always shown)
-      const visibleItems = enriched.filter(item =>
-        !(item as any).category_id || itemsCatIds.has((item as any).category_id)
-      )
-
-      setItems(visibleItems as Item[])
+      setItems(enriched as Item[])
     } catch (e) {
       console.error('[items] loadData threw:', e)
     } finally {
@@ -111,12 +102,6 @@ export default function ItemsPage() {
     const matchCat = catFilter ? i.category_id === catFilter : true
     return matchSearch && matchLevel && matchCat
   })
-
-  // Reset to page 1 whenever filters change
-  useEffect(() => { setPage(1) }, [search, levelFilter, catFilter, rowsPerPage])
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / rowsPerPage))
-  const paginated = filtered.slice((page - 1) * rowsPerPage, page * rowsPerPage)
 
   // ── selection ──────────────────────────────────────────────────────────────
   function toggleSelect(id: string) {
@@ -448,7 +433,7 @@ export default function ItemsPage() {
             </Button>
           </div>
         ) : (
-          <div className="overflow-y-auto overflow-x-auto" style={{ maxHeight: '60vh' }}>
+          <div className="overflow-y-auto overflow-x-auto" style={{ maxHeight: `${rowsPerPage * 57}px` }}>
             <table className="w-full min-w-[700px]">
               <thead className="sticky top-0 z-10">
                 <tr className="border-b border-gray-100 bg-gray-50">
@@ -471,7 +456,7 @@ export default function ItemsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-              {paginated.map(item => {
+              {filtered.map(item => {
                 const level = (item as any).level as ItemLevel | undefined
                 const bomCost = (item.ingredients ?? []).reduce((s: number, ing: any) => {
                   return s + ((ing.ingredient?.cost ?? 0) * ing.quantity)
@@ -541,62 +526,22 @@ export default function ItemsPage() {
             </table>
           </div>
         )}
+      </div>
 
-        {/* Bottom bar: rows per page + pagination */}
-        {!loading && filtered.length > 0 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-white flex-wrap gap-2">
-            <div className="flex items-center gap-2 text-sm text-gray-500">
-              <span className="hidden sm:inline">Rows per page:</span>
-              <select
-                value={rowsPerPage}
-                onChange={e => { setRowsPerPage(Number(e.target.value)); setPage(1) }}
-                className="border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-              >
-                {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
-            <div className="flex items-center gap-3 text-sm text-gray-500">
-              <span>
-                {filtered.length === 0 ? '0' : `${(page - 1) * rowsPerPage + 1}–${Math.min(page * rowsPerPage, filtered.length)}`} of {filtered.length}
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setPage(1)}
-                  disabled={page === 1}
-                  className="p-1 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  title="First page"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7M18 19l-7-7 7-7" /></svg>
-                </button>
-                <button
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                  className="p-1 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  title="Previous page"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                </button>
-                <span className="px-1 font-medium text-gray-700">{page} / {totalPages}</span>
-                <button
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                  className="p-1 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  title="Next page"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                </button>
-                <button
-                  onClick={() => setPage(totalPages)}
-                  disabled={page === totalPages}
-                  className="p-1 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  title="Last page"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M6 5l7 7-7 7" /></svg>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-gray-400">{filtered.length} of {items.length} items</p>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-400">Rows per page</span>
+          <select
+            value={rowsPerPage}
+            onChange={e => setRowsPerPage(Number(e.target.value))}
+            className="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            {[10, 25, 50, 100].map(n => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* editor modal */}

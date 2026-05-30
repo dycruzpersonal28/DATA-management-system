@@ -59,6 +59,27 @@ export default function CategoriesPage() {
     else setSelected(new Set(categories.map(c => c.id)))
   }
 
+  async function togglePosVisibility(cat: any) {
+    const newVal = !cat.show_in_pos
+    await supabase.from('categories').update({ show_in_pos: newVal }).eq('id', cat.id)
+    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, show_in_pos: newVal } : c))
+    toast.success(newVal ? `${cat.name} visible in POS` : `${cat.name} hidden from POS`)
+  }
+
+  async function toggleInventoryVisibility(cat: any) {
+    const newVal = !cat.show_in_inventory
+    await supabase.from('categories').update({ show_in_inventory: newVal }).eq('id', cat.id)
+    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, show_in_inventory: newVal } : c))
+    toast.success(newVal ? `${cat.name} visible in Inventory` : `${cat.name} hidden from Inventory`)
+  }
+
+  async function toggleItemsVisibility(cat: any) {
+    const newVal = !cat.show_in_items
+    await supabase.from('categories').update({ show_in_items: newVal }).eq('id', cat.id)
+    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, show_in_items: newVal } : c))
+    toast.success(newVal ? `${cat.name} visible in Items` : `${cat.name} hidden from Items`)
+  }
+
   function startEdit(cat: any) {
     setEditing(cat); setName(cat.name); setColor(cat.color); setShowForm(true)
   }
@@ -115,6 +136,9 @@ export default function CategoriesPage() {
                 </th>
                 <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Name</th>
                 <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Color</th>
+                <th className="text-center text-xs font-medium text-gray-500 px-4 py-3">POS</th>
+                <th className="text-center text-xs font-medium text-gray-500 px-4 py-3">Inventory</th>
+                <th className="text-center text-xs font-medium text-gray-500 px-4 py-3">Items</th>
                 <th className="px-4 py-3 w-8"></th>
               </tr>
             </thead>
@@ -132,6 +156,30 @@ export default function CategoriesPage() {
                   </td>
                   <td className="px-4 py-3">
                     <span className="inline-block px-3 py-0.5 rounded-full text-xs text-white font-medium" style={{ backgroundColor: cat.color }}>{cat.color}</span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <button
+                      onClick={() => togglePosVisibility(cat)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${cat.show_in_pos !== false ? 'bg-indigo-500' : 'bg-gray-200'}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${cat.show_in_pos !== false ? 'translate-x-4' : 'translate-x-1'}`} />
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <button
+                      onClick={() => toggleInventoryVisibility(cat)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${cat.show_in_inventory !== false ? 'bg-indigo-500' : 'bg-gray-200'}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${cat.show_in_inventory !== false ? 'translate-x-4' : 'translate-x-1'}`} />
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <button
+                      onClick={() => toggleItemsVisibility(cat)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${cat.show_in_items !== false ? 'bg-indigo-500' : 'bg-gray-200'}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${cat.show_in_items !== false ? 'translate-x-4' : 'translate-x-1'}`} />
+                    </button>
                   </td>
                   <td className="px-4 py-3">
                     <button onClick={() => startEdit(cat)} className="text-gray-400 hover:text-indigo-600">

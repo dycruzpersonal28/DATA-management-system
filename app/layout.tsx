@@ -1,10 +1,10 @@
-﻿import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import type { Metadata } from 'next'
+import { DM_Sans } from 'next/font/google'
 import './globals.css'
 import { Toaster } from 'sonner'
 import { Providers } from '@/lib/providers'
 
-const inter = Inter({ subsets: ['latin'] })
+const dmSans = DM_Sans({ subsets: ['latin'], weight: ['400', '500', '600'] })
 
 export const metadata: Metadata = {
   title: 'POS System',
@@ -18,7 +18,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className={dmSans.className}>
         <Providers>
           {children}
           <Toaster richColors position="top-right" />

@@ -7,103 +7,188 @@ import { cn } from '@/lib/utils'
 import { useState, useEffect } from 'react'
 import {
   LayoutDashboard, ShoppingCart, Package, Users, UserCog,
-  BarChart2, Settings, LogOut, Monitor, ChevronDown, ChevronRight,
+  BarChart2, Settings, LogOut, Monitor, ChevronDown,
   List, Tag, Sliders, FlaskConical,
   Zap, CreditCard, Heart, Percent, Receipt, Printer, UtensilsCrossed,
   CalendarClock, ClipboardList, ScanLine, ArrowLeftRight,
   ShieldCheck, KeyRound,
-  Banknote, LayoutGrid, TrendingUp, History, BookOpen, DollarSign
+  Banknote, LayoutGrid, TrendingUp, History, BookOpen, Store,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
+// ── Submenus ──────────────────────────────────────────────────────────────────
 const itemsSubmenu = [
-  { label: 'Item List',    href: '/items',       icon: List },
-  { label: 'Categories',   href: '/categories',  icon: Tag },
-  { label: 'Modifiers',    href: '/modifiers',   icon: Sliders },
-  { label: 'Ingredients',  href: '/ingredients', icon: FlaskConical },
+  { label: 'Item List',   href: '/items',       icon: List },
+  { label: 'Categories',  href: '/categories',  icon: Tag },
+  { label: 'Modifiers',   href: '/modifiers',   icon: Sliders },
+  { label: 'Ingredients', href: '/ingredients', icon: FlaskConical },
 ]
-
-const settingsSubmenu = [
-  { label: 'Features',          href: '/settings/features',         icon: Zap },
-  { label: 'Payment Types',     href: '/settings/payment-types',    icon: CreditCard },
-  { label: 'Loyalty',           href: '/settings/loyalty',          icon: Heart },
-  { label: 'Taxes & Discounts', href: '/settings/taxes-discounts',  icon: Percent },
-  { label: 'Receipt',           href: '/settings/receipt',          icon: Receipt },
-  { label: 'Kitchen Printers',  href: '/settings/kitchen-printers', icon: Printer },
-  { label: 'Dining Options',    href: '/settings/dining-options',   icon: UtensilsCrossed },
-  { label: 'Users & POS',       href: '/settings/pos-settings',     icon: Monitor },
-  { label: 'Roles',             href: '/settings/roles',             icon: ShieldCheck },
-  { label: 'Permissions',       href: '/settings/permissions',       icon: KeyRound },
-]
-
-const hrSubmenu = [
-  { label: 'Employees',  href: '/employees',      icon: UserCog },
-  { label: 'Shifts',     href: '/hr/shifts',      icon: CalendarClock },
-  { label: 'Attendance', href: '/hr/attendance',  icon: ClipboardList },
-  { label: 'Kiosk',      href: '/hr/kiosk',       icon: ScanLine },
-  { label: 'Payroll',    href: '/hr/payroll',     icon: Banknote },
-]
-
 const inventorySubmenu = [
   { label: 'Stock Levels',  href: '/inventory',     icon: Package },
   { label: 'Inventory Log', href: '/inventory-log', icon: History },
 ]
-
+const hrSubmenu = [
+  { label: 'Employees',  href: '/employees',     icon: UserCog },
+  { label: 'Shifts',     href: '/hr/shifts',     icon: CalendarClock },
+  { label: 'Attendance', href: '/hr/attendance', icon: ClipboardList },
+  { label: 'Kiosk',      href: '/hr/kiosk',      icon: ScanLine },
+  { label: 'Payroll',    href: '/hr/payroll',    icon: Banknote },
+]
 const financeSubmenu = [
-  { label: 'Overview',  href: '/finance',         icon: TrendingUp },
-  { label: 'Journal',   href: '/finance/journal',  icon: BookOpen },
+  { label: 'Overview', href: '/finance',         icon: TrendingUp },
+  { label: 'Journal',  href: '/finance/journal', icon: BookOpen },
+]
+const settingsSubmenu = [
+  { label: 'Features',          href: '/settings/features',         icon: Zap },
+  { label: 'Store Settings',    href: '/settings/store',            icon: Store },
+  { label: 'Payment Types',     href: '/settings/payment-types',    icon: CreditCard },
+  { label: 'Loyalty',           href: '/settings/loyalty',          icon: Heart },
+  { label: 'Taxes & Discounts', href: '/settings/taxes-discounts',  icon: Percent },
+  { label: 'Receipt',           href: '/settings/receipt',          icon: Receipt },
+  { label: 'Dining Options',    href: '/settings/dining-options',   icon: UtensilsCrossed },
+  { label: 'Users & POS',       href: '/settings/pos-settings',     icon: Monitor },
+  { label: 'Roles',             href: '/settings/roles',            icon: ShieldCheck },
+  { label: 'Permissions',       href: '/settings/permissions',      icon: KeyRound },
 ]
 
-const navItems = [
-  { label: 'Transactions', href: '/transactions', icon: ArrowLeftRight },
-  { label: 'Customers',    href: '/customers',    icon: Users },
-  { label: 'Finance',      href: '/finance',      icon: TrendingUp },
-  { label: 'Reports',      href: '/reports',      icon: BarChart2 },
-]
+const itemsPaths     = ['/items', '/categories', '/modifiers', '/ingredients']
+const inventoryPaths = ['/inventory', '/inventory-log']
+const hrPaths        = ['/hr', '/employees']
+const financePaths   = ['/finance']
+const settingsPaths  = ['/settings']
 
-const financePaths    = ['/finance']
-const itemsPaths      = ['/items', '/categories', '/modifiers', '/ingredients']
-const inventoryPaths  = ['/inventory', '/inventory-log']
-const settingsPaths   = ['/settings']
-const hrPaths         = ['/hr', '/employees']
-
-const roleStyle: Record<string, string> = {
-  owner:   'bg-purple-100 text-purple-700',
-  manager: 'bg-blue-100 text-blue-700',
-  cashier: 'bg-gray-100 text-gray-600',
+// ── Starbucks signature green palette (lighter, warmer) ───────────────────────
+const g = {
+  sidebar:    '#00704A',                      // Starbucks signature green
+  header:     '#005f3e',                      // slightly deeper for top section
+  activeBg:   'rgba(255,255,255,0.18)',        // frosted white active
+  activeText: '#ffffff',
+  hoverBg:    'rgba(255,255,255,0.10)',        // subtle hover
+  text:       'rgba(255,255,255,0.78)',        // nav text — warm white
+  textMuted:  'rgba(255,255,255,0.42)',        // muted labels
+  border:     'rgba(255,255,255,0.12)',        // dividers
+  accent:     '#3de897',                      // bright mint dot / badges
+  subLine:    'rgba(255,255,255,0.15)',
 }
 
-export default function Sidebar({
-  shop,
-  userName,
-  userRole,
+// ── NavItem ───────────────────────────────────────────────────────────────────
+function NavItem({
+  href, icon: Icon, label, isActive, onClick, chevron, chevronOpen,
 }: {
-  shop: any
-  userName?: string
-  userRole?: string
+  href?: string; icon: React.ElementType; label: string
+  isActive: boolean; onClick?: () => void
+  chevron?: boolean; chevronOpen?: boolean
 }) {
-  const pathname  = usePathname()
-  const router    = useRouter()
-  const supabase  = createClient()
+  const cls = 'w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 group'
+  const style = {
+    backgroundColor: isActive ? g.activeBg : 'transparent',
+    color: isActive ? g.activeText : g.text,
+    fontFamily: "'DM Sans', 'Inter', sans-serif",
+  }
+  const onEnter = (e: React.MouseEvent<HTMLElement>) => {
+    if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = g.hoverBg
+  }
+  const onLeave = (e: React.MouseEvent<HTMLElement>) => {
+    if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'
+  }
 
-  const isFinanceActive    = financePaths.some(p => pathname.startsWith(p))
-  const isItemsActive      = itemsPaths.some(p => pathname.startsWith(p))
-  const isInventoryActive  = inventoryPaths.some(p => pathname.startsWith(p))
-  const isSettingsActive   = settingsPaths.some(p => pathname.startsWith(p))
-  const isHrActive         = hrPaths.some(p => pathname.startsWith(p))
-  const [financeOpen,   setFinanceOpen]   = useState(isFinanceActive)
+  const inner = (
+    <span className="flex items-center gap-2.5 min-w-0 flex-1">
+      <Icon className="w-4 h-4 flex-shrink-0" />
+      <span className="truncate">{label}</span>
+      {isActive && !chevron && (
+        <span className="ml-auto w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: g.accent }} />
+      )}
+    </span>
+  )
+
+  if (href) {
+    return (
+      <Link href={href} className={cls} style={style} onMouseEnter={onEnter} onMouseLeave={onLeave}>
+        {inner}
+      </Link>
+    )
+  }
+
+  return (
+    <button onClick={onClick} className={cls} style={style} onMouseEnter={onEnter} onMouseLeave={onLeave}>
+      {inner}
+      {chevron && (
+        <ChevronDown className="w-3.5 h-3.5 flex-shrink-0 transition-transform duration-200"
+          style={{ transform: chevronOpen ? 'rotate(0deg)' : 'rotate(-90deg)', color: g.textMuted }} />
+      )}
+    </button>
+  )
+}
+
+// ── SubMenu ───────────────────────────────────────────────────────────────────
+function SubMenu({ open, items, pathname }: {
+  open: boolean
+  items: { label: string; href: string; icon: React.ElementType }[]
+  pathname: string
+}) {
+  if (!open) return null
+  return (
+    <div className="mt-0.5 ml-4 pl-3 space-y-0.5" style={{ borderLeft: `1.5px solid ${g.subLine}` }}>
+      {items.map(sub => {
+        const Icon = sub.icon
+        const isActive = pathname === sub.href || pathname.startsWith(sub.href + '/')
+        return (
+          <Link key={sub.href} href={sub.href}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
+            style={{
+              color: isActive ? g.activeText : g.textMuted,
+              backgroundColor: isActive ? g.activeBg : 'transparent',
+              fontFamily: "'DM Sans', 'Inter', sans-serif",
+            }}
+            onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = g.hoverBg }}
+            onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent' }}
+          >
+            <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+            {sub.label}
+          </Link>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Section label ─────────────────────────────────────────────────────────────
+function SectionLabel({ label }: { label: string }) {
+  return (
+    <p className="px-3 pt-4 pb-1 text-[10px] font-bold uppercase tracking-widest"
+      style={{ color: g.textMuted, fontFamily: "'DM Sans', 'Inter', sans-serif" }}>
+      {label}
+    </p>
+  )
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+export default function Sidebar({ shop, userName, userRole }: {
+  shop: any; userName?: string; userRole?: string
+}) {
+  const pathname = usePathname()
+  const router   = useRouter()
+  const supabase = createClient()
+
+  const isItemsActive     = itemsPaths.some(p => pathname.startsWith(p))
+  const isInventoryActive = inventoryPaths.some(p => pathname.startsWith(p))
+  const isHrActive        = hrPaths.some(p => pathname.startsWith(p))
+  const isFinanceActive   = financePaths.some(p => pathname.startsWith(p))
+  const isSettingsActive  = settingsPaths.some(p => pathname.startsWith(p))
+
   const [itemsOpen,     setItemsOpen]     = useState(isItemsActive)
   const [inventoryOpen, setInventoryOpen] = useState(isInventoryActive)
-  const [settingsOpen,  setSettingsOpen]  = useState(isSettingsActive)
   const [hrOpen,        setHrOpen]        = useState(isHrActive)
+  const [financeOpen,   setFinanceOpen]   = useState(isFinanceActive)
+  const [settingsOpen,  setSettingsOpen]  = useState(isSettingsActive)
 
-  useEffect(() => { setFinanceOpen(isFinanceActive) },       [pathname])
   useEffect(() => { setItemsOpen(isItemsActive) },         [pathname])
   useEffect(() => { setInventoryOpen(isInventoryActive) }, [pathname])
-  useEffect(() => { setSettingsOpen(isSettingsActive) },   [pathname])
   useEffect(() => { setHrOpen(isHrActive) },               [pathname])
+  useEffect(() => { setFinanceOpen(isFinanceActive) },     [pathname])
+  useEffect(() => { setSettingsOpen(isSettingsActive) },   [pathname])
 
-  // Show only the first name
   const firstName = userName?.trim().split(' ')[0] ?? 'User'
   const role      = userRole ?? 'cashier'
   const initial   = firstName.charAt(0).toUpperCase()
@@ -115,221 +200,109 @@ export default function Sidebar({
     toast.success('Signed out')
   }
 
+  const roleBadge: Record<string, { bg: string; text: string }> = {
+    owner:   { bg: 'rgba(61,232,151,0.25)',   text: '#3de897' },
+    manager: { bg: 'rgba(255,255,255,0.15)',   text: '#d4f0e3' },
+    cashier: { bg: 'rgba(255,255,255,0.10)',   text: 'rgba(255,255,255,0.65)' },
+  }
+  const rb = roleBadge[role] ?? roleBadge.cashier
+
   return (
-    <aside className="w-56 bg-white border-r border-gray-200 flex flex-col h-full flex-shrink-0">
+    <aside className="w-56 flex flex-col h-full flex-shrink-0 select-none"
+      style={{ backgroundColor: g.sidebar, fontFamily: "'DM Sans', 'Inter', sans-serif" }}>
 
-      {/* Shop header */}
-      <div className="p-4 border-b border-gray-100">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
-            <ShoppingCart className="w-2 h-2 text-white" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-gray-900 truncate">{shop?.name}</p>
-            <p className="text-xs text-gray-400">Back Office</p>
-          </div>
-        </div>
-      </div>
+      {/* ── User header ──────────────────────────────────────────────────── */}
+      <div className="px-4 pt-5 pb-4" style={{ backgroundColor: g.header, borderBottom: `1px solid ${g.border}` }}>
+        <div className="flex items-center gap-3">
+          {/* Avatar */}
+          <img
+  src="/Capture.jpg"
+  alt={firstName}
+  className="w-9 h-9 rounded-xl flex-shrink-0 object-cover"
+/>
 
-      {/* User card + sign out */}
-      <div className="px-3 pt-3 pb-2 border-b border-gray-100">
-        <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-gray-50">
-          <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center flex-shrink-0">
-            <span className="text-white text-xs font-semibold">{initial}</span>
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-gray-900 truncate">{firstName}</p>
-            <span className={cn('inline-block px-1.5 py-0 rounded text-xs font-medium leading-4', roleStyle[role] ?? roleStyle.cashier)}>
+          {/* Name + role + store */}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold truncate" style={{ color: '#fff' }}>{firstName}</p>
+            <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md font-semibold"
+              style={{ backgroundColor: rb.bg, color: rb.text }}>
               {role}
             </span>
+            {shop?.name && (
+              <p className="text-[10px] mt-1 truncate flex items-center gap-1" style={{ color: g.textMuted }}>
+                <Store className="w-2.5 h-2.5 flex-shrink-0" />
+                {shop.name}
+              </p>
+            )}
           </div>
-          <button
-            onClick={handleSignOut}
-            title="Sign out"
-            className="flex items-center justify-center w-6 h-6 rounded-md text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors flex-shrink-0"
+
+          {/* Logout */}
+          <button onClick={handleSignOut} title="Sign out"
+            className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-150"
+            style={{ color: g.textMuted }}
+            onMouseEnter={e => {
+              const el = e.currentTarget as HTMLElement
+              el.style.backgroundColor = 'rgba(248,113,113,0.2)'
+              el.style.color = '#f87171'
+            }}
+            onMouseLeave={e => {
+              const el = e.currentTarget as HTMLElement
+              el.style.backgroundColor = 'transparent'
+              el.style.color = g.textMuted
+            }}
           >
             <LogOut className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        <Link href="/dashboard" className={cn('flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors', pathname === '/dashboard' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}>
-          <LayoutDashboard className="w-4 h-4 flex-shrink-0" />Dashboard
-        </Link>
+      {/* ── Nav ──────────────────────────────────────────────────────────── */}
+      <nav className="flex-1 px-2.5 py-2 overflow-y-auto space-y-0.5"
+        style={{ scrollbarWidth: 'thin', scrollbarColor: `${g.border} transparent` }}>
 
-        <Link href="/pos" className={cn('flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors', pathname === '/pos' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}>
-          <ShoppingCart className="w-4 h-4 flex-shrink-0" />POS
-        </Link>
+        <NavItem href="/dashboard" icon={LayoutDashboard} label="Dashboard" isActive={pathname === '/dashboard'} />
 
-        <Link href="/staff" className={cn('flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors', pathname === '/staff' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}>
-          <LayoutGrid className="w-4 h-4 flex-shrink-0" />Staff Dashboard
-        </Link>
+        <SectionLabel label="Catalogue" />
+        <NavItem icon={Package} label="Items" isActive={isItemsActive}
+          onClick={() => setItemsOpen(p => !p)} chevron chevronOpen={itemsOpen} />
+        <SubMenu open={itemsOpen} items={itemsSubmenu} pathname={pathname} />
 
-        {/* Items submenu */}
-        <div>
-          <button
-            onClick={() => setItemsOpen(prev => !prev)}
-            className={cn('w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors', isItemsActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}
-          >
-            <div className="flex items-center gap-2.5">
-              <Package className="w-4 h-4 flex-shrink-0" />Items
-            </div>
-            {itemsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-          </button>
-          {itemsOpen && (
-            <div className="mt-0.5 ml-3 pl-3 border-l border-gray-200 space-y-0.5">
-              {itemsSubmenu.map(sub => {
-                const Icon = sub.icon
-                const isActive = pathname === sub.href || pathname.startsWith(sub.href + '/')
-                return (
-                  <Link key={sub.href} href={sub.href}
-                    className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors', isActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900')}
-                  >
-                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />{sub.label}
-                  </Link>
-                )
-              })}
-            </div>
-          )}
+        <NavItem icon={Package} label="Inventory" isActive={isInventoryActive}
+          onClick={() => setInventoryOpen(p => !p)} chevron chevronOpen={inventoryOpen} />
+        <SubMenu open={inventoryOpen} items={inventorySubmenu} pathname={pathname} />
+
+        <SectionLabel label="Operations" />
+        <NavItem icon={CalendarClock} label="HR" isActive={isHrActive}
+          onClick={() => setHrOpen(p => !p)} chevron chevronOpen={hrOpen} />
+        <SubMenu open={hrOpen} items={hrSubmenu} pathname={pathname} />
+
+        <NavItem icon={TrendingUp} label="Finance" isActive={isFinanceActive}
+          onClick={() => setFinanceOpen(p => !p)} chevron chevronOpen={financeOpen} />
+        <SubMenu open={financeOpen} items={financeSubmenu} pathname={pathname} />
+
+        <NavItem href="/reports" icon={BarChart2} label="Reports" isActive={pathname.startsWith('/reports')} />
+
+        <SectionLabel label="Commerce" />
+        <NavItem href="/customers" icon={Users} label="Customers" isActive={pathname.startsWith('/customers')} />
+        <NavItem href="/transactions" icon={ArrowLeftRight} label="Transactions" isActive={pathname.startsWith('/transactions')} />
+        <NavItem href="/staff" icon={LayoutGrid} label="Staff Dashboard" isActive={pathname === '/staff'} />
+        <NavItem href="/pos" icon={ShoppingCart} label="POS" isActive={pathname.startsWith('/pos')} />
+
+        <div className="pt-3 pb-1" style={{ borderTop: `1px solid ${g.border}`, marginTop: '8px' }}>
+          <NavItem icon={Settings} label="Settings" isActive={isSettingsActive}
+            onClick={() => setSettingsOpen(p => !p)} chevron chevronOpen={settingsOpen} />
+          <SubMenu open={settingsOpen} items={settingsSubmenu} pathname={pathname} />
         </div>
 
-        <Link href="/transactions" className={cn('flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors', pathname.startsWith('/transactions') ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}>
-          <ArrowLeftRight className="w-4 h-4 flex-shrink-0" />Transactions
-        </Link>
-
-        {/* Inventory submenu */}
-        <div>
-          <button
-            onClick={() => setInventoryOpen(prev => !prev)}
-            className={cn('w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors', isInventoryActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}
-          >
-            <div className="flex items-center gap-2.5">
-              <Package className="w-4 h-4 flex-shrink-0" />Inventory
-            </div>
-            {inventoryOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-          </button>
-          {inventoryOpen && (
-            <div className="mt-0.5 ml-3 pl-3 border-l border-gray-200 space-y-0.5">
-              {inventorySubmenu.map(sub => {
-                const Icon = sub.icon
-                const isActive = pathname === sub.href || pathname.startsWith(sub.href + '/')
-                return (
-                  <Link key={sub.href} href={sub.href}
-                    className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors', isActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900')}
-                  >
-                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />{sub.label}
-                  </Link>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        <Link href="/customers" className={cn('flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors', pathname.startsWith('/customers') ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}>
-          <Users className="w-4 h-4 flex-shrink-0" />Customers
-        </Link>
-
-        {/* Finance submenu */}
-        <div>
-          <button
-            onClick={() => setFinanceOpen(prev => !prev)}
-            className={cn('w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors', isFinanceActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}
-          >
-            <div className="flex items-center gap-2.5">
-              <TrendingUp className="w-4 h-4 flex-shrink-0" />Finance
-            </div>
-            {financeOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-          </button>
-          {financeOpen && (
-            <div className="mt-0.5 ml-3 pl-3 border-l border-gray-200 space-y-0.5">
-              {financeSubmenu.map(sub => {
-                const Icon = sub.icon
-                const isActive = sub.href === '/finance'
-                  ? pathname === '/finance'
-                  : pathname === sub.href || pathname.startsWith(sub.href + '/')
-                return (
-                  <Link key={sub.href} href={sub.href}
-                    className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors', isActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900')}
-                  >
-                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />{sub.label}
-                  </Link>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        <Link href="/reports" className={cn('flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors', pathname.startsWith('/reports') ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}>
-          <BarChart2 className="w-4 h-4 flex-shrink-0" />Reports
-        </Link>
-
-        {/* HR submenu */}
-        <div>
-          <button
-            onClick={() => setHrOpen(prev => !prev)}
-            className={cn('w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors', isHrActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}
-          >
-            <div className="flex items-center gap-2.5">
-              <CalendarClock className="w-4 h-4 flex-shrink-0" />HR
-            </div>
-            {hrOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-          </button>
-          {hrOpen && (
-            <div className="mt-0.5 ml-3 pl-3 border-l border-gray-200 space-y-0.5">
-              {hrSubmenu.map(sub => {
-                const Icon = sub.icon
-                const isActive = pathname === sub.href || pathname.startsWith(sub.href + '/')
-                return (
-                  <Link key={sub.href} href={sub.href}
-                    className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors', isActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900')}
-                  >
-                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />{sub.label}
-                  </Link>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Settings submenu */}
-        <div>
-          <button
-            onClick={() => setSettingsOpen(prev => !prev)}
-            className={cn('w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors', isSettingsActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}
-          >
-            <div className="flex items-center gap-2.5">
-              <Settings className="w-4 h-4 flex-shrink-0" />Settings
-            </div>
-            {settingsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-          </button>
-          {settingsOpen && (
-            <div className="mt-0.5 ml-3 pl-3 border-l border-gray-200 space-y-0.5">
-              {settingsSubmenu.map(sub => {
-                const Icon = sub.icon
-                const isActive = pathname === sub.href || pathname.startsWith(sub.href + '/')
-                return (
-                  <Link key={sub.href} href={sub.href}
-                    className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors', isActive ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900')}
-                  >
-                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />{sub.label}
-                  </Link>
-                )
-              })}
-            </div>
-          )}
-        </div>
       </nav>
 
-      {shop?.kds_enabled && (
-        <div className="px-3 pb-2">
-          <Link href="/kds" className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50">
-            <Monitor className="w-4 h-4" />Kitchen Display
-          </Link>
-        </div>
-      )}
-
+      {/* ── Kitchen Printers ─────────────────────────────────────────────── */}
+      <div className="px-2.5 pb-3 pt-2" style={{ borderTop: `1px solid ${g.border}` }}>
+        <NavItem href="/settings/kitchen-printers" icon={Printer} label="Kitchen Printers" isActive={pathname === '/settings/kitchen-printers'} />
+        {shop?.kds_enabled && (
+          <NavItem href="/kds" icon={Monitor} label="Kitchen Display" isActive={pathname === '/kds'} />
+        )}
+      </div>
     </aside>
   )
 }

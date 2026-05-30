@@ -31,7 +31,13 @@ export default async function DashboardLayout({
     redirect('/login')
   }
 
-  // 3. Fetch shop
+  // 4. Only owners and managers can access the back office
+  const allowedRoles = ['owner', 'Owner', 'manager', 'Manager']
+if (!allowedRoles.includes(appUser.role)) {
+    redirect('/staff')
+  }
+
+  // 5. Fetch shop
   const { data: shop } = await admin
     .from('shops')
     .select('*')

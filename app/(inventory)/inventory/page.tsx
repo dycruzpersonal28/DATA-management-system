@@ -380,17 +380,31 @@ export default function InventoryPage() {
   const [adjustItem, setAdjustItem] = useState<InventoryItem | null>(null)
   const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null)
   const [quickMode, setQuickMode] = useState<'add' | 'dispense' | null>(null)
+  const [rowsPerPage, setRowsPerPage] = useState(25)
+  const [page, setPage] = useState(1)
 
   const load = useCallback(async () => {
-    const { data: cats } = await supabase.from('categories').select('*').order('name')
+    // Only load categories that have show_in_inventory = true
+    const { data: cats } = await supabase
+      .from('categories')
+      .select('*')
+      .eq('show_in_inventory', true)
+      .order('name')
     setCategories(cats || [])
+
+    const inventoryCatIds = new Set((cats || []).map((c: any) => c.id))
 
     const { data } = await supabase
       .from('items')
       .select('id, name, sku, category_id, categories!items_category_id_fkey(name, color), inventory_levels(id, quantity, low_stock_alert)')
       .order('name')
 
-    setItems((data as any) || [])
+    // Only show items belonging to inventory-visible categories
+    const visibleItems = ((data as any) || []).filter(
+      (item: InventoryItem) => item.category_id && inventoryCatIds.has(item.category_id)
+    )
+
+    setItems(visibleItems)
     setLoading(false)
   }, [])
 
@@ -408,6 +422,12 @@ export default function InventoryPage() {
       stockFilter === 'ok'  ? (qty !== null && qty > alert) : true
     return matchSearch && matchCat && matchStock
   })
+
+  // Reset to page 1 whenever filters change
+  useEffect(() => { setPage(1) }, [search, catFilter, stockFilter, rowsPerPage])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / rowsPerPage))
+  const paginated = filtered.slice((page - 1) * rowsPerPage, page * rowsPerPage)
 
   const totalItems = items.length
   const outOfStock = items.filter(i => (i.inventory_levels?.[0]?.quantity ?? 0) === 0).length
@@ -505,79 +525,135 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* Table — horizontally scrollable on small screens */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      {/* Table — horizontally scrollable on small screens, vertically scrollable with sticky header */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col">
         {loading ? (
           <div className="p-8 text-center text-gray-400">Loading...</div>
         ) : filtered.length === 0 ? (
           <div className="p-12 text-center text-gray-400">No items found</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[480px]">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="text-left text-xs font-medium text-gray-500 px-3 sm:px-4 py-3">Item</th>
-                  <th className="text-left text-xs font-medium text-gray-500 px-3 sm:px-4 py-3 hidden sm:table-cell">Category</th>
-                  <th className="text-right text-xs font-medium text-gray-500 px-3 sm:px-4 py-3">In Stock</th>
-                  <th className="text-right text-xs font-medium text-gray-500 px-3 sm:px-4 py-3 hidden md:table-cell">Low Alert</th>
-                  <th className="text-center text-xs font-medium text-gray-500 px-3 sm:px-4 py-3">Status</th>
-                  <th className="px-3 sm:px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.map(item => {
-                  const inv = item.inventory_levels?.[0]
-                  const status = getStockStatus(item)
-                  return (
-                    <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-3 sm:px-4 py-3">
-                        <p className="text-sm font-medium text-gray-900 leading-tight">{item.name}</p>
-                        {item.sku && <p className="text-xs text-gray-400">SKU: {item.sku}</p>}
-                        {/* Show category inline on mobile */}
-                        {item.categories && (
-                          <span className="inline-flex sm:hidden items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium text-white mt-1"
-                            style={{ backgroundColor: item.categories.color }}>
-                            {item.categories.name}
+          <>
+            <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: '60vh' }}>
+              <table className="w-full min-w-[480px]">
+                <thead className="sticky top-0 z-10">
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="text-left text-xs font-medium text-gray-500 px-3 sm:px-4 py-3">Item</th>
+                    <th className="text-left text-xs font-medium text-gray-500 px-3 sm:px-4 py-3 hidden sm:table-cell">Category</th>
+                    <th className="text-right text-xs font-medium text-gray-500 px-3 sm:px-4 py-3">In Stock</th>
+                    <th className="text-right text-xs font-medium text-gray-500 px-3 sm:px-4 py-3 hidden md:table-cell">Low Alert</th>
+                    <th className="text-center text-xs font-medium text-gray-500 px-3 sm:px-4 py-3">Status</th>
+                    <th className="px-3 sm:px-4 py-3"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {paginated.map(item => {
+                    const inv = item.inventory_levels?.[0]
+                    const status = getStockStatus(item)
+                    return (
+                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-3 sm:px-4 py-3">
+                          <p className="text-sm font-medium text-gray-900 leading-tight">{item.name}</p>
+                          {item.sku && <p className="text-xs text-gray-400">SKU: {item.sku}</p>}
+                          {/* Show category inline on mobile */}
+                          {item.categories && (
+                            <span className="inline-flex sm:hidden items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium text-white mt-1"
+                              style={{ backgroundColor: item.categories.color }}>
+                              {item.categories.name}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 sm:px-4 py-3 hidden sm:table-cell">
+                          {item.categories ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium text-white"
+                              style={{ backgroundColor: item.categories.color }}>
+                              {item.categories.name}
+                            </span>
+                          ) : <span className="text-xs text-gray-400">-</span>}
+                        </td>
+                        <td className="px-3 sm:px-4 py-3 text-right">
+                          <span className={`text-sm font-semibold ${inv?.quantity === 0 ? 'text-red-500' : 'text-gray-900'}`}>
+                            {inv?.quantity ?? '-'}
                           </span>
-                        )}
-                      </td>
-                      <td className="px-3 sm:px-4 py-3 hidden sm:table-cell">
-                        {item.categories ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium text-white"
-                            style={{ backgroundColor: item.categories.color }}>
-                            {item.categories.name}
-                          </span>
-                        ) : <span className="text-xs text-gray-400">-</span>}
-                      </td>
-                      <td className="px-3 sm:px-4 py-3 text-right">
-                        <span className={`text-sm font-semibold ${inv?.quantity === 0 ? 'text-red-500' : 'text-gray-900'}`}>
-                          {inv?.quantity ?? '-'}
-                        </span>
-                      </td>
-                      <td className="px-3 sm:px-4 py-3 text-right hidden md:table-cell">
-                        <span className="text-sm text-gray-500">{inv?.low_stock_alert ?? '-'}</span>
-                      </td>
-                      <td className="px-3 sm:px-4 py-3 text-center">
-                        <Badge variant={status.color}>{status.label}</Badge>
-                      </td>
-                      <td className="px-3 sm:px-4 py-3">
-                        <div className="flex items-center gap-1.5 sm:gap-2 justify-end">
-                          <button onClick={() => setHistoryItem(item)}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors" title="View history">
-                            <History className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => setAdjustItem(item)}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors" title="Adjust stock">
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td className="px-3 sm:px-4 py-3 text-right hidden md:table-cell">
+                          <span className="text-sm text-gray-500">{inv?.low_stock_alert ?? '-'}</span>
+                        </td>
+                        <td className="px-3 sm:px-4 py-3 text-center">
+                          <Badge variant={status.color}>{status.label}</Badge>
+                        </td>
+                        <td className="px-3 sm:px-4 py-3">
+                          <div className="flex items-center gap-1.5 sm:gap-2 justify-end">
+                            <button onClick={() => setHistoryItem(item)}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors" title="View history">
+                              <History className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => setAdjustItem(item)}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors" title="Adjust stock">
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Bottom bar: rows per page + pagination */}
+            <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-white flex-wrap gap-2">
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <span className="hidden sm:inline">Rows per page:</span>
+                <select
+                  value={rowsPerPage}
+                  onChange={e => { setRowsPerPage(Number(e.target.value)); setPage(1) }}
+                  className="border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                >
+                  {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-3 text-sm text-gray-500">
+                <span>
+                  {filtered.length === 0 ? '0' : `${(page - 1) * rowsPerPage + 1}–${Math.min(page * rowsPerPage, filtered.length)}`} of {filtered.length}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setPage(1)}
+                    disabled={page === 1}
+                    className="p-1 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    title="First page"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7M18 19l-7-7 7-7" /></svg>
+                  </button>
+                  <button
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="p-1 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    title="Previous page"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                  </button>
+                  <span className="px-1 font-medium text-gray-700">{page} / {totalPages}</span>
+                  <button
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                    className="p-1 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    title="Next page"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                  </button>
+                  <button
+                    onClick={() => setPage(totalPages)}
+                    disabled={page === totalPages}
+                    className="p-1 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    title="Last page"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M6 5l7 7-7 7" /></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
         )}
       </div>
 

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   TrendingUp, TrendingDown, DollarSign, ShoppingBag,
-  Users, Percent, RefreshCw, ChevronDown, Receipt, ExternalLink,
+  Users, Percent, RefreshCw, ChevronDown, Receipt, ExternalLink, Zap,
 } from 'lucide-react'
 import Link from 'next/link'
 import {
@@ -128,6 +128,10 @@ export default function FinancePage() {
   const [error, setError]       = useState('')
   const [sym, setSym]           = useState('₱')
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
+  const [autoCogsEnabled, setAutoCogsEnabled] = useState<boolean>(true)
+  const [cogsToggleLoading, setCogsToggleLoading] = useState(false)
+  const [cleanupLoading, setCleanupLoading] = useState(false)
+  const [shopId, setShopId] = useState<string>('')
 
   useEffect(() => {
     const r = presetRange('7d')
@@ -138,9 +142,47 @@ export default function FinancePage() {
   useEffect(() => {
     fetch('/api/shop')
       .then(r => r.json())
-      .then(d => { if (d?.shop?.currency_symbol) setSym(d.shop.currency_symbol) })
+      .then(d => {
+        if (d?.shop?.currency_symbol) setSym(d.shop.currency_symbol)
+        if (d?.shop?.id) setShopId(d.shop.id)
+        if (d?.shop) setAutoCogsEnabled(d.shop.feature_auto_cogs !== false)
+      })
       .catch(() => {})
   }, [])
+
+  async function cleanupOrphanedEntries() {
+    if (cleanupLoading) return
+    setCleanupLoading(true)
+    try {
+      const res = await fetch('/api/finance', { method: 'DELETE' })
+      const data = await res.json()
+      if (data.deleted > 0) {
+        await load(from, to)
+      }
+    } catch {}
+    finally { setCleanupLoading(false) }
+  }
+
+  async function toggleAutoCogs() {
+    if (cogsToggleLoading) return
+    setCogsToggleLoading(true)
+    const newVal = !autoCogsEnabled
+    // Optimistically update UI
+    setAutoCogsEnabled(newVal)
+    try {
+      const res = await fetch('/api/shop', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ feature_auto_cogs: newVal }),
+      })
+      if (!res.ok) throw new Error('Failed to update')
+    } catch {
+      // Revert on error
+      setAutoCogsEnabled(!newVal)
+    } finally {
+      setCogsToggleLoading(false)
+    }
+  }
 
   const load = useCallback(async (f: string, t: string) => {
     if (!f || !t) return
@@ -206,6 +248,33 @@ export default function FinancePage() {
             <Receipt className="w-3.5 h-3.5" />
             Journal Entries
           </Link>
+
+          {/* Realtime COGS toggle */}
+          <button
+            onClick={toggleAutoCogs}
+            disabled={cogsToggleLoading || !shopId}
+            title={autoCogsEnabled ? 'Realtime COGS is ON — click to disable' : 'Realtime COGS is OFF — click to enable'}
+            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium border transition-all disabled:opacity-50 ${
+              autoCogsEnabled
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                : 'bg-gray-100 border-gray-200 text-gray-400 hover:bg-gray-200'
+            }`}
+          >
+            <Zap className={`w-3.5 h-3.5 ${autoCogsEnabled ? 'fill-emerald-500 text-emerald-500' : 'text-gray-400'}`} />
+            <span>Realtime COGS</span>
+            <span className={`w-8 h-4 rounded-full relative transition-colors flex-shrink-0 ${autoCogsEnabled ? 'bg-emerald-500' : 'bg-gray-300'}`}>
+              <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-all ${autoCogsEnabled ? 'left-4' : 'left-0.5'}`} />
+            </span>
+          </button>
+          <button
+            onClick={cleanupOrphanedEntries}
+            disabled={cleanupLoading}
+            title="Remove P&L entries whose receipts have been deleted"
+            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-40"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${cleanupLoading ? 'animate-spin' : ''}`} />
+            Clean P&L
+          </button>
           <button
             onClick={() => load(from, to)}
             disabled={loading}

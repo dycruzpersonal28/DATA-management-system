@@ -73,6 +73,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [ingSearch, setIngSearch] = useState('')
   const [showIngSearch, setShowIngSearch] = useState(false)
+  const [skuLoading, setSkuLoading] = useState(false)
 
   const [form, setForm] = useState<FormState>({
     name: '', description: '', sku: '', barcode: '', price: '', cost: '',
@@ -81,6 +82,45 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
     is_active: true, track_stock: false, sold_by_weight: false, tax_rate: '0',
     ingredients: [], variants: [],
   })
+
+  // Auto-generate next SKU for new items
+  useEffect(() => {
+    if (!isNew) return
+    async function generateSku() {
+      setSkuLoading(true)
+      try {
+        // Fetch all SKUs for this shop that match the numeric pattern
+        const { data } = await supabase
+          .from('items')
+          .select('sku')
+          .eq('shop_id', shopId)
+          .not('sku', 'is', null)
+          .order('created_at', { ascending: false })
+
+        let nextNum = 1
+        if (data && data.length > 0) {
+          // Extract numeric suffixes from SKUs like "SKU-0001", "0042", "ITEM-005", etc.
+          const nums = data
+            .map(r => r.sku as string)
+            .map(s => {
+              const match = s.match(/(\d+)$/)
+              return match ? parseInt(match[1], 10) : 0
+            })
+            .filter(n => n > 0)
+          if (nums.length > 0) {
+            nextNum = Math.max(...nums) + 1
+          }
+        }
+
+        // Format with leading zeros, minimum 4 digits
+        const padded = String(nextNum).padStart(4, '0')
+        set('sku', `SKU-${padded}`)
+      } finally {
+        setSkuLoading(false)
+      }
+    }
+    generateSku()
+  }, [isNew, shopId])
 
   // Load item data including variants
   useEffect(() => {
@@ -399,8 +439,20 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                 <Input value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Bacon Silog" />
               </div>
               <div>
-                <Label className="text-xs text-gray-500 mb-1.5 block">SKU</Label>
-                <Input value={form.sku} onChange={e => set('sku', e.target.value)} />
+                <Label className="text-xs text-gray-500 mb-1.5 block">
+                  SKU
+                  {isNew && <span className="ml-1.5 text-gray-300">(auto-generated)</span>}
+                </Label>
+                <Input
+                  value={skuLoading ? 'Generating…' : form.sku}
+                  onChange={e => set('sku', e.target.value)}
+                  disabled={skuLoading}
+                  placeholder="e.g. SKU-0001"
+                  className={skuLoading ? 'opacity-50 cursor-wait' : ''}
+                />
+                {isNew && !skuLoading && form.sku && (
+                  <p className="text-xs text-emerald-600 mt-1">✓ You can edit this before saving</p>
+                )}
               </div>
               <div>
                 <Label className="text-xs text-gray-500 mb-1.5 block">Barcode</Label>

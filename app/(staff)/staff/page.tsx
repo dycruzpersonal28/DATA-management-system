@@ -1,74 +1,61 @@
 'use client'
 
-// /app/(dashboard)/staff/page.tsx
-// Staff-facing dashboard — optimized for 8" tablet, scales up on larger screens
-// Only shows tiles the user actually has permission to access
-
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import {
-  ShoppingCart,
-  Package,
-  Receipt,
-  Clock,
-  ChevronRight,
-  Sun,
-  Moon,
-  Sunset,
+  ShoppingCart, Package, Receipt, Clock,
+  Printer, Sun, Moon, Sunset,
 } from 'lucide-react'
-
-// ─── Permission → tile config ─────────────────────────────────────────────────
 
 const STAFF_TILES = [
   {
     permission: 'page_pos',
     href: '/pos',
     label: 'Point of Sale',
-    sublabel: 'Open register & sell',
     icon: ShoppingCart,
-    accent: 'from-indigo-600 to-indigo-500',
-    glow: 'shadow-indigo-200',
-    iconBg: 'bg-indigo-700/40',
-    primary: true,
+    color: 'bg-indigo-500',
+    light: 'bg-indigo-50',
+    text: 'text-indigo-600',
   },
   {
     permission: 'page_inventory',
     href: '/inventory',
     label: 'Inventory',
-    sublabel: 'Check stock levels',
     icon: Package,
-    accent: 'from-emerald-600 to-emerald-500',
-    glow: 'shadow-emerald-200',
-    iconBg: 'bg-emerald-700/40',
-    primary: false,
+    color: 'bg-emerald-500',
+    light: 'bg-emerald-50',
+    text: 'text-emerald-600',
   },
   {
     permission: 'page_transactions',
     href: '/transactions',
     label: 'Transactions',
-    sublabel: 'Sales & receipts',
     icon: Receipt,
-    accent: 'from-violet-600 to-violet-500',
-    glow: 'shadow-violet-200',
-    iconBg: 'bg-violet-700/40',
-    primary: false,
+    color: 'bg-violet-500',
+    light: 'bg-violet-50',
+    text: 'text-violet-600',
   },
   {
     permission: 'page_kiosk',
     href: '/hr/kiosk',
     label: 'Clock In / Out',
-    sublabel: 'Attendance kiosk',
     icon: Clock,
-    accent: 'from-amber-500 to-orange-500',
-    glow: 'shadow-amber-200',
-    iconBg: 'bg-amber-600/40',
-    primary: false,
+    color: 'bg-amber-500',
+    light: 'bg-amber-50',
+    text: 'text-amber-600',
+  },
+  {
+    permission: 'page_kitchen_printers',
+    href: '/settings/kitchen-printers',
+    label: 'Printer Setup',
+    icon: Printer,
+    color: 'bg-teal-500',
+    light: 'bg-teal-50',
+    text: 'text-teal-600',
+    alwaysVisible: true,
   },
 ]
-
-// ─── Greeting helper ──────────────────────────────────────────────────────────
 
 function getGreeting() {
   const h = new Date().getHours()
@@ -77,23 +64,18 @@ function getGreeting() {
   return { text: 'Good evening', Icon: Moon }
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
-
 export default function StaffDashboardPage() {
-  const router = useRouter()
-  const [userName, setUserName] = useState<string>('')
+  const [userName, setUserName] = useState('')
   const [allowedPerms, setAllowedPerms] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [time, setTime] = useState<Date | null>(null)
 
-  // Live clock — only starts on client to avoid hydration mismatch
   useEffect(() => {
     setTime(new Date())
     const t = setInterval(() => setTime(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
 
-  // Fetch current user's permissions from session
   useEffect(() => {
     async function load() {
       try {
@@ -104,7 +86,6 @@ export default function StaffDashboardPage() {
           setAllowedPerms(data.permissions ?? [])
         }
       } catch {
-        // If /api/me doesn't exist yet, show all tiles as fallback
         setAllowedPerms(STAFF_TILES.map(t => t.permission))
       } finally {
         setLoading(false)
@@ -113,16 +94,14 @@ export default function StaffDashboardPage() {
     load()
   }, [])
 
-  const visibleTiles = STAFF_TILES.filter(t => allowedPerms.includes(t.permission))
-
+  const visibleTiles = STAFF_TILES.filter(t => t.alwaysVisible || allowedPerms.includes(t.permission))
   const { text: greetingText, Icon: GreetingIcon } = getGreeting()
 
   const timeStr = time
-    ? time.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true })
+    ? time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
     : '--:-- --'
-
   const dateStr = time
-    ? time.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric' })
+    ? time.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
     : ''
 
   const handleLogout = async () => {
@@ -134,8 +113,8 @@ export default function StaffDashboardPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
 
-      {/* ── Header ────────────────────────────────────────────────────────── */}
-      <header className="bg-white border-b border-gray-100 px-5 py-4 flex items-center justify-between gap-3 flex-wrap">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-100 px-5 py-3.5 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
           <GreetingIcon className="w-5 h-5 text-amber-400 flex-shrink-0" />
           <div className="min-w-0">
@@ -145,81 +124,54 @@ export default function StaffDashboardPage() {
             <p className="text-xs text-gray-400 truncate">{dateStr}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-          <p className="text-lg sm:text-xl font-bold text-gray-900 tabular-nums leading-tight">{timeStr}</p>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <p className="text-base font-bold text-gray-900 tabular-nums">{timeStr}</p>
           <button
             onClick={handleLogout}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200 text-xs font-medium text-gray-500 hover:bg-gray-50 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
             </svg>
             Log Out
           </button>
         </div>
       </header>
 
-      {/* ── Tile grid ─────────────────────────────────────────────────────── */}
-      <main className="flex-1 p-5 flex flex-col justify-center">
+      {/* Grid */}
+      <main className="flex-1 p-5 overflow-y-auto">
         {loading ? (
-          <div className="flex items-center justify-center h-48 text-gray-400 text-sm">
-            Loading…
-          </div>
+          <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
         ) : visibleTiles.length === 0 ? (
           <div className="text-center py-20 text-gray-400">
             <p className="font-medium">No modules available</p>
             <p className="text-sm mt-1">Contact your manager to grant access.</p>
           </div>
         ) : (
-          <div className={`
-            grid gap-4 w-full max-w-2xl mx-auto
-            ${visibleTiles.length === 1 ? 'grid-cols-1' : ''}
-            ${visibleTiles.length === 2 ? 'grid-cols-2' : ''}
-            ${visibleTiles.length === 3 ? 'grid-cols-2' : ''}
-            ${visibleTiles.length === 4 ? 'grid-cols-2' : ''}
-          `}>
-            {visibleTiles.map((tile, i) => {
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4 max-w-2xl mx-auto pt-4">
+            {visibleTiles.map(tile => {
               const Icon = tile.icon
-              const isLast = visibleTiles.length === 3 && i === 2
-
               return (
                 <Link
                   key={tile.permission}
                   href={tile.href}
-                  className={`
-                    relative overflow-hidden rounded-2xl
-                    bg-gradient-to-br ${tile.accent}
-                    shadow-lg ${tile.glow}
-                    active:scale-95 transition-transform duration-150
-                    flex flex-col justify-between
-                    p-5 min-h-[140px]
-                    sm:min-h-[160px]
-                    lg:min-h-[180px]
-                    ${isLast ? 'col-span-2' : ''}
-                    select-none
-                  `}
+                  className="flex flex-col items-center gap-2.5 group active:scale-95 transition-transform duration-150 select-none"
                 >
-                  {/* Background decoration */}
-                  <div className="absolute -right-6 -bottom-6 w-28 h-28 rounded-full bg-white/10" />
-                  <div className="absolute -right-2 -bottom-10 w-20 h-20 rounded-full bg-white/5" />
-
-                  {/* Icon */}
-                  <div className={`w-11 h-11 rounded-xl ${tile.iconBg} flex items-center justify-center`}>
-                    <Icon className="w-5 h-5 text-white" />
+                  {/* Circle icon */}
+                  <div className={`
+                    w-16 h-16 rounded-2xl ${tile.color}
+                    flex items-center justify-center
+                    shadow-md group-hover:shadow-lg
+                    transition-all duration-150
+                    group-hover:scale-105
+                  `}>
+                    <Icon className="w-7 h-7 text-white" />
                   </div>
-
                   {/* Label */}
-                  <div className="mt-auto">
-                    <div className="flex items-end justify-between">
-                      <div>
-                        <p className="text-white font-semibold text-base sm:text-lg leading-tight">
-                          {tile.label}
-                        </p>
-                        <p className="text-white/70 text-xs mt-0.5">{tile.sublabel}</p>
-                      </div>
-                      <ChevronRight className="w-5 h-5 text-white/50 flex-shrink-0 mb-0.5" />
-                    </div>
-                  </div>
+                  <span className="text-xs font-medium text-gray-600 text-center leading-tight px-1">
+                    {tile.label}
+                  </span>
                 </Link>
               )
             })}
@@ -227,7 +179,6 @@ export default function StaffDashboardPage() {
         )}
       </main>
 
-      {/* ── Footer ────────────────────────────────────────────────────────── */}
       <footer className="px-5 py-3 text-center">
         <p className="text-xs text-gray-300">Staff Portal</p>
       </footer>

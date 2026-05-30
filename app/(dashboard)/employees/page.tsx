@@ -146,6 +146,7 @@ const NAV_TREE = [
     icon: '⚙️',
     items: [
       { name: 'page_settings',        label: 'View Settings' },
+      { name: 'settings_store',       label: 'Manage Store Settings' },
       { name: 'settings_features',    label: 'Manage Features' },
       { name: 'settings_payment',     label: 'Manage Payment Types' },
       { name: 'settings_loyalty',     label: 'Manage Loyalty' },
@@ -162,7 +163,8 @@ const NAV_TREE = [
     nav: 'Staff Dashboard',
     icon: '📱',
     items: [
-      { name: 'page_staff_dashboard', label: 'Access Staff Dashboard' },
+      { name: 'page_staff_dashboard',   label: 'Access Staff Dashboard' },
+      { name: 'page_kitchen_printers',  label: 'Access Printer Setup' },
     ],
   },
 ]
@@ -338,6 +340,8 @@ export default function EmployeesPage() {
   const [resetting, setResetting]       = useState<Employee | null>(null)
   const [resetForm, setResetForm]       = useState({ password: '', pin: '' })
   const [showResetPass, setShowResetPass] = useState(false)
+  const [showPin, setShowPin]           = useState(false)
+  const [showResetPin, setShowResetPin] = useState(false)
 
   // ── Fetch employees ──────────────────────────────────────────────────────────
   const fetchEmployees = useCallback(async () => {
@@ -410,6 +414,7 @@ export default function EmployeesPage() {
     setShowHR(false)
     setShowPerms(true)
     setShowPass(false)
+    setShowPin(false)
     setShowForm(true)
   }
 
@@ -437,6 +442,7 @@ export default function EmployeesPage() {
     setShowHR(true)
     setShowPerms(true)
     setShowPass(false)
+    setShowPin(false)
     setShowForm(true)
     loadEmployeePerms(emp.id)
   }
@@ -675,6 +681,7 @@ export default function EmployeesPage() {
                             setResetting(emp)
                             setResetForm({ password: '', pin: '' })
                             setShowResetPass(false)
+                            setShowResetPin(false)
                           }}
                           title="Reset Password / PIN"
                           className="p-1.5 rounded hover:bg-amber-50 text-gray-400 hover:text-amber-600 transition-colors"
@@ -777,6 +784,7 @@ export default function EmployeesPage() {
                       setResetting(editing)
                       setResetForm({ password: '', pin: '' })
                       setShowResetPass(false)
+                      setShowResetPin(false)
                     }}
                     className="flex items-center gap-2 text-sm text-amber-600 hover:text-amber-700 font-medium"
                   >
@@ -808,13 +816,24 @@ export default function EmployeesPage() {
                   </Field>
 
                   <Field label="PIN">
-                    <input
-                      type="number"
-                      value={form.pin}
-                      onChange={e => setForm(f => ({ ...f, pin: e.target.value }))}
-                      placeholder="e.g. 1234"
-                      className={inputCls}
-                    />
+                    <div className="relative">
+                      <input
+                        type={showPin ? 'text' : 'password'}
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={form.pin}
+                        onChange={e => setForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+                        placeholder="e.g. 123456"
+                        className={inputCls + ' pr-10'}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPin(p => !p)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
                   </Field>
                 </div>
 
@@ -1051,13 +1070,24 @@ export default function EmployeesPage() {
 
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Temporary PIN</label>
-                <input
-                  type="number"
-                  value={resetForm.pin}
-                  onChange={e => setResetForm(f => ({ ...f, pin: e.target.value }))}
-                  placeholder="e.g. 1234"
-                  className={inputCls}
-                />
+                <div className="relative">
+                  <input
+                    type={showResetPin ? 'text' : 'password'}
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={resetForm.pin}
+                    onChange={e => setResetForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+                    placeholder="e.g. 123456"
+                    className={inputCls + ' pr-10'}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPin(p => !p)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showResetPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
@@ -1067,7 +1097,7 @@ export default function EmployeesPage() {
 
             <div className="flex gap-3 mt-5">
               <button
-                onClick={() => { setResetting(null); setResetForm({ password: '', pin: '' }) }}
+                onClick={() => { setResetting(null); setResetForm({ password: '', pin: '' }); setShowResetPin(false) }}
                 className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
               >
                 Cancel

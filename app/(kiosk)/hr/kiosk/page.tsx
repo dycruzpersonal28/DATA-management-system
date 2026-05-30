@@ -117,26 +117,28 @@ function PinPad({
   }
 
   return (
-    <div className="flex flex-col items-center gap-6">
-      <div className="flex gap-3">
+    <div className="flex flex-col items-center gap-3">
+      {/* PIN dots */}
+      <div className="flex gap-2">
         {Array.from({ length: maxLen }).map((_, i) => (
           <div
             key={i}
-            className={`w-4 h-4 rounded-full border-2 transition-all duration-150 ${
+            className={`w-3 h-3 rounded-full border-2 transition-all duration-150 ${
               i < value.length ? 'scale-110' : 'bg-transparent border-gray-300'
             }`}
             style={i < value.length ? { background: '#1D9E75', borderColor: '#1D9E75' } : {}}
           />
         ))}
       </div>
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+      {/* Keypad — fixed small size, no responsive bloat */}
+      <div className="grid grid-cols-3 gap-2">
         {keys.map((k, i) => (
           <button
             key={i}
             onClick={() => press(k)}
             disabled={k === ''}
             className={`
-              w-16 h-16 sm:w-20 sm:h-20 rounded-2xl text-lg sm:text-xl font-semibold transition-all duration-100 select-none
+              w-14 h-12 rounded-xl text-base font-semibold transition-all duration-100 select-none
               ${k === ''
                 ? 'invisible'
                 : k === '⌫'
@@ -519,20 +521,21 @@ export default function KioskPage() {
     const shade = selected ? avatarShade(selected.name) : TEAL_SHADES[0]
     const fName = selected ? firstName(selected.name) : ''
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-8" style={{ background: '#f4f7f6', fontFamily: "'DM Sans', sans-serif" }}>
+      <div className="min-h-screen flex flex-col items-center justify-center p-3 sm:p-6" style={{ background: '#f4f7f6', fontFamily: "'DM Sans', sans-serif" }}>
         <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
-        <div className="bg-white rounded-3xl border border-gray-100 p-6 sm:p-10 w-full max-w-sm shadow-lg">
-          <div className="flex flex-col items-center mb-6 sm:mb-8">
+        <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 w-full max-w-xs shadow-lg flex flex-col items-center gap-3">
+          {/* Avatar + name + status */}
+          <div className="flex flex-col items-center gap-1.5">
             <div
-              className="w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center text-xl sm:text-2xl font-semibold text-white mb-3 sm:mb-4"
-              style={{ background: shade.bg, boxShadow: `0 0 0 5px ${shade.ring}` }}
+              className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-semibold text-white flex-shrink-0"
+              style={{ background: shade.bg, boxShadow: `0 0 0 4px ${shade.ring}` }}
             >
               {fName}
             </div>
-            <div className="text-lg sm:text-xl font-semibold text-gray-900">{selected?.name}</div>
+            <div className="text-base font-semibold text-gray-900 leading-tight">{selected?.name}</div>
             <div
-              className="text-sm font-medium mt-2 px-4 py-1 rounded-full"
+              className="text-xs font-medium px-3 py-0.5 rounded-full"
               style={isClockedIn
                 ? { background: '#E1F5EE', color: '#0F6E56' }
                 : { background: '#f3f4f6', color: '#6b7280' }
@@ -542,20 +545,20 @@ export default function KioskPage() {
             </div>
           </div>
 
-          <p className="text-center text-sm text-gray-400 mb-5 sm:mb-6">Enter your PIN</p>
+          <p className="text-xs text-gray-400">Enter your PIN</p>
           <PinPad value={employeePin} onChange={setEmployeePin} />
 
-          <div className="flex gap-3 mt-6 sm:mt-8">
+          <div className="flex gap-2 w-full pt-1">
             <button
               onClick={resetKiosk}
-              className="flex-1 py-3 rounded-2xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
             >
               Cancel
             </button>
             <button
               onClick={confirmEmployeePin}
               disabled={employeePin.length < 4}
-              className="flex-1 py-3 rounded-2xl text-white text-sm font-medium disabled:opacity-40 transition-all"
+              className="flex-1 py-2.5 rounded-xl text-white text-sm font-medium disabled:opacity-40 transition-all"
               style={{ background: '#0F6E56' }}
             >
               {selected && !selected.require_manager_approval ? 'Confirm' : 'Continue'}
@@ -569,36 +572,36 @@ export default function KioskPage() {
   // ─── STEP: Manager PIN ──────────────────────────────────────────────────────
   if (step === 'manager_pin') {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-8" style={{ background: '#f4f7f6', fontFamily: "'DM Sans', sans-serif" }}>
+      <div className="min-h-screen flex flex-col items-center justify-center p-3 sm:p-6" style={{ background: '#f4f7f6', fontFamily: "'DM Sans', sans-serif" }}>
         <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
-        <div className="bg-white rounded-3xl border border-gray-100 p-6 sm:p-10 w-full max-w-sm shadow-lg">
-          <div className="flex flex-col items-center mb-6 sm:mb-8">
+        <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 w-full max-w-xs shadow-lg flex flex-col items-center gap-3">
+          <div className="flex flex-col items-center gap-1.5">
             <div
-              className="w-16 h-16 rounded-full flex items-center justify-center text-2xl mb-4"
+              className="w-12 h-12 rounded-full flex items-center justify-center text-xl flex-shrink-0"
               style={{ background: '#FFF8E1', border: '1px solid #FAC775' }}
             >
               🔐
             </div>
-            <div className="text-xl font-semibold text-gray-900">Manager Approval</div>
-            <div className="text-sm text-gray-400 mt-1.5 text-center leading-relaxed">
+            <div className="text-base font-semibold text-gray-900">Manager Approval</div>
+            <div className="text-xs text-gray-400 text-center leading-relaxed">
               A manager or owner must enter their PIN to approve
             </div>
           </div>
 
           <PinPad value={managerPin} onChange={setManagerPin} />
 
-          <div className="flex gap-3 mt-6 sm:mt-8">
+          <div className="flex gap-2 w-full pt-1">
             <button
               onClick={() => { setManagerPin(''); setStep('employee_pin') }}
-              className="flex-1 py-3 rounded-2xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
             >
               Back
             </button>
             <button
               onClick={() => handleSubmit(false)}
               disabled={managerPin.length < 4 || submitting}
-              className="flex-1 py-3 rounded-2xl text-white text-sm font-medium disabled:opacity-40 transition-all"
+              className="flex-1 py-2.5 rounded-xl text-white text-sm font-medium disabled:opacity-40 transition-all"
               style={{ background: '#0F6E56' }}
             >
               {submitting ? 'Verifying...' : 'Confirm'}

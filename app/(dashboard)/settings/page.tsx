@@ -14,7 +14,6 @@ import PaymentTypesPage from './payment-types/page'
 import LoyaltyPage from './loyalty/page'
 import TaxesDiscountsPage from './taxes-discounts/page'
 import ReceiptPage from './receipt/page'
-import KitchenPrintersPage from './kitchen-printers/page'
 import DiningOptionsPage from './dining-options/page'
 import POSSettingsPage from './pos-settings/page'
 
@@ -110,7 +109,6 @@ export default function SettingsPage() {
       case 'loyalty': return <LoyaltyPage />
       case 'taxes-discounts': return <TaxesDiscountsPage />
       case 'receipt': return <ReceiptPage shop={shop} onShopUpdate={setShop} />
-      case 'kitchen-printers': return <KitchenPrintersPage />
       case 'dining-options': return <DiningOptionsPage />
       case 'pos-settings': return <POSSettingsPage />
       default: return null

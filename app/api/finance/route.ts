@@ -42,7 +42,49 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const rows = entries || []
+  // ── Filter out orphaned entries (receipt, payslip, journal) ──────────────
+  const allEntries = entries || []
+
+  // ── receipts ──────────────────────────────────────────────────────────────
+  const receiptIds = [...new Set(
+    allEntries.filter(e => e.reference_type === 'receipt' && e.reference_id).map(e => e.reference_id)
+  )]
+  let validReceiptIds = new Set<string>()
+  if (receiptIds.length > 0) {
+    const { data: existingReceipts } = await admin
+      .from('receipts').select('id').in('id', receiptIds)
+    validReceiptIds = new Set((existingReceipts || []).map(r => r.id))
+  }
+
+  // ── payslips ──────────────────────────────────────────────────────────────
+  const payslipIds = [...new Set(
+    allEntries.filter(e => e.reference_type === 'payslip' && e.reference_id).map(e => e.reference_id)
+  )]
+  let validPayslipIds = new Set<string>()
+  if (payslipIds.length > 0) {
+    const { data: existingPayslips } = await admin
+      .from('payslips').select('id').in('id', payslipIds)
+    validPayslipIds = new Set((existingPayslips || []).map(p => p.id))
+  }
+
+  // ── journal entries ───────────────────────────────────────────────────────
+  const journalIds = [...new Set(
+    allEntries.filter(e => e.reference_type === 'journal' && e.reference_id).map(e => e.reference_id)
+  )]
+  let validJournalIds = new Set<string>()
+  if (journalIds.length > 0) {
+    const { data: existingJournal } = await admin
+      .from('journal_entries').select('id').in('id', journalIds)
+    validJournalIds = new Set((existingJournal || []).map(j => j.id))
+  }
+
+  // Keep only entries whose source record still exists (or has no reference)
+  const rows = allEntries.filter(e => {
+    if (e.reference_type === 'receipt') return validReceiptIds.has(e.reference_id)
+    if (e.reference_type === 'payslip') return validPayslipIds.has(e.reference_id)
+    if (e.reference_type === 'journal') return validJournalIds.has(e.reference_id)
+    return true // no reference_type — keep as-is
+  })
 
   // ── Aggregate totals ───────────────────────────────────────────────────────
   let totalRevenue   = 0
@@ -154,4 +196,62 @@ export async function GET(req: NextRequest) {
     daily,
     entries: rows,
   })
+}
+
+// DELETE /api/finance/cleanup
+// Removes financial_entries whose linked receipt no longer exists
+export async function DELETE(req: NextRequest) {
+  const supabase = await createClient()
+  const admin = createAdminClient()
+
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { data: appUser } = await admin
+    .from('app_users')
+    .select('shop_id')
+    .eq('auth_user_id', user.id)
+    .single()
+
+  if (!appUser) return NextResponse.json({ error: 'User not found' }, { status: 404 })
+
+  const { shop_id } = appUser
+
+  // Find all receipt-linked financial entry IDs where receipt is gone
+  const { data: orphans } = await admin
+    .from('financial_entries')
+    .select('id, reference_id')
+    .eq('shop_id', shop_id)
+    .eq('reference_type', 'receipt')
+
+  if (!orphans || orphans.length === 0) {
+    return NextResponse.json({ deleted: 0 })
+  }
+
+  // Get all existing receipt IDs for this shop
+  const receiptIds = [...new Set(orphans.map((o: any) => o.reference_id).filter(Boolean))]
+  const { data: existingReceipts } = await admin
+    .from('receipts')
+    .select('id')
+    .in('id', receiptIds)
+
+  const existingIds = new Set((existingReceipts || []).map((r: any) => r.id))
+  const orphanIds = orphans
+    .filter((o: any) => !existingIds.has(o.reference_id))
+    .map((o: any) => o.id)
+
+  if (orphanIds.length === 0) {
+    return NextResponse.json({ deleted: 0 })
+  }
+
+  const { error: delError } = await admin
+    .from('financial_entries')
+    .delete()
+    .in('id', orphanIds)
+
+  if (delError) return NextResponse.json({ error: delError.message }, { status: 500 })
+
+  return NextResponse.json({ deleted: orphanIds.length })
 }

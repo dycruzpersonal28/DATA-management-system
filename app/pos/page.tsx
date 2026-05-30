@@ -29,6 +29,91 @@ type PickerProps = {
   currencySymbol: string
 }
 
+// availability: how many of this item can be made; null = no ingredient tracking
+type AvailabilityInfo = {
+  canMake: number | null       // null = unlimited (no ingredients defined)
+  shortages: { ingredient: string; have: number; need: number; unit: string }[]
+}
+// Note: unit field is kept for future use; currently empty string since schema has no unit column
+type AvailabilityMap = Map<string, AvailabilityInfo>
+
+// ── Stock Warning Modal ───────────────────────────────────────────────────────
+function StockWarningModal({
+  item,
+  availability,
+  onProceed,
+  onCancel,
+}: {
+  item: any
+  availability: AvailabilityInfo
+  onProceed: () => void
+  onCancel: () => void
+}) {
+  const outOfStock = availability.canMake === 0
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+        <div className={`px-5 py-4 flex items-center gap-3 ${outOfStock ? 'bg-red-50' : 'bg-amber-50'}`}>
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${outOfStock ? 'bg-red-100' : 'bg-amber-100'}`}>
+            <AlertTriangle className={`w-5 h-5 ${outOfStock ? 'text-red-600' : 'text-amber-600'}`} />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">
+              {outOfStock ? 'Out of Stock' : 'Low Stock Warning'}
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5">{item.name}</p>
+          </div>
+        </div>
+
+        <div className="px-5 py-4">
+          <p className="text-xs text-gray-500 mb-3">
+            {outOfStock
+              ? 'The following ingredients are insufficient to make this item:'
+              : 'Some ingredients are running low for this item:'}
+          </p>
+          <div className="space-y-2 mb-4">
+            {availability.shortages.map((s, i) => (
+              <div key={i} className="flex items-center justify-between bg-red-50 rounded-xl px-3 py-2">
+                <span className="text-xs font-medium text-gray-800">{s.ingredient}</span>
+                <div className="text-right">
+                  <p className="text-xs text-red-600 font-semibold">
+                    Need {s.need}{s.unit ? ` ${s.unit}` : ''} · Have {s.have}{s.unit ? ` ${s.unit}` : ''}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+          {availability.canMake !== null && availability.canMake > 0 && (
+            <p className="text-xs text-amber-600 font-medium mb-4">
+              Only {availability.canMake} serving{availability.canMake !== 1 ? 's' : ''} can be made with current stock.
+            </p>
+          )}
+          <p className="text-xs text-gray-400">
+            {outOfStock
+              ? 'You can still add this item to the cart and proceed with the sale.'
+              : 'You can still proceed with the sale.'}
+          </p>
+        </div>
+
+        <div className="px-5 pb-5 flex gap-2">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onProceed}
+            className={`flex-1 py-2.5 rounded-xl text-white text-sm font-semibold active:scale-95 transition-all flex items-center justify-center gap-1.5 ${outOfStock ? 'bg-red-500 hover:bg-red-600' : 'bg-amber-500 hover:bg-amber-600'}`}
+          >
+            Add Anyway <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Variant Picker Modal ──────────────────────────────────────────────────────
 function VariantPickerModal({ item, variants, addonItems: initialAddons, onConfirm, onClose, currencySymbol }: PickerProps) {
   const [selected, setSelected] = useState<Variant | null>(null)
@@ -483,6 +568,11 @@ export default function POSPage() {
   // Cart bottom sheet (tablet)
   const [cartSheetOpen, setCartSheetOpen] = useState(false)
 
+  // Inventory availability
+  const [availabilityMap, setAvailabilityMap] = useState<AvailabilityMap>(new Map())
+  const [stockWarningItem, setStockWarningItem] = useState<{ item: any; availability: AvailabilityInfo } | null>(null)
+  const [pendingItemTap, setPendingItemTap] = useState<any | null>(null)
+
   useEffect(() => {
     setNow(new Date())
     const timer = setInterval(() => setNow(new Date()), 1000)
@@ -522,7 +612,7 @@ export default function POSPage() {
       setFeatureDiningOptions(shop.feature_dining_options === true)
       setFeatureOpenTickets(shop.feature_open_tickets === true)
 
-      const { data: cats } = await supabase.from('categories').select('*').eq('shop_id', shop.id).order('sort_order')
+      const { data: cats } = await supabase.from('categories').select('*').eq('shop_id', shop.id).eq('show_in_pos', true).order('sort_order')
       const { data: itms } = await supabase
         .from('items')
         .select('*, categories!items_category_id_fkey(name, color), item_levels!items_level_id_fkey(id, is_sellable)')
@@ -569,6 +659,65 @@ export default function POSPage() {
           .order('created_at', { ascending: false })
         setOpenTickets(tickets || [])
       }
+
+      // ── Inventory availability ─────────────────────────────────────────────
+      // item_ingredients links a sellable item -> ingredient item + quantity needed
+      // inventory_levels tracks current stock per item (item_id = the ingredient item)
+      const [ingredientsRes, inventoryRes] = await Promise.all([
+        supabase
+          .from('item_ingredients')
+          .select('item_id, ingredient_id, quantity, items!item_ingredients_ingredient_id_fkey(name)')
+          .eq('shop_id', shop.id),
+        supabase
+          .from('inventory_levels')
+          .select('item_id, quantity')
+          .eq('shop_id', shop.id),
+      ])
+
+      const ingredients: any[] = ingredientsRes.data || []
+      const inventory: any[] = inventoryRes.data || []
+
+      // Build a lookup: ingredient item_id -> current stock quantity
+      const stockMap = new Map<string, number>()
+      for (const inv of inventory) {
+        stockMap.set(inv.item_id, Number(inv.quantity ?? 0))
+      }
+
+      // Group ingredients by the sellable item_id
+      const ingredientsByItem = new Map<string, any[]>()
+      for (const ing of ingredients) {
+        if (!ingredientsByItem.has(ing.item_id)) ingredientsByItem.set(ing.item_id, [])
+        ingredientsByItem.get(ing.item_id)!.push(ing)
+      }
+
+      // Compute availability for each sellable item
+      const newAvailMap: AvailabilityMap = new Map()
+      for (const [itemId, ings] of ingredientsByItem.entries()) {
+        const shortages: AvailabilityInfo['shortages'] = []
+        let canMake = Infinity
+
+        for (const ing of ings) {
+          const have = stockMap.get(ing.ingredient_id) ?? 0
+          const need = Number(ing.quantity)
+          const possible = need > 0 ? Math.floor(have / need) : Infinity
+          canMake = Math.min(canMake, possible)
+          if (have < need) {
+            shortages.push({
+              ingredient: (ing.items as any)?.name ?? ing.ingredient_id,
+              have: Math.round(have * 100) / 100,
+              need: Math.round(need * 100) / 100,
+              unit: '',
+            })
+          }
+        }
+
+        newAvailMap.set(itemId, {
+          canMake: canMake === Infinity ? null : canMake,
+          shortages,
+        })
+      }
+
+      setAvailabilityMap(newAvailMap)
     }
     load()
   }, [])
@@ -701,7 +850,7 @@ export default function POSPage() {
   }
 
   // ── Item tap ───────────────────────────────────────────────────────────────
-  async function handleItemTap(item: any) {
+  async function openItemPicker(item: any) {
     setPickerLoading(true)
     setPickerItem(item)
     setPickerVariants([])
@@ -719,6 +868,17 @@ export default function POSPage() {
     setPickerVariants((variantRes as any).data || [])
     setPickerAddons(((addonRes as any).data || []).map((a: any) => ({ id: a.id, name: a.name, price: Number(a.price), selected: false, quantity: 1 })))
     setPickerLoading(false)
+  }
+
+  async function handleItemTap(item: any) {
+    const avail = availabilityMap.get(item.id)
+    // Show warning if: ingredients are tracked AND (can't make any OR there are shortages)
+    if (avail && (avail.canMake === 0 || avail.shortages.length > 0)) {
+      setPendingItemTap(item)
+      setStockWarningItem({ item, availability: avail })
+      return
+    }
+    await openItemPicker(item)
   }
 
   function handlePickerConfirm(variant: Variant | null, note: string, addons: AddonItem[]) {
@@ -741,6 +901,19 @@ export default function POSPage() {
     setPickerItem(null)
     setPickerVariants([])
     setPickerAddons([])
+  }
+
+  // ── Stock Warning Handlers ────────────────────────────────────────────────
+  async function handleStockWarningProceed() {
+    const item = pendingItemTap
+    setStockWarningItem(null)
+    setPendingItemTap(null)
+    if (item) await openItemPicker(item)
+  }
+
+  function handleStockWarningCancel() {
+    setStockWarningItem(null)
+    setPendingItemTap(null)
   }
 
   const itemsByCategory = useMemo(() => {
@@ -778,6 +951,14 @@ export default function POSPage() {
     <div className="flex h-screen bg-gray-100 overflow-hidden">
 
       {/* ── Modals (unchanged) ── */}
+      {stockWarningItem && (
+        <StockWarningModal
+          item={stockWarningItem.item}
+          availability={stockWarningItem.availability}
+          onProceed={handleStockWarningProceed}
+          onCancel={handleStockWarningCancel}
+        />
+      )}
       {pickerItem && !pickerLoading && (
         <VariantPickerModal
           item={pickerItem} variants={pickerVariants} addonItems={pickerAddons}
@@ -1021,37 +1202,94 @@ export default function POSPage() {
             ) : viewMode === 'grid' ? (
               // ── Item grid: 2 cols on tablet, 3 on desktop ──
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                {categoryItems.map((item: any) => (
-                  <button key={item.id} onClick={() => handleItemTap(item)}
-                    className="bg-white rounded-xl border border-gray-200 p-3 text-left hover:border-indigo-300 hover:shadow-sm active:scale-95 transition-all">
-                    <div className="w-full h-1 rounded-full mb-2" style={{ backgroundColor: selectedCategory.color || '#e5e7eb' }} />
-                    <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
-                    {item.has_variants ? (
-                      <p className="text-xs text-indigo-400 mt-1 font-medium">Multiple variants</p>
-                    ) : (
-                      <p className="text-sm font-semibold text-indigo-600 mt-1">{currencySymbol}{Number(item.price).toFixed(2)}</p>
-                    )}
-                    {item.offer_addons && <p className="text-xs text-emerald-500 mt-0.5 font-medium">+ Add-ons</p>}
-                  </button>
-                ))}
+                {categoryItems.map((item: any) => {
+                  const avail = availabilityMap.get(item.id)
+                  const outOfStock = avail?.canMake === 0
+                  const lowStock = avail && avail.canMake !== null && avail.canMake > 0 && avail.canMake <= 3
+                  const hasIngredients = !!avail
+                  return (
+                    <button key={item.id} onClick={() => handleItemTap(item)}
+                      className={`bg-white rounded-xl border p-3 text-left hover:shadow-sm active:scale-95 transition-all relative ${
+                        outOfStock
+                          ? 'border-red-200 hover:border-red-300 opacity-80'
+                          : lowStock
+                          ? 'border-amber-200 hover:border-amber-300'
+                          : 'border-gray-200 hover:border-indigo-300'
+                      }`}>
+                      <div className="w-full h-1 rounded-full mb-2" style={{ backgroundColor: selectedCategory.color || '#e5e7eb' }} />
+                      <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
+                      {item.has_variants ? (
+                        <p className="text-xs text-indigo-400 mt-1 font-medium">Multiple variants</p>
+                      ) : (
+                        <p className="text-sm font-semibold text-indigo-600 mt-1">{currencySymbol}{Number(item.price).toFixed(2)}</p>
+                      )}
+                      {item.offer_addons && <p className="text-xs text-emerald-500 mt-0.5 font-medium">+ Add-ons</p>}
+                      {/* Availability badge */}
+                      {hasIngredients && (
+                        <div className={`mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                          outOfStock
+                            ? 'bg-red-100 text-red-600'
+                            : lowStock
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-emerald-100 text-emerald-700'
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${outOfStock ? 'bg-red-500' : lowStock ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                          {outOfStock
+                            ? 'Out of stock'
+                            : avail.canMake === null
+                            ? 'In stock'
+                            : `${avail.canMake} available`}
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             ) : (
               <div className="space-y-2">
-                {categoryItems.map((item: any) => (
-                  <button key={item.id} onClick={() => handleItemTap(item)}
-                    className="w-full bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-4 hover:border-indigo-300 hover:shadow-sm active:scale-[0.99] transition-all text-left">
-                    <div className="w-2 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: selectedCategory.color || '#6366f1' }} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
-                      {item.offer_addons && <p className="text-xs text-emerald-500 font-medium">+ Add-ons available</p>}
-                    </div>
-                    {item.has_variants ? (
-                      <p className="text-xs text-indigo-400 font-medium flex-shrink-0">Variants</p>
-                    ) : (
-                      <p className="text-sm font-semibold text-indigo-600 flex-shrink-0">{currencySymbol}{Number(item.price).toFixed(2)}</p>
-                    )}
-                  </button>
-                ))}
+                {categoryItems.map((item: any) => {
+                  const avail = availabilityMap.get(item.id)
+                  const outOfStock = avail?.canMake === 0
+                  const lowStock = avail && avail.canMake !== null && avail.canMake > 0 && avail.canMake <= 3
+                  const hasIngredients = !!avail
+                  return (
+                    <button key={item.id} onClick={() => handleItemTap(item)}
+                      className={`w-full bg-white rounded-xl border px-4 py-3 flex items-center gap-4 hover:shadow-sm active:scale-[0.99] transition-all text-left ${
+                        outOfStock
+                          ? 'border-red-200 hover:border-red-300 opacity-80'
+                          : lowStock
+                          ? 'border-amber-200 hover:border-amber-300'
+                          : 'border-gray-200 hover:border-indigo-300'
+                      }`}>
+                      <div className="w-2 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: selectedCategory.color || '#6366f1' }} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
+                        {item.offer_addons && <p className="text-xs text-emerald-500 font-medium">+ Add-ons available</p>}
+                        {hasIngredients && (
+                          <div className={`mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                            outOfStock
+                              ? 'bg-red-100 text-red-600'
+                              : lowStock
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-emerald-100 text-emerald-700'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${outOfStock ? 'bg-red-500' : lowStock ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                            {outOfStock
+                              ? 'Out of stock'
+                              : avail.canMake === null
+                              ? 'In stock'
+                              : `${avail.canMake} available`}
+                          </div>
+                        )}
+                      </div>
+                      {item.has_variants ? (
+                        <p className="text-xs text-indigo-400 font-medium flex-shrink-0">Variants</p>
+                      ) : (
+                        <p className="text-sm font-semibold text-indigo-600 flex-shrink-0">{currencySymbol}{Number(item.price).toFixed(2)}</p>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             )
           )}

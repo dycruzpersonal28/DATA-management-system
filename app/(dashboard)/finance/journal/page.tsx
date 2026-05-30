@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Trash2, TrendingUp, TrendingDown, RefreshCw,
-  Receipt, Repeat, X, ChevronDown, Wallet,
+  Receipt, Repeat, X, ChevronDown, Wallet, AlertTriangle, RotateCcw,
+  Download, FileText, FileSpreadsheet, Calendar,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -59,6 +60,49 @@ function fmtDate(s: string) {
     month: 'short', day: 'numeric', year: 'numeric',
   })
 }
+
+
+// ── Export helpers ─────────────────────────────────────────────────────────────
+function escapeCsv(val: string | number | null | boolean): string {
+  if (val === null || val === undefined) return ''
+  const str = String(val)
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`
+  }
+  return str
+}
+
+function entriesToCsv(rows: JournalEntry[]): string {
+  const headers = ['Date', 'Type', 'Category', 'Direction', 'Amount', 'Description', 'Reference No', 'Recurring', 'Created At']
+  const lines = [headers.join(',')]
+  for (const e of rows) {
+    const meta = TYPE_META[e.type]
+    lines.push([
+      escapeCsv(e.date),
+      escapeCsv(meta.label),
+      escapeCsv(e.category),
+      escapeCsv(meta.direction === 'out' ? 'Debit' : 'Credit'),
+      escapeCsv(Number(e.amount).toFixed(2)),
+      escapeCsv(e.description),
+      escapeCsv(e.reference_no),
+      escapeCsv(e.is_recurring ? 'Yes' : 'No'),
+      escapeCsv(e.created_at ? e.created_at.split('T')[0] : ''),
+    ].join(','))
+  }
+  return lines.join('\n')
+}
+
+function downloadBlob(content: string, filename: string, mime: string) {
+  const blob = new Blob([content], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function slugDate(s: string) { return s.replace(/-/g, '') }
 
 // ── Type config ────────────────────────────────────────────────────────────────
 const TYPE_META: Record<EntryType, {
@@ -125,8 +169,417 @@ function SummaryStrip({ entries }: { entries: JournalEntry[] }) {
   )
 }
 
+
+// ── Export Modal ──────────────────────────────────────────────────────────────
+function ExportModal({
+  initialFrom,
+  initialTo,
+  onClose,
+}: {
+  initialFrom: string
+  initialTo: string
+  onClose: () => void
+}) {
+  const [exportFrom, setExportFrom]   = useState(initialFrom)
+  const [exportTo, setExportTo]       = useState(initialTo)
+  const [exportType, setExportType]   = useState<EntryType | 'all'>('all')
+  const [format, setFormat]           = useState<'csv' | 'json'>('csv')
+  const [loading, setLoading]         = useState(false)
+  const [preview, setPreview]         = useState<JournalEntry[] | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+
+  // Quick range presets
+  function applyPreset(preset: string) {
+    const now = new Date()
+    const y = now.getFullYear()
+    const m = now.getMonth()
+    if (preset === 'this_month') {
+      setExportFrom(toDateStr(new Date(y, m, 1)))
+      setExportTo(toDateStr(new Date(y, m + 1, 0)))
+    } else if (preset === 'last_month') {
+      setExportFrom(toDateStr(new Date(y, m - 1, 1)))
+      setExportTo(toDateStr(new Date(y, m, 0)))
+    } else if (preset === 'this_year') {
+      setExportFrom(`${y}-01-01`)
+      setExportTo(`${y}-12-31`)
+    } else if (preset === 'last_30') {
+      const from = new Date(); from.setDate(from.getDate() - 30)
+      setExportFrom(toDateStr(from))
+      setExportTo(toDateStr(now))
+    } else if (preset === 'last_90') {
+      const from = new Date(); from.setDate(from.getDate() - 90)
+      setExportFrom(toDateStr(from))
+      setExportTo(toDateStr(now))
+    }
+    setPreview(null)
+  }
+
+  async function fetchPreview() {
+    setPreviewLoading(true)
+    setPreview(null)
+    try {
+      const params = new URLSearchParams({ date_from: exportFrom, date_to: exportTo })
+      if (exportType !== 'all') params.set('type', exportType)
+      const res = await fetch(`/api/journal?${params}`)
+      const data = await res.json()
+      setPreview(data.entries || [])
+    } catch {
+      setPreview([])
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  async function handleExport() {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ date_from: exportFrom, date_to: exportTo })
+      if (exportType !== 'all') params.set('type', exportType)
+      const res = await fetch(`/api/journal?${params}`)
+      const data = await res.json()
+      const rows: JournalEntry[] = data.entries || []
+      const typeSuffix = exportType === 'all' ? 'all' : TYPE_META[exportType].label.toLowerCase().replace(/\s+/g, '_')
+      const filename = `journal_${typeSuffix}_${slugDate(exportFrom)}_${slugDate(exportTo)}.${format}`
+      if (format === 'csv') {
+        downloadBlob(entriesToCsv(rows), filename, 'text/csv;charset=utf-8;')
+      } else {
+        const json = JSON.stringify(rows.map(e => ({
+          id: e.id,
+          date: e.date,
+          type: TYPE_META[e.type].label,
+          direction: TYPE_META[e.type].direction === 'out' ? 'Debit' : 'Credit',
+          category: e.category,
+          amount: Number(e.amount),
+          description: e.description,
+          reference_no: e.reference_no,
+          is_recurring: e.is_recurring,
+          created_at: e.created_at,
+        })), null, 2)
+        downloadBlob(json, filename, 'application/json')
+      }
+    } catch {
+      // silent
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const previewTotals = preview
+    ? {
+        income:  preview.filter(e => e.type === 'other_income' || e.type === 'capital').reduce((s, e) => s + Number(e.amount), 0),
+        expense: preview.filter(e => e.type === 'expense' || e.type === 'labor').reduce((s, e) => s + Number(e.amount), 0),
+        count:   preview.length,
+      }
+    : null
+
+  const PRESETS = [
+    { key: 'this_month', label: 'This month' },
+    { key: 'last_month', label: 'Last month' },
+    { key: 'last_30',    label: 'Last 30 days' },
+    { key: 'last_90',    label: 'Last 90 days' },
+    { key: 'this_year',  label: 'This year' },
+  ]
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-indigo-50">
+          <div className="w-9 h-9 bg-indigo-100 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Download className="w-5 h-5 text-indigo-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Export Journal Entries</h3>
+            <p className="text-xs text-gray-500 mt-0.5">Choose a date range, type filter, and format</p>
+          </div>
+          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-5">
+
+          {/* Quick presets */}
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-2">Quick range</p>
+            <div className="flex flex-wrap gap-1.5">
+              {PRESETS.map(p => (
+                <button
+                  key={p.key}
+                  onClick={() => applyPreset(p.key)}
+                  className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors"
+                >
+                  <Calendar className="w-3 h-3 inline mr-1 opacity-60" />
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom date range */}
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-2">Custom date range</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">From</label>
+                <input
+                  type="date"
+                  value={exportFrom}
+                  onChange={e => { setExportFrom(e.target.value); setPreview(null) }}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">To</label>
+                <input
+                  type="date"
+                  value={exportTo}
+                  onChange={e => { setExportTo(e.target.value); setPreview(null) }}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Entry type filter */}
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-2">Entry type</p>
+            <div className="flex flex-wrap gap-1.5">
+              {(['all', 'expense', 'other_income', 'labor', 'capital'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => { setExportType(f); setPreview(null) }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    exportType === f
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  {f === 'all' ? 'All types' : TYPE_META[f].label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Format */}
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-2">Export format</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setFormat('csv')}
+                className={`flex items-center gap-2.5 px-4 py-3 rounded-xl border-2 transition-all ${
+                  format === 'csv' ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <FileSpreadsheet className={`w-5 h-5 flex-shrink-0 ${format === 'csv' ? 'text-indigo-600' : 'text-gray-400'}`} />
+                <div className="text-left">
+                  <p className={`text-sm font-semibold ${format === 'csv' ? 'text-indigo-700' : 'text-gray-700'}`}>CSV</p>
+                  <p className="text-xs text-gray-400">Excel / Sheets</p>
+                </div>
+              </button>
+              <button
+                onClick={() => setFormat('json')}
+                className={`flex items-center gap-2.5 px-4 py-3 rounded-xl border-2 transition-all ${
+                  format === 'json' ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <FileText className={`w-5 h-5 flex-shrink-0 ${format === 'json' ? 'text-indigo-600' : 'text-gray-400'}`} />
+                <div className="text-left">
+                  <p className={`text-sm font-semibold ${format === 'json' ? 'text-indigo-700' : 'text-gray-700'}`}>JSON</p>
+                  <p className="text-xs text-gray-400">Raw data / API</p>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* Preview strip */}
+          <div className="border border-gray-100 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+              <p className="text-xs font-medium text-gray-500">Preview</p>
+              <button
+                onClick={fetchPreview}
+                disabled={previewLoading}
+                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3 h-3 ${previewLoading ? 'animate-spin' : ''}`} />
+                {previewLoading ? 'Loading…' : 'Count records'}
+              </button>
+            </div>
+            <div className="px-4 py-3">
+              {previewTotals ? (
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div>
+                    <p className="text-lg font-bold text-gray-800">{previewTotals.count}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Records</p>
+                  </div>
+                  <div>
+                    <p className="text-lg font-bold text-emerald-700">{fmt(previewTotals.income)}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Income / Capital</p>
+                  </div>
+                  <div>
+                    <p className="text-lg font-bold text-red-600">{fmt(previewTotals.expense)}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Expenses / Labor</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400 text-center py-1">
+                  Click "Count records" to preview what will be exported
+                </p>
+              )}
+            </div>
+          </div>
+
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-2 px-5 py-4 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleExport}
+            disabled={loading}
+            className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            {loading ? 'Exporting…' : `Export ${format.toUpperCase()}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Delete Confirm Modal ───────────────────────────────────────────────────────
+function DeleteConfirmModal({
+  entry,
+  onConfirm,
+  onCancel,
+  deleting,
+}: {
+  entry: JournalEntry
+  onConfirm: (reverse: boolean) => void
+  onCancel: () => void
+  deleting: boolean
+}) {
+  const [withReversal, setWithReversal] = useState(true)
+  const meta = TYPE_META[entry.type]
+  const isOut = meta.direction === 'out'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-red-50">
+          <div className="w-9 h-9 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0">
+            <AlertTriangle className="w-5 h-5 text-red-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Delete Journal Entry</h3>
+            <p className="text-xs text-gray-500 mt-0.5">This action will affect your P&L</p>
+          </div>
+          <button onClick={onCancel} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Entry summary */}
+        <div className="px-5 py-4 border-b border-gray-100">
+          <div className="bg-gray-50 rounded-xl p-3 space-y-1.5">
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Type</span>
+              <span className={`font-medium px-2 py-0.5 rounded-full text-xs ${meta.badge}`}>{meta.label}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Category</span>
+              <span className="font-medium text-gray-800">{entry.category}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Date</span>
+              <span className="font-medium text-gray-800">{fmtDate(entry.date)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Amount</span>
+              <span className={`font-bold ${isOut ? 'text-red-600' : 'text-emerald-700'}`}>
+                {isOut ? '−' : '+'}{fmt(entry.amount)}
+              </span>
+            </div>
+            {entry.description && (
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Note</span>
+                <span className="text-gray-700 max-w-[200px] text-right truncate">{entry.description}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Reversal option */}
+        <div className="px-5 py-4 border-b border-gray-100">
+          <button
+            onClick={() => setWithReversal(v => !v)}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-all text-left ${
+              withReversal
+                ? 'border-indigo-400 bg-indigo-50'
+                : 'border-gray-200 bg-white hover:border-gray-300'
+            }`}
+          >
+            <div className={`w-5 h-5 rounded-md border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
+              withReversal ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300'
+            }`}>
+              {withReversal && (
+                <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-800 flex items-center gap-1.5">
+                <RotateCcw className="w-3.5 h-3.5 text-indigo-500" />
+                Post a reversal entry to P&L
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Adds a {isOut ? '+' : '−'}{fmt(entry.amount)} counter-entry today to correct your P&L history
+              </p>
+            </div>
+          </button>
+          {!withReversal && (
+            <p className="text-xs text-amber-600 mt-2 flex items-center gap-1.5">
+              <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+              Without reversal, only the row is removed — older date ranges may still reflect the original amount.
+            </p>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2 px-5 py-4">
+          <button
+            onClick={onCancel}
+            disabled={deleting}
+            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(withReversal)}
+            disabled={deleting}
+            className="flex-1 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {deleting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            {deleting ? 'Deleting…' : 'Delete Entry'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Entry row ─────────────────────────────────────────────────────────────────
-function EntryRow({ entry, onDelete }: { entry: JournalEntry; onDelete: (id: string) => void }) {
+function EntryRow({ entry, onDelete }: { entry: JournalEntry; onDelete: (entry: JournalEntry) => void }) {
   const meta = TYPE_META[entry.type]
   const Icon = meta.icon
   const isOut = meta.direction === 'out'
@@ -153,7 +606,7 @@ function EntryRow({ entry, onDelete }: { entry: JournalEntry; onDelete: (id: str
       </td>
       <td className="px-4 py-3 text-right">
         <button
-          onClick={() => onDelete(entry.id)}
+          onClick={() => onDelete(entry)}
           className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all"
           title="Delete entry"
         >
@@ -400,11 +853,14 @@ function AddEntryModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function JournalPage() {
-  const [entries, setEntries]   = useState<JournalEntry[]>([])
-  const [loading, setLoading]   = useState(false)
-  const [error, setError]       = useState('')
-  const [showModal, setModal]   = useState(false)
-  const [filterType, setFilter] = useState<EntryType | 'all'>('all')
+  const [entries, setEntries]       = useState<JournalEntry[]>([])
+  const [loading, setLoading]       = useState(false)
+  const [error, setError]           = useState('')
+  const [showModal, setModal]       = useState(false)
+  const [filterType, setFilter]     = useState<EntryType | 'all'>('all')
+  const [deleteTarget, setDeleteTarget] = useState<JournalEntry | null>(null)
+  const [deleting, setDeleting]         = useState(false)
+  const [showExport, setShowExport]     = useState(false)
   const [dateFrom, setFrom]     = useState(() => {
     const d = new Date(); d.setDate(1)
     return toDateStr(d) // default: start of current month
@@ -430,13 +886,21 @@ export default function JournalPage() {
 
   useEffect(() => { load() }, [load])
 
-  async function handleDelete(id: string) {
-    if (!confirm('Delete this entry? This will also remove it from financial reports.')) return
+  async function handleDeleteConfirm(withReversal: boolean) {
+    if (!deleteTarget) return
+    setDeleting(true)
     try {
-      await fetch(`/api/journal?id=${id}`, { method: 'DELETE' })
-      setEntries(prev => prev.filter(e => e.id !== id))
-    } catch {
-      alert('Failed to delete entry.')
+      const res = await fetch(`/api/journal?id=${deleteTarget.id}&reversal=${withReversal}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to delete')
+      }
+      setEntries(prev => prev.filter(e => e.id !== deleteTarget.id))
+      setDeleteTarget(null)
+    } catch (e: any) {
+      setError(e.message || 'Failed to delete entry.')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -451,13 +915,22 @@ export default function JournalPage() {
           <h1 className="text-2xl font-semibold text-gray-900">Journal Entries</h1>
           <p className="text-sm text-gray-500 mt-0.5">Expenses, other income, and manual entries — all flow into your P&L</p>
         </div>
-        <button
-          onClick={() => setModal(true)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 transition-colors self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          New Entry
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button
+            onClick={() => setShowExport(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Export
+          </button>
+          <button
+            onClick={() => setModal(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            New Entry
+          </button>
+        </div>
       </div>
 
       {/* Date range */}
@@ -539,7 +1012,7 @@ export default function JournalPage() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {filtered.map(e => (
-                  <EntryRow key={e.id} entry={e} onDelete={handleDelete} />
+                  <EntryRow key={e.id} entry={e} onDelete={setDeleteTarget} />
                 ))}
               </tbody>
             </table>
@@ -554,11 +1027,30 @@ export default function JournalPage() {
         )}
       </div>
 
-      {/* Modal */}
+      {/* Export Modal */}
+      {showExport && (
+        <ExportModal
+          initialFrom={dateFrom}
+          initialTo={dateTo}
+          onClose={() => setShowExport(false)}
+        />
+      )}
+
+      {/* Add Entry Modal */}
       {showModal && (
         <AddEntryModal
           onClose={() => setModal(false)}
           onSaved={load}
+        />
+      )}
+
+      {/* Delete Confirm Modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          entry={deleteTarget}
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setDeleteTarget(null)}
+          deleting={deleting}
         />
       )}
     </div>

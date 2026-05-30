@@ -42,6 +42,27 @@ function getHomeForUser(allowed: string[]): string {
   return first ? first[0] : '/staff'
 }
 
+// Helper: check must_change_password across employees + app_users
+async function getMustChangePassword(adminClient: any, authUserId: string): Promise<boolean> {
+  const { data: empRow } = await adminClient
+    .from('employees')
+    .select('must_change_password')
+    .eq('auth_user_id', authUserId)
+    .single()
+
+  // Employee row found — use it
+  if (empRow !== null) return empRow?.must_change_password === true
+
+  // No employee row (owner/manager) — fall back to app_users
+  const { data: appUserRow } = await adminClient
+    .from('app_users')
+    .select('must_change_password')
+    .eq('auth_user_id', authUserId)
+    .single()
+
+  return appUserRow?.must_change_password === true
+}
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
@@ -63,11 +84,11 @@ export async function middleware(request: NextRequest) {
   )
 
   const { data, error } = await supabase.auth.getUser()
-if (error || !data) {
-  // Auth service is down — fail safe, let the request through or redirect
-  return supabaseResponse 
-}
-const { user } = data
+  if (error || !data) {
+    // Auth service is down — fail safe, let the request through or redirect
+    return supabaseResponse
+  }
+  const { user } = data
 
   const pathname          = request.nextUrl.pathname
   const isAuthPage        = pathname === '/login' || pathname === '/pin'
@@ -82,39 +103,30 @@ const { user } = data
   }
 
   // ── Must-change-password guard ────────────────────────────────────────────
-  // Check the flag on the employee row so we don't need a full permission load
-  // for this single check. Use the service client (defined below) lazily here.
+  // Checks employees first, falls back to app_users for owner/manager accounts
+  // that have no employee row.
   if (!isChangePassword && !isAuthPage) {
     const adminForFlag = createServiceClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
-    const { data: flagRow } = await adminForFlag
-      .from('employees')
-      .select('must_change_password')
-      .eq('auth_user_id', user.id)
-      .single()
-
-    if (flagRow?.must_change_password === true) {
+    const mustChange = await getMustChangePassword(adminForFlag, user.id)
+    if (mustChange) {
       const url = request.nextUrl.clone()
       url.pathname = '/change-password'
       return NextResponse.redirect(url)
     }
   }
 
-  // ── If already on change-password and flag is clear, bounce to home ───────
+  // ── If already on change-password, check flag to decide whether to let through
   if (isChangePassword) {
     const adminForFlag = createServiceClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
-    const { data: flagRow } = await adminForFlag
-      .from('employees')
-      .select('must_change_password')
-      .eq('auth_user_id', user.id)
-      .single()
-
-    if (!flagRow?.must_change_password) {
+    const mustChange = await getMustChangePassword(adminForFlag, user.id)
+    if (!mustChange) {
+      // Flag cleared — bounce to dashboard
       const url = request.nextUrl.clone()
       url.pathname = '/dashboard'
       return NextResponse.redirect(url)
