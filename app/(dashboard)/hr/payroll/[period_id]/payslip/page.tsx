@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import {
   Printer, Download, ArrowLeft, Settings2, Eye, EyeOff,
   RefreshCw, ChevronDown, ChevronUp, Users, X, Sliders,
+  Plus, Edit3, Trash2,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -84,7 +85,15 @@ interface LayoutSettings {
   showGovNumbers: boolean
   showAttendance: boolean
   showEarnings: boolean
+  showEarningsOvertime: boolean
+  showEarningsAllowance: boolean
   showDeductions: boolean
+  showDeductionsLate: boolean
+  showDeductionsSSS: boolean
+  showDeductionsPhilHealth: boolean
+  showDeductionsPagIbig: boolean
+  showDeductionsTax: boolean
+  showDeductionsOther: boolean
   showSignature: boolean
   accentColor: string
   fontSize: 'sm' | 'md' | 'lg'
@@ -97,7 +106,15 @@ const DEFAULT_LAYOUT: LayoutSettings = {
   showGovNumbers: true,
   showAttendance: true,
   showEarnings: true,
+  showEarningsOvertime: true,
+  showEarningsAllowance: true,
   showDeductions: true,
+  showDeductionsLate: true,
+  showDeductionsSSS: true,
+  showDeductionsPhilHealth: true,
+  showDeductionsPagIbig: true,
+  showDeductionsTax: true,
+  showDeductionsOther: true,
   showSignature: true,
   accentColor: '#111827',
   fontSize: 'md',
@@ -204,8 +221,12 @@ function buildPrintHTML(
       overtime_hours: slip.overtime_hours ?? 0,
       late_minutes:   slip.late_minutes   ?? 0,
     }
+    const otherDeductionsPrint = typeof window !== 'undefined'
+      ? (JSON.parse(localStorage.getItem('payroll_other_deductions') ?? '[]') as {id:string;label:string;amount:number}[]).filter(o => o.label.trim() && o.amount > 0)
+      : []
+    const otherTotalPrint = otherDeductionsPrint.reduce((s, o) => s + o.amount, 0)
     const gross = slip.basic_pay + slip.overtime_pay + slip.allowance
-    const deductions = slip.late_deduction + slip.sss_contribution + slip.philhealth_contribution + slip.pagibig_contribution + slip.tax_withheld
+    const deductions = slip.late_deduction + slip.sss_contribution + slip.philhealth_contribution + slip.pagibig_contribution + slip.tax_withheld + otherTotalPrint
     const sym = shop.currency_symbol || '₱'
     // Snapshot fields with live fallback for older payslips
     const empName    = slip.snapshot_name            ?? slip.employees?.name
@@ -264,8 +285,8 @@ function buildPrintHTML(
           <div class="section">
             <p class="section-title">Earnings</p>
             <div class="row"><span>Basic Pay</span><span>${fmtCurrency(slip.basic_pay, sym)}</span></div>
-            ${slip.overtime_pay > 0 ? `<div class="row"><span>Overtime Pay</span><span>${fmtCurrency(slip.overtime_pay, sym)}</span></div>` : ''}
-            ${slip.allowance > 0 ? `<div class="row"><span>Allowance</span><span>${fmtCurrency(slip.allowance, sym)}</span></div>` : ''}
+            ${layout.showEarningsOvertime && slip.overtime_pay > 0 ? `<div class="row"><span>Overtime Pay</span><span>${fmtCurrency(slip.overtime_pay, sym)}</span></div>` : ''}
+            ${layout.showEarningsAllowance && slip.allowance > 0 ? `<div class="row"><span>Allowance</span><span>${fmtCurrency(slip.allowance, sym)}</span></div>` : ''}
             <div class="row total"><span>Gross Pay</span><span>${fmtCurrency(gross, sym)}</span></div>
           </div>` : ''}
         </div>
@@ -275,11 +296,12 @@ function buildPrintHTML(
           ${layout.showDeductions ? `
           <div class="section">
             <p class="section-title">Deductions</p>
-            ${slip.late_deduction > 0 ? `<div class="row"><span>Late Deduction</span><span>–${fmtCurrency(slip.late_deduction, sym)}</span></div>` : ''}
-            <div class="row"><span>SSS</span><span>–${fmtCurrency(slip.sss_contribution, sym)}</span></div>
-            <div class="row"><span>PhilHealth</span><span>–${fmtCurrency(slip.philhealth_contribution, sym)}</span></div>
-            <div class="row"><span>Pag-IBIG</span><span>–${fmtCurrency(slip.pagibig_contribution, sym)}</span></div>
-            ${slip.tax_withheld > 0 ? `<div class="row"><span>Withholding Tax</span><span>–${fmtCurrency(slip.tax_withheld, sym)}</span></div>` : ''}
+            ${layout.showDeductionsLate && slip.late_deduction > 0 ? `<div class="row"><span>Late Deduction</span><span>–${fmtCurrency(slip.late_deduction, sym)}</span></div>` : ''}
+            ${layout.showDeductionsSSS && slip.sss_contribution > 0 ? `<div class="row"><span>SSS</span><span>–${fmtCurrency(slip.sss_contribution, sym)}</span></div>` : ''}
+            ${layout.showDeductionsPhilHealth && slip.philhealth_contribution > 0 ? `<div class="row"><span>PhilHealth</span><span>–${fmtCurrency(slip.philhealth_contribution, sym)}</span></div>` : ''}
+            ${layout.showDeductionsPagIbig && slip.pagibig_contribution > 0 ? `<div class="row"><span>Pag-IBIG</span><span>–${fmtCurrency(slip.pagibig_contribution, sym)}</span></div>` : ''}
+            ${layout.showDeductionsTax && slip.tax_withheld > 0 ? `<div class="row"><span>Withholding Tax</span><span>–${fmtCurrency(slip.tax_withheld, sym)}</span></div>` : ''}
+            ${layout.showDeductionsOther ? otherDeductionsPrint.map(o => `<div class="row"><span>${o.label}</span><span>–${fmtCurrency(o.amount, sym)}</span></div>`).join('') : ''}
             <div class="row total"><span>Total Deductions</span><span>–${fmtCurrency(deductions, sym)}</span></div>
           </div>` : ''}
         </div>
@@ -379,8 +401,12 @@ function PayslipCard({
   onPrint: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const otherDeductions = typeof window !== 'undefined'
+    ? (JSON.parse(localStorage.getItem('payroll_other_deductions') ?? '[]') as {id:string;label:string;amount:number}[]).filter(o => o.label.trim() && o.amount > 0)
+    : []
+  const otherTotal = otherDeductions.reduce((s, o) => s + o.amount, 0)
   const gross = slip.basic_pay + slip.overtime_pay + slip.allowance
-  const deductions = slip.late_deduction + slip.sss_contribution + slip.philhealth_contribution + slip.pagibig_contribution + slip.tax_withheld
+  const deductions = slip.late_deduction + slip.sss_contribution + slip.philhealth_contribution + slip.pagibig_contribution + slip.tax_withheld + otherTotal
   const sym = shop.currency_symbol || '₱'
   const accent = layout.accentColor
 
@@ -407,6 +433,7 @@ function PayslipCard({
         onClick={() => setExpanded(v => !v)}
       >
         <div className="flex-1 min-w-0">
+          {shop.name && <p className="text-xs text-gray-400 mb-0.5">{shop.name}</p>}
           <p className="font-semibold text-gray-900">{empName}</p>
           <p className="text-xs text-gray-500 mt-0.5">
             {empRole}
@@ -439,14 +466,7 @@ function PayslipCard({
       {/* Expanded detail */}
       {expanded && (
         <div className="border-t border-gray-100 px-5 py-5">
-          {/* Gov numbers */}
-          {layout.showGovNumbers && (empSss || empPh || empPagibig) && (
-            <div className="flex gap-6 mb-4 flex-wrap">
-              {empSss && <span className="text-xs text-gray-400">SSS: <span className="text-gray-600 font-medium">{empSss}</span></span>}
-              {empPh && <span className="text-xs text-gray-400">PhilHealth: <span className="text-gray-600 font-medium">{empPh}</span></span>}
-              {empPagibig && <span className="text-xs text-gray-400">Pag-IBIG: <span className="text-gray-600 font-medium">{empPagibig}</span></span>}
-            </div>
-          )}
+
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
             {/* Attendance */}
@@ -473,16 +493,22 @@ function PayslipCard({
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: accent }}>Earnings</p>
                 <div className="space-y-1.5">
-                  {[
-                    ['Basic Pay', fmtCurrency(slip.basic_pay, sym)],
-                    ['Overtime Pay', fmtCurrency(slip.overtime_pay, sym)],
-                    ['Allowance', fmtCurrency(slip.allowance, sym)],
-                  ].map(([label, val]) => (
-                    <div key={label} className="flex justify-between text-sm">
-                      <span className="text-gray-500">{label}</span>
-                      <span className="font-medium text-gray-800">{val}</span>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500">Basic Pay</span>
+                    <span className="font-medium text-gray-800">{fmtCurrency(slip.basic_pay, sym)}</span>
+                  </div>
+                  {layout.showEarningsOvertime && slip.overtime_pay > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Overtime Pay</span>
+                      <span className="font-medium text-gray-800">{fmtCurrency(slip.overtime_pay, sym)}</span>
                     </div>
-                  ))}
+                  )}
+                  {layout.showEarningsAllowance && slip.allowance > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Allowance</span>
+                      <span className="font-medium text-gray-800">{fmtCurrency(slip.allowance, sym)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm font-semibold pt-1.5 border-t border-dashed border-gray-200">
                     <span>Gross Pay</span><span>{fmtCurrency(gross, sym)}</span>
                   </div>
@@ -495,16 +521,40 @@ function PayslipCard({
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: accent }}>Deductions</p>
                 <div className="space-y-1.5">
-                  {[
-                    ['Late Deduction', fmtCurrency(slip.late_deduction, sym)],
-                    ['SSS', fmtCurrency(slip.sss_contribution, sym)],
-                    ['PhilHealth', fmtCurrency(slip.philhealth_contribution, sym)],
-                    ['Pag-IBIG', fmtCurrency(slip.pagibig_contribution, sym)],
-                    ['Withholding Tax', fmtCurrency(slip.tax_withheld, sym)],
-                  ].map(([label, val]) => (
-                    <div key={label} className="flex justify-between text-sm">
-                      <span className="text-gray-500">{label}</span>
-                      <span className="font-medium text-red-500">–{val}</span>
+                  {layout.showDeductionsLate && slip.late_deduction > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Late Deduction</span>
+                      <span className="font-medium text-red-500">–{fmtCurrency(slip.late_deduction, sym)}</span>
+                    </div>
+                  )}
+                  {layout.showDeductionsSSS && slip.sss_contribution > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">SSS</span>
+                      <span className="font-medium text-red-500">–{fmtCurrency(slip.sss_contribution, sym)}</span>
+                    </div>
+                  )}
+                  {layout.showDeductionsPhilHealth && slip.philhealth_contribution > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">PhilHealth</span>
+                      <span className="font-medium text-red-500">–{fmtCurrency(slip.philhealth_contribution, sym)}</span>
+                    </div>
+                  )}
+                  {layout.showDeductionsPagIbig && slip.pagibig_contribution > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Pag-IBIG</span>
+                      <span className="font-medium text-red-500">–{fmtCurrency(slip.pagibig_contribution, sym)}</span>
+                    </div>
+                  )}
+                  {layout.showDeductionsTax && slip.tax_withheld > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Withholding Tax</span>
+                      <span className="font-medium text-red-500">–{fmtCurrency(slip.tax_withheld, sym)}</span>
+                    </div>
+                  )}
+                  {layout.showDeductionsOther && otherDeductions.map(o => (
+                    <div key={o.id} className="flex justify-between text-sm">
+                      <span className="text-gray-500">{o.label}</span>
+                      <span className="font-medium text-red-500">–{fmtCurrency(o.amount, sym)}</span>
                     </div>
                   ))}
                   <div className="flex justify-between text-sm font-semibold pt-1.5 border-t border-dashed border-gray-200">
@@ -547,6 +597,31 @@ function PayslipCard({
   )
 }
 
+// ─── Template Types ───────────────────────────────────────────────────────────
+
+interface PayslipTemplate {
+  id: string
+  name: string
+  layout: LayoutSettings
+  createdAt: string
+}
+
+// Must match the keys used by the payroll page exactly:
+const TEMPLATES_KEY = 'payslip_templates_v1'           // payroll page: TEMPLATES_KEY = 'payslip_templates_v1'
+const PERIOD_TEMPLATE_MAP_KEY = 'payslip_period_template_map_v1' // payroll page: PERIOD_TEMPLATE_KEY = 'payslip_period_template_map_v1'
+const ACTIVE_TEMPLATE_KEY = 'payslip_active_template'  // local only — used by the Layout customizer sidebar
+
+function loadTemplates(): PayslipTemplate[] {
+  try {
+    const raw = localStorage.getItem(TEMPLATES_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+function saveTemplates(templates: PayslipTemplate[]) {
+  try { localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates)) } catch {}
+}
+
 // ─── Layout Customizer Sidebar ────────────────────────────────────────────────
 
 function LayoutCustomizer({
@@ -558,22 +633,96 @@ function LayoutCustomizer({
   onChange: (l: LayoutSettings) => void
   onClose: () => void
 }) {
+  const [templates, setTemplates] = useState<PayslipTemplate[]>(() => loadTemplates())
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(() => {
+    try { return localStorage.getItem(ACTIVE_TEMPLATE_KEY) } catch { return null }
+  })
+  const [savingName, setSavingName] = useState('')
+  const [showSaveInput, setShowSaveInput] = useState(false)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+
   const toggle = (key: keyof LayoutSettings) =>
     onChange({ ...layout, [key]: !layout[key as keyof LayoutSettings] })
 
-  const TOGGLES: { key: keyof LayoutSettings; label: string }[] = [
+  const TOGGLES: { key: keyof LayoutSettings; label: string; indent?: boolean }[] = [
     { key: 'showLogo', label: 'Show logo' },
     { key: 'showEmployeeNo', label: 'Employee number' },
     { key: 'showGovNumbers', label: "Gov't numbers (SSS / PhilHealth / Pag-IBIG)" },
     { key: 'showAttendance', label: 'Attendance summary' },
     { key: 'showEarnings', label: 'Earnings breakdown' },
+    { key: 'showEarningsOvertime', label: 'Overtime pay line', indent: true },
+    { key: 'showEarningsAllowance', label: 'Allowance line', indent: true },
     { key: 'showDeductions', label: 'Deductions breakdown' },
+    { key: 'showDeductionsLate', label: 'Late deduction line', indent: true },
+    { key: 'showDeductionsSSS', label: 'SSS line', indent: true },
+    { key: 'showDeductionsPhilHealth', label: 'PhilHealth line', indent: true },
+    { key: 'showDeductionsPagIbig', label: 'Pag-IBIG line', indent: true },
+    { key: 'showDeductionsTax', label: 'Withholding tax line', indent: true },
+    { key: 'showDeductionsOther', label: 'Additional deductions', indent: true },
     { key: 'showSignature', label: 'Signature lines' },
   ]
 
+  const handleSaveTemplate = () => {
+    const name = savingName.trim()
+    if (!name) return
+    const newTemplate: PayslipTemplate = {
+      id: Date.now().toString(),
+      name,
+      layout: { ...layout },
+      createdAt: new Date().toISOString(),
+    }
+    const updated = [...templates, newTemplate]
+    setTemplates(updated)
+    saveTemplates(updated)
+    setActiveTemplateId(newTemplate.id)
+    try { localStorage.setItem(ACTIVE_TEMPLATE_KEY, newTemplate.id) } catch {}
+    setSavingName('')
+    setShowSaveInput(false)
+    toast.success(`Template "${name}" saved`)
+  }
+
+  const handleApplyTemplate = (t: PayslipTemplate) => {
+    onChange(t.layout)
+    setActiveTemplateId(t.id)
+    try { localStorage.setItem(ACTIVE_TEMPLATE_KEY, t.id) } catch {}
+    toast.success(`Applied "${t.name}"`)
+  }
+
+  const handleUpdateTemplate = (id: string) => {
+    const updated = templates.map(t =>
+      t.id === id ? { ...t, layout: { ...layout } } : t
+    )
+    setTemplates(updated)
+    saveTemplates(updated)
+    toast.success('Template updated')
+  }
+
+  const handleDeleteTemplate = (id: string) => {
+    const t = templates.find(t => t.id === id)
+    if (!confirm(`Delete template "${t?.name}"?`)) return
+    const updated = templates.filter(t => t.id !== id)
+    setTemplates(updated)
+    saveTemplates(updated)
+    if (activeTemplateId === id) {
+      setActiveTemplateId(null)
+      try { localStorage.removeItem(ACTIVE_TEMPLATE_KEY) } catch {}
+    }
+  }
+
+  const handleRename = (id: string) => {
+    const name = renameValue.trim()
+    if (!name) return
+    const updated = templates.map(t => t.id === id ? { ...t, name } : t)
+    setTemplates(updated)
+    saveTemplates(updated)
+    setRenamingId(null)
+    setRenameValue('')
+  }
+
   return (
-    <aside className="w-72 flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-y-auto">
-      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+    <aside className="w-72 flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 flex-shrink-0">
         <div className="flex items-center gap-2">
           <Sliders className="w-4 h-4 text-gray-500" />
           <h3 className="font-semibold text-gray-900 text-sm">Layout Settings</h3>
@@ -581,77 +730,190 @@ function LayoutCustomizer({
         <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
       </div>
 
-      <div className="px-5 py-4 space-y-6">
-        {/* Sections */}
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Sections</p>
-          <div className="space-y-3">
-            {TOGGLES.map(({ key, label }) => (
-              <label key={key} className="flex items-center justify-between cursor-pointer">
-                <span className="text-sm text-gray-700">{label}</span>
-                <button
-                  onClick={() => toggle(key)}
-                  className={`relative w-9 h-5 rounded-full transition-colors ${layout[key] ? 'bg-gray-900' : 'bg-gray-200'}`}
+      <div className="flex-1 overflow-y-auto">
+        {/* ── Templates ─────────────────────────────────────────────────── */}
+        <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Templates</p>
+            <button
+              onClick={() => { setShowSaveInput(v => !v); setSavingName('') }}
+              className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" /> Save current
+            </button>
+          </div>
+
+          {/* Save input */}
+          {showSaveInput && (
+            <div className="flex gap-2 mb-3">
+              <input
+                autoFocus
+                type="text"
+                value={savingName}
+                onChange={e => setSavingName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSaveTemplate(); if (e.key === 'Escape') setShowSaveInput(false) }}
+                placeholder="Template name…"
+                className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+              <button
+                onClick={handleSaveTemplate}
+                disabled={!savingName.trim()}
+                className="px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-40 transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          )}
+
+          {/* Template list */}
+          {templates.length === 0 ? (
+            <p className="text-xs text-gray-400 py-2">No saved templates yet. Customize the layout below and click "Save current".</p>
+          ) : (
+            <div className="space-y-1.5">
+              {templates.map(t => (
+                <div
+                  key={t.id}
+                  className={`rounded-lg border px-3 py-2 transition-all ${activeTemplateId === t.id ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}
                 >
-                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${layout[key] ? 'translate-x-4' : ''}`} />
+                  {renamingId === t.id ? (
+                    <div className="flex gap-1.5">
+                      <input
+                        autoFocus
+                        type="text"
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleRename(t.id); if (e.key === 'Escape') setRenamingId(null) }}
+                        className="flex-1 px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                      />
+                      <button onClick={() => handleRename(t.id)} className="text-xs text-indigo-600 font-medium">OK</button>
+                      <button onClick={() => setRenamingId(null)} className="text-xs text-gray-400">✕</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => handleApplyTemplate(t)}
+                        className="flex-1 text-left text-sm font-medium text-gray-800 hover:text-indigo-700 transition-colors truncate"
+                      >
+                        {activeTemplateId === t.id && (
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 mr-1.5 mb-0.5" />
+                        )}
+                        {t.name}
+                      </button>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {/* Update with current settings */}
+                        <button
+                          onClick={() => handleUpdateTemplate(t.id)}
+                          title="Update with current settings"
+                          className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                        </button>
+                        {/* Rename */}
+                        <button
+                          onClick={() => { setRenamingId(t.id); setRenameValue(t.name) }}
+                          title="Rename"
+                          className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                        </button>
+                        {/* Delete */}
+                        <button
+                          onClick={() => handleDeleteTemplate(t.id)}
+                          title="Delete"
+                          className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Layout options ─────────────────────────────────────────────── */}
+        <div className="px-5 py-4 space-y-6">
+          {/* Sections */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Sections</p>
+            <div className="space-y-3">
+              {TOGGLES.map(({ key, label, indent }) => {
+                // Disable indented earnings children when parent earnings section is off
+                // Disable indented deductions children when parent deductions section is off
+                const isEarningsChild = key === 'showEarningsOvertime' || key === 'showEarningsAllowance'
+                const isDeductionsChild = key === 'showDeductionsLate' || key === 'showDeductionsSSS' || key === 'showDeductionsPhilHealth' || key === 'showDeductionsPagIbig' || key === 'showDeductionsTax'
+                const disabled = (isEarningsChild && !layout.showEarnings) || (isDeductionsChild && !layout.showDeductions)
+                return (
+                  <label key={key} className={`flex items-center justify-between cursor-pointer ${indent ? 'pl-4' : ''} ${disabled ? 'opacity-40 pointer-events-none' : ''}`}>
+                    <span className={`text-sm ${indent ? 'text-gray-500' : 'text-gray-700'}`}>{label}</span>
+                    <button
+                      onClick={() => toggle(key)}
+                      disabled={disabled}
+                      className={`relative w-9 h-5 rounded-full transition-colors ${layout[key] ? 'bg-gray-900' : 'bg-gray-200'}`}
+                    >
+                      <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${layout[key] ? 'translate-x-4' : ''}`} />
+                    </button>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Accent color */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Accent Color</p>
+            <div className="grid grid-cols-3 gap-2">
+              {ACCENT_COLORS.map(({ label, value }) => (
+                <button
+                  key={value}
+                  onClick={() => onChange({ ...layout, accentColor: value })}
+                  title={label}
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border text-xs transition-all ${layout.accentColor === value ? 'border-gray-900 ring-1 ring-gray-900' : 'border-gray-200 hover:border-gray-300'}`}
+                >
+                  <span className="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ background: value }} />
+                  <span className="truncate text-gray-600">{label}</span>
                 </button>
-              </label>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
 
-        {/* Accent color */}
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Accent Color</p>
-          <div className="grid grid-cols-3 gap-2">
-            {ACCENT_COLORS.map(({ label, value }) => (
-              <button
-                key={value}
-                onClick={() => onChange({ ...layout, accentColor: value })}
-                title={label}
-                className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border text-xs transition-all ${layout.accentColor === value ? 'border-gray-900 ring-1 ring-gray-900' : 'border-gray-200 hover:border-gray-300'}`}
-              >
-                <span className="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ background: value }} />
-                <span className="truncate text-gray-600">{label}</span>
-              </button>
-            ))}
+          {/* Font size */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Print Font Size</p>
+            <div className="flex gap-2">
+              {(['sm', 'md', 'lg'] as const).map(s => (
+                <button
+                  key={s}
+                  onClick={() => onChange({ ...layout, fontSize: s })}
+                  className={`flex-1 py-1.5 text-sm rounded-lg border transition-all ${layout.fontSize === s ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                >
+                  {s === 'sm' ? 'Small' : s === 'md' ? 'Medium' : 'Large'}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
 
-        {/* Font size */}
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Print Font Size</p>
-          <div className="flex gap-2">
-            {(['sm', 'md', 'lg'] as const).map(s => (
-              <button
-                key={s}
-                onClick={() => onChange({ ...layout, fontSize: s })}
-                className={`flex-1 py-1.5 text-sm rounded-lg border transition-all ${layout.fontSize === s ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
-              >
-                {s === 'sm' ? 'Small' : s === 'md' ? 'Medium' : 'Large'}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Paper size */}
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Paper Size</p>
-          <div className="flex gap-2">
-            {[{ v: 'a4', l: 'A4' }, { v: 'half', l: 'Half (A5)' }].map(({ v, l }) => (
-              <button
-                key={v}
-                onClick={() => onChange({ ...layout, paperSize: v as 'a4' | 'half' })}
-                className={`flex-1 py-1.5 text-sm rounded-lg border transition-all ${layout.paperSize === v ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
-              >
-                {l}
-              </button>
-            ))}
+          {/* Paper size */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Paper Size</p>
+            <div className="flex gap-2">
+              {[{ v: 'a4', l: 'A4' }, { v: 'half', l: 'Half (A5)' }].map(({ v, l }) => (
+                <button
+                  key={v}
+                  onClick={() => onChange({ ...layout, paperSize: v as 'a4' | 'half' })}
+                  className={`flex-1 py-1.5 text-sm rounded-lg border transition-all ${layout.paperSize === v ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="px-5 py-4 border-t border-gray-100 mt-auto">
+      <div className="px-5 py-4 border-t border-gray-100 flex-shrink-0">
         <button
           onClick={() => onChange(DEFAULT_LAYOUT)}
           className="w-full py-2 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
@@ -674,22 +936,55 @@ export default function PayslipPage() {
   const [shop, setShop] = useState<Shop | null>(null)
   const [loading, setLoading] = useState(true)
   const [showCustomizer, setShowCustomizer] = useState(false)
-  const [layout, setLayout] = useState<LayoutSettings>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('payslip_layout')
-        if (saved) return { ...DEFAULT_LAYOUT, ...JSON.parse(saved) }
-      } catch {}
+  // Derive layout from template — maps the payroll page's flat template shape
+  // into this page's LayoutSettings. Returns null if no template found.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function layoutFromTemplate(tpl: any): LayoutSettings {
+    return {
+      ...DEFAULT_LAYOUT,
+      accentColor:              tpl.primaryColor      ?? DEFAULT_LAYOUT.accentColor,
+      showDeductionsSSS:        tpl.showSSS           ?? DEFAULT_LAYOUT.showDeductionsSSS,
+      showDeductionsPhilHealth: tpl.showPhilHealth    ?? DEFAULT_LAYOUT.showDeductionsPhilHealth,
+      showDeductionsPagIbig:    tpl.showPagibig       ?? DEFAULT_LAYOUT.showDeductionsPagIbig,
+      showDeductionsTax:        tpl.showTax           ?? DEFAULT_LAYOUT.showDeductionsTax,
+      showDeductionsLate:       tpl.showLateDeduction ?? DEFAULT_LAYOUT.showDeductionsLate,
+      showEarningsOvertime:     tpl.showOvertimePay   ?? DEFAULT_LAYOUT.showEarningsOvertime,
+      showEarningsAllowance:    tpl.showAllowance     ?? DEFAULT_LAYOUT.showEarningsAllowance,
+      showEmployeeNo:           tpl.showEmployeeNo    ?? DEFAULT_LAYOUT.showEmployeeNo,
+      showDeductionsOther:      tpl.showOtherDeductions ?? DEFAULT_LAYOUT.showDeductionsOther,
     }
+  }
+
+  function resolveLayout(): LayoutSettings {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const templates: any[] = JSON.parse(localStorage.getItem(TEMPLATES_KEY) ?? '[]')
+
+      // 1. Template assigned to this specific period (set on the payroll page)
+      const periodMap: Record<string, string> = JSON.parse(localStorage.getItem(PERIOD_TEMPLATE_MAP_KEY) ?? '{}')
+      const periodTplId = periodMap[period_id]
+      if (periodTplId) {
+        const tpl = templates.find(t => t.id === periodTplId)
+        if (tpl) return layoutFromTemplate(tpl)
+      }
+
+      // 2. Globally active template (last one activated in the Layout sidebar)
+      const activeId = localStorage.getItem(ACTIVE_TEMPLATE_KEY)
+      if (activeId) {
+        const tpl = templates.find(t => t.id === activeId)
+        if (tpl) return layoutFromTemplate(tpl)
+      }
+    } catch {}
+
+    // 3. No template found — use defaults (never read stale payslip_layout)
     return DEFAULT_LAYOUT
-  })
+  }
 
-  // Persist layout to localStorage
-  useEffect(() => {
-    try { localStorage.setItem('payslip_layout', JSON.stringify(layout)) } catch {}
-  }, [layout])
+  const [layout, setLayout] = useState<LayoutSettings>(() =>
+    typeof window !== 'undefined' ? resolveLayout() : DEFAULT_LAYOUT
+  )
 
-  // ── Fetch everything ────────────────────────────────────────────────────────
+  // ── Fetch everything ──────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
@@ -716,6 +1011,13 @@ export default function PayslipPage() {
     } finally {
       setLoading(false)
     }
+  }, [period_id])
+
+  // Clear stale cached layout and re-derive from template on every period load
+  useEffect(() => {
+    try { localStorage.removeItem('payslip_layout') } catch {}
+    setLayout(resolveLayout())
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period_id])
 
   useEffect(() => { fetchData() }, [fetchData])

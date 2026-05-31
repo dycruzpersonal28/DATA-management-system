@@ -31,6 +31,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'from and to dates required' }, { status: 400 })
   }
 
+  // ── Fetch shop settings (COGS toggle) ─────────────────────────────────────
+  const { data: shopRow } = await admin
+    .from('shops')
+    .select('feature_auto_cogs')
+    .eq('id', shop_id)
+    .single()
+  const autoCogsEnabled = shopRow?.feature_auto_cogs !== false
+
   // ── Fetch all financial entries in range ───────────────────────────────────
   const { data: entries, error } = await admin
     .from('financial_entries')
@@ -42,48 +50,35 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // ── Filter out orphaned entries (receipt, payslip, journal) ──────────────
+  // ── Filter out orphaned + voided receipt entries in JS ────────────────────
   const allEntries = entries || []
+  const receiptLinkedEntries = allEntries.filter(e => e.reference_type === 'receipt' && e.reference_id)
+  const receiptIds = [...new Set(receiptLinkedEntries.map(e => e.reference_id))]
 
-  // ── receipts ──────────────────────────────────────────────────────────────
-  const receiptIds = [...new Set(
-    allEntries.filter(e => e.reference_type === 'receipt' && e.reference_id).map(e => e.reference_id)
-  )]
+  // Fetch receipts that exist AND are not voided
   let validReceiptIds = new Set<string>()
   if (receiptIds.length > 0) {
     const { data: existingReceipts } = await admin
-      .from('receipts').select('id').in('id', receiptIds)
-    validReceiptIds = new Set((existingReceipts || []).map(r => r.id))
+      .from('receipts')
+      .select('id, status')
+      .in('id', receiptIds)
+    // Only include completed receipts — exclude voided ones
+    validReceiptIds = new Set(
+      (existingReceipts || [])
+        .filter(r => r.status !== 'voided')
+        .map(r => r.id)
+    )
   }
 
-  // ── payslips ──────────────────────────────────────────────────────────────
-  const payslipIds = [...new Set(
-    allEntries.filter(e => e.reference_type === 'payslip' && e.reference_id).map(e => e.reference_id)
-  )]
-  let validPayslipIds = new Set<string>()
-  if (payslipIds.length > 0) {
-    const { data: existingPayslips } = await admin
-      .from('payslips').select('id').in('id', payslipIds)
-    validPayslipIds = new Set((existingPayslips || []).map(p => p.id))
-  }
-
-  // ── journal entries ───────────────────────────────────────────────────────
-  const journalIds = [...new Set(
-    allEntries.filter(e => e.reference_type === 'journal' && e.reference_id).map(e => e.reference_id)
-  )]
-  let validJournalIds = new Set<string>()
-  if (journalIds.length > 0) {
-    const { data: existingJournal } = await admin
-      .from('journal_entries').select('id').in('id', journalIds)
-    validJournalIds = new Set((existingJournal || []).map(j => j.id))
-  }
-
-  // Keep only entries whose source record still exists (or has no reference)
+  // Keep entries where:
+  // 1. Not receipt-linked (manual journal entries always shown)
+  // 2. Receipt exists and is not voided
+  // 3. If COGS toggle is OFF, exclude cogs type entries from receipt-linked rows
   const rows = allEntries.filter(e => {
-    if (e.reference_type === 'receipt') return validReceiptIds.has(e.reference_id)
-    if (e.reference_type === 'payslip') return validPayslipIds.has(e.reference_id)
-    if (e.reference_type === 'journal') return validJournalIds.has(e.reference_id)
-    return true // no reference_type — keep as-is
+    if (e.reference_type !== 'receipt') return true
+    if (!validReceiptIds.has(e.reference_id)) return false
+    if (!autoCogsEnabled && e.type === 'cogs') return false
+    return true
   })
 
   // ── Aggregate totals ───────────────────────────────────────────────────────
@@ -230,28 +225,58 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ deleted: 0 })
   }
 
-  // Get all existing receipt IDs for this shop
+  // Get all existing, non-voided receipt IDs for this shop
   const receiptIds = [...new Set(orphans.map((o: any) => o.reference_id).filter(Boolean))]
   const { data: existingReceipts } = await admin
     .from('receipts')
-    .select('id')
+    .select('id, status')
     .in('id', receiptIds)
 
-  const existingIds = new Set((existingReceipts || []).map((r: any) => r.id))
+  // Treat voided receipts the same as deleted — their entries should be cleaned up
+  const existingIds = new Set(
+    (existingReceipts || [])
+      .filter((r: any) => r.status !== 'voided')
+      .map((r: any) => r.id)
+  )
   const orphanIds = orphans
     .filter((o: any) => !existingIds.has(o.reference_id))
     .map((o: any) => o.id)
 
-  if (orphanIds.length === 0) {
-    return NextResponse.json({ deleted: 0 })
+  // ── Also clean up orphaned labor entries (time_log deleted from DB) ──────
+  const { data: laborEntries } = await admin
+    .from('financial_entries')
+    .select('id, reference_id')
+    .eq('shop_id', shop_id)
+    .eq('reference_type', 'time_log')
+
+  let orphanLaborIds: string[] = []
+  if (laborEntries && laborEntries.length > 0) {
+    const timeLogIds = [...new Set(laborEntries.map((e: any) => e.reference_id).filter(Boolean))]
+    const { data: existingTimeLogs } = await admin
+      .from('time_logs')
+      .select('id')
+      .in('id', timeLogIds)
+
+    const existingTimeLogIds = new Set((existingTimeLogs || []).map((t: any) => t.id))
+    orphanLaborIds = laborEntries
+      .filter((e: any) => !existingTimeLogIds.has(e.reference_id))
+      .map((e: any) => e.id)
+
+    if (orphanLaborIds.length > 0) {
+      await admin.from('financial_entries').delete().in('id', orphanLaborIds)
+    }
   }
 
-  const { error: delError } = await admin
-    .from('financial_entries')
-    .delete()
-    .in('id', orphanIds)
+  // ── Delete orphaned receipt entries ───────────────────────────────────────
+  if (orphanIds.length > 0) {
+    const { error: delError } = await admin
+      .from('financial_entries')
+      .delete()
+      .in('id', orphanIds)
 
-  if (delError) return NextResponse.json({ error: delError.message }, { status: 500 })
+    if (delError) return NextResponse.json({ error: delError.message }, { status: 500 })
+  }
 
-  return NextResponse.json({ deleted: orphanIds.length })
+  const totalDeleted = orphanIds.length + orphanLaborIds.length
+  return NextResponse.json({ deleted: totalDeleted })
 }

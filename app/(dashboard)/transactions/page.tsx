@@ -150,6 +150,67 @@ function EditTransactionModal({ receipt, currencySymbol, onClose, onSaved }: {
   )
 }
 
+// ── Void Type Modal ────────────────────────────────────────────────────────────
+function VoidTypeModal({ onConfirm, onClose }: {
+  onConfirm: (type: 'return_stock' | 'wastage') => void
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center">
+            <Ban className="w-5 h-5 text-red-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Void Transaction</h3>
+            <p className="text-xs text-gray-400">How should the stock be handled?</p>
+          </div>
+          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3 mt-5">
+          <button
+            onClick={() => onConfirm('return_stock')}
+            className="w-full text-left p-4 rounded-xl border-2 border-emerald-200 hover:border-emerald-400 hover:bg-emerald-50 transition-all group"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center group-hover:bg-emerald-200">
+                <ArrowDownCircle className="w-4 h-4 text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-800">Return to Stock</p>
+                <p className="text-xs text-gray-500">Item was not dispatched. Quantity goes back to inventory.</p>
+              </div>
+            </div>
+          </button>
+
+          <button
+            onClick={() => onConfirm('wastage')}
+            className="w-full text-left p-4 rounded-xl border-2 border-amber-200 hover:border-amber-400 hover:bg-amber-50 transition-all group"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center group-hover:bg-amber-200">
+                <ArrowUpCircle className="w-4 h-4 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-800">Mark as Wastage</p>
+                <p className="text-xs text-gray-500">Item was already dispatched. Logged as POS Wastage, no restock.</p>
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <button onClick={onClose} className="w-full mt-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Helper: build unique ref number per date ───────────────────────────────────
 function buildRefNumber(date: Date, sequence: number): string {
   const m = String(date.getMonth() + 1).padStart(2, '0')
@@ -172,9 +233,8 @@ export default function TransactionsPage() {
   const [currencySymbol, setCurrencySymbol] = useState('₱')
 
   // Filters
-  const today = new Date().toISOString().split('T')[0]
-  const [dateFrom, setDateFrom]     = useState(today)
-  const [dateTo, setDateTo]         = useState(today)
+  const [dateFrom, setDateFrom]     = useState('')
+  const [dateTo, setDateTo]         = useState('')
   const [search, setSearch]         = useState('')
   const [typeFilter, setTypeFilter] = useState<TxType>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
@@ -186,32 +246,78 @@ export default function TransactionsPage() {
   const [showPin, setShowPin]     = useState(false)
   const [pinAction, setPinAction] = useState<{ type: 'void' | 'edit' | 'reprint'; tx: any } | null>(null)
   const [editReceipt, setEditReceipt] = useState<any | null>(null)
+  const [voidTypeReceipt, setVoidTypeReceipt] = useState<{ tx: any; managerId: string; managerName: string } | null>(null)
 
   useEffect(() => {
-    supabase.from('shops').select('currency_symbol').single().then(({ data }) => {
-      if (data) setCurrencySymbol(data.currency_symbol)
+    // Load currency symbol scoped to the user's shop
+    supabase
+      .from('app_users')
+      .select('shop_id')
+      .eq('auth_user_id', (supabase.auth.getUser() as any)?.data?.user?.id ?? '')
+      .maybeSingle()
+      .then(async ({ data: appUser }) => {
+        if (!appUser?.shop_id) return
+        const { data: shop } = await supabase
+          .from('shops')
+          .select('currency_symbol')
+          .eq('id', appUser.shop_id)
+          .single()
+        if (shop) setCurrencySymbol(shop.currency_symbol)
+      })
+
+    // Simpler: just fetch it directly (works because RLS scopes to the user's shop)
+    supabase.from('shops').select('currency_symbol').maybeSingle().then(({ data }) => {
+      if (data?.currency_symbol) setCurrencySymbol(data.currency_symbol)
     })
   }, [])
 
   const loadData = useCallback(async () => {
     setLoading(true)
-    const from = new Date(dateFrom); from.setHours(0, 0, 0, 0)
-    const to   = new Date(dateTo);   to.setHours(23, 59, 59, 999)
 
-    const [receiptsRes, movementsRes] = await Promise.all([
-      supabase
-        .from('receipts')
-        .select('*, receipt_items(*), payment_types(name), app_users:employee_id(name), shifts(id, clock_in, app_users(name))')
-        .gte('created_at', from.toISOString())
-        .lte('created_at', to.toISOString())
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('shift_cash_movements')
-        .select('*, shifts(id, clock_in, app_users(name))')
-        .gte('created_at', from.toISOString())
-        .lte('created_at', to.toISOString())
-        .order('created_at', { ascending: false }),
-    ])
+    // Build timezone-aware UTC bounds so Dubai midnight → correct UTC range
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+
+    function toUtcBound(dateStr: string, endOfDay: boolean): string {
+      const time = endOfDay ? 'T23:59:59' : 'T00:00:00'
+      const localDate = new Date(`${dateStr}${time}`)
+      // Get the UTC offset for this local moment using Intl
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+      })
+      const parts = formatter.formatToParts(localDate)
+      const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+      const localIso = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`
+      const utcMs   = localDate.getTime()
+      const localMs = new Date(localIso + 'Z').getTime()
+      return new Date(utcMs - (localMs - utcMs)).toISOString()
+    }
+
+    // Only apply date bounds when the user has explicitly set them
+    let receiptsQuery = supabase
+      .from('receipts')
+      .select('*, receipt_items(*), payment_types(name), app_users:employee_id(name), shifts(id, clock_in, app_users(name))')
+      .order('created_at', { ascending: false })
+
+    let movementsQuery = supabase
+      .from('shift_cash_movements')
+      .select('*, shifts(id, clock_in, app_users(name))')
+      .order('created_at', { ascending: false })
+
+    if (dateFrom) {
+      const fromUtc = toUtcBound(dateFrom, false)
+      receiptsQuery  = (receiptsQuery  as any).gte('created_at', fromUtc)
+      movementsQuery = (movementsQuery as any).gte('created_at', fromUtc)
+    }
+    if (dateTo) {
+      const toUtc = toUtcBound(dateTo, true)
+      receiptsQuery  = (receiptsQuery  as any).lte('created_at', toUtc)
+      movementsQuery = (movementsQuery as any).lte('created_at', toUtc)
+    }
+
+    const [receiptsRes, movementsRes] = await Promise.all([receiptsQuery, movementsQuery])
 
     if (receiptsRes.error) { toast.error('Failed to load transactions'); setLoading(false); return }
 
@@ -235,7 +341,9 @@ export default function TransactionsPage() {
   function setPreset(preset: string) {
     const now = new Date()
     const todayStr = now.toISOString().split('T')[0]
-    if (preset === 'today') {
+    if (preset === 'all') {
+      setDateFrom(''); setDateTo('')
+    } else if (preset === 'today') {
       setDateFrom(todayStr); setDateTo(todayStr)
     } else if (preset === 'yesterday') {
       const y = new Date(now); y.setDate(y.getDate() - 1)
@@ -309,7 +417,7 @@ export default function TransactionsPage() {
   const refundTotal  = filtered.filter(t => t._type === 'refund').reduce((s, t) => s + t._amount, 0)
   const cashInTotal  = filtered.filter(t => t._type === 'cash_in').reduce((s, t) => s + t._amount, 0)
   const cashOutTotal = filtered.filter(t => t._type === 'cash_out').reduce((s, t) => s + t._amount, 0)
-  const netCash      = salesTotal + cashInTotal - refundTotal - cashOutTotal
+  const netCash      = salesTotal + cashInTotal - cashOutTotal
 
   // Payment breakdown for pie
   const paymentBreakdown = filtered
@@ -332,13 +440,21 @@ export default function TransactionsPage() {
     setShowPin(false)
     if (!pinAction) return
     const { type, tx } = pinAction
-    if (type === 'void') handleVoid(tx, managerId, managerName)
-    else if (type === 'edit') setEditReceipt(tx)
+    if (type === 'void') {
+      setVoidTypeReceipt({ tx, managerId, managerName })
+    } else if (type === 'edit') setEditReceipt(tx)
     else if (type === 'reprint') handleReprint(tx)
     setPinAction(null)
   }
 
-  async function handleVoid(receipt: any, managerId: string, managerName: string) {
+  function handleVoidTypeConfirmed(voidType: 'return_stock' | 'wastage') {
+    if (!voidTypeReceipt) return
+    const { tx, managerId, managerName } = voidTypeReceipt
+    setVoidTypeReceipt(null)
+    handleVoid(tx, managerId, managerName, voidType)
+  }
+
+  async function handleVoid(receipt: any, managerId: string, managerName: string, voidType: 'return_stock' | 'wastage' = 'return_stock') {
     const res = await fetch(`/api/transactions/${receipt.id}/void`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -346,6 +462,7 @@ export default function TransactionsPage() {
         voided_by: managerId,
         voided_at: new Date().toISOString(),
         void_note: `Voided by ${managerName}`,
+        void_type: voidType,
       }),
     })
     const data = await res.json()
@@ -424,6 +541,13 @@ export default function TransactionsPage() {
         />
       )}
 
+      {voidTypeReceipt && (
+        <VoidTypeModal
+          onConfirm={handleVoidTypeConfirmed}
+          onClose={() => setVoidTypeReceipt(null)}
+        />
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -444,16 +568,25 @@ export default function TransactionsPage() {
       <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
         <div className="flex flex-wrap gap-2">
           {[
-            { label: 'Today', key: 'today' },
-            { label: 'Yesterday', key: 'yesterday' },
+            { label: 'All time',    key: 'all' },
+            { label: 'Today',       key: 'today' },
+            { label: 'Yesterday',   key: 'yesterday' },
             { label: 'Last 7 days', key: 'week' },
-            { label: 'This month', key: 'month' },
-          ].map(p => (
-            <button key={p.key} onClick={() => setPreset(p.key)}
-              className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors">
-              {p.label}
-            </button>
-          ))}
+            { label: 'This month',  key: 'month' },
+          ].map(p => {
+            const isAllTime = !dateFrom && !dateTo
+            const active = p.key === 'all' ? isAllTime : false
+            return (
+              <button key={p.key} onClick={() => setPreset(p.key)}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                  active
+                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}>
+                {p.label}
+              </button>
+            )
+          })}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
@@ -464,6 +597,14 @@ export default function TransactionsPage() {
             <label className="text-xs text-gray-500 w-5">To</label>
             <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-40 text-sm" />
           </div>
+          {(dateFrom || dateTo) && (
+            <button
+              onClick={() => { setDateFrom(''); setDateTo('') }}
+              className="text-xs text-gray-400 hover:text-gray-600 underline transition-colors"
+            >
+              Clear dates
+            </button>
+          )}
         </div>
       </div>
 
@@ -704,15 +845,15 @@ export default function TransactionsPage() {
                             {isSale && (
                               <>
                                 <button onClick={e => { e.stopPropagation(); requestAction('reprint', tx) }} title="Reprint"
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
+                                  className="p-1.5 rounded-lg text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
                                   <Printer className="w-3.5 h-3.5" />
                                 </button>
                                 <button onClick={e => { e.stopPropagation(); requestAction('edit', tx) }} title="Edit"
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+                                  className="p-1.5 rounded-lg text-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
                                 <button onClick={e => { e.stopPropagation(); requestAction('void', tx) }} title="Void"
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                                  className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors">
                                   <Ban className="w-3.5 h-3.5" />
                                 </button>
                               </>

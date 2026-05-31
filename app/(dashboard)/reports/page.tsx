@@ -747,7 +747,7 @@ export default function ReportsPage() {
   const voidedReceipts = useMemo(() => receipts.filter(r => r.status === 'voided'), [receipts])
   const grossSales   = useMemo(() => activeReceipts.reduce((s, r) => s + Number(r.total), 0), [activeReceipts])
   const refundTotal  = useMemo(() => voidedReceipts.reduce((s, r) => s + Number(r.total), 0), [voidedReceipts])
-  const netSales     = grossSales - refundTotal
+  const netSales     = grossSales // voided already excluded from grossSales; refundTotal is display-only
   const cashInTotal  = useMemo(() => cashMovements.filter(m => m.type === 'cash_in').reduce((s, m) => s + Number(m.amount), 0), [cashMovements])
   const cashOutTotal = useMemo(() => cashMovements.filter(m => m.type === 'cash_out').reduce((s, m) => s + Number(m.amount), 0), [cashMovements])
   const totalTxCount = activeReceipts.length
@@ -816,7 +816,7 @@ export default function ReportsPage() {
             {/* KPI grid */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
               <KpiCard label="Gross Sales" value={`${currencySymbol}${grossSales.toFixed(2)}`} sub={`${activeReceipts.length} sale${activeReceipts.length !== 1 ? 's' : ''}`} icon={TrendingUp} bg="bg-indigo-50" text="text-indigo-600" isLoading={isLoading} />
-              <KpiCard label="Net Sales" value={`${currencySymbol}${netSales.toFixed(2)}`} sub={refundTotal > 0 ? `−${currencySymbol}${refundTotal.toFixed(2)} refunded` : 'No refunds'} icon={DollarSign} bg="bg-emerald-50" text="text-emerald-600" isLoading={isLoading} />
+              <KpiCard label="Net Sales" value={`${currencySymbol}${netSales.toFixed(2)}`} sub={refundTotal > 0 ? `${voidedReceipts.length} voided (not deducted)` : 'No voids'} icon={DollarSign} bg="bg-emerald-50" text="text-emerald-600" isLoading={isLoading} />
               <KpiCard label="Cash Out (Expenses)" value={`${currencySymbol}${cashOutTotal.toFixed(2)}`} sub={`${cashMovements.filter(m => m.type === 'cash_out').length} movement(s)`} icon={ArrowUpCircle} bg="bg-orange-50" text="text-orange-600" isLoading={isLoading} />
               <KpiCard label="Transactions" value={String(totalTxCount)} sub={`${voidedReceipts.length} voided · ${cashMovements.length} cash moves`} icon={Receipt} bg="bg-violet-50" text="text-violet-600" isLoading={isLoading} />
               <KpiCard label="Avg. Sale" value={`${currencySymbol}${avgSale.toFixed(2)}`} sub="per active transaction" icon={BarChart2} bg="bg-sky-50" text="text-sky-600" isLoading={isLoading} />

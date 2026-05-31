@@ -128,7 +128,71 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
   const [itemDiscounts, setItemDiscounts] = useState<Map<string, ItemDiscount>>(new Map())
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
 
-  // Load tax rates and discounts from DB
+  // Ingredient stock limits: itemId → max makeable qty
+  const [stockLimits, setStockLimits] = useState<Map<string, number>>(new Map())
+  const [showStockPopup, setShowStockPopup] = useState(false)
+  const [stockPopupMsg, setStockPopupMsg] = useState('')
+
+  // Fetch ingredient-based stock limits for all cart items
+  useEffect(() => {
+    async function fetchStockLimits() {
+      if (items.length === 0) { setStockLimits(new Map()); return }
+
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: appUser } = await supabase
+        .from('app_users').select('shop_id').eq('auth_user_id', user.id).single()
+      if (!appUser?.shop_id) return
+
+      const productIds = [...new Set(items.map(i => i.itemId))]
+
+      // Fetch recipes (item_ingredients) for these products
+      const { data: recipes } = await supabase
+        .from('item_ingredients')
+        .select('item_id, ingredient_id, quantity')
+        .in('item_id', productIds)
+
+      if (!recipes || recipes.length === 0) {
+        // No recipes = no ingredient restriction
+        const unlimited = new Map(productIds.map(id => [id, Infinity]))
+        setStockLimits(unlimited)
+        return
+      }
+
+      // Fetch current stock for all involved ingredients from inventory_levels
+      const ingredientIds = [...new Set(recipes.map((r: any) => r.ingredient_id))]
+      const { data: stocks } = await supabase
+        .from('inventory_levels')
+        .select('item_id, quantity')
+        .in('item_id', ingredientIds)
+        .eq('shop_id', appUser.shop_id)
+        .is('variant_id', null)
+
+      const stockMap = new Map((stocks || []).map((s: any) => [s.item_id, s.quantity]))
+
+      // For each product, compute max makeable qty
+      const limits = new Map<string, number>()
+      for (const productId of productIds) {
+        const productRecipe = recipes.filter((r: any) => r.item_id === productId)
+        if (productRecipe.length === 0) {
+          limits.set(productId, Infinity)
+          continue
+        }
+        const max = Math.min(
+          ...productRecipe.map((r: any) => {
+            const available = stockMap.get(r.ingredient_id) ?? 0
+            return r.quantity > 0 ? Math.floor(available / r.quantity) : Infinity
+          })
+        )
+        limits.set(productId, max)
+      }
+      setStockLimits(limits)
+    }
+    fetchStockLimits()
+  }, [items])
+
+
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser()
@@ -192,6 +256,29 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
 
   const tot = Math.max(0, sub + taxAmount - computedDiscount)
 
+  function handleIncrement(item: any) {
+    const max = stockLimits.get(item.itemId)
+    if (max === undefined) {
+      // Limits not loaded yet — allow
+      updateQuantity(item.id, item.quantity + 1)
+      return
+    }
+    if (max === 0) {
+      setStockPopupMsg(`No available ingredients to make "${item.name}".`)
+      setShowStockPopup(true)
+      return
+    }
+    if (item.quantity >= max) {
+      setStockPopupMsg(
+        `You can only make ${max} of "${item.name}" with the current ingredients.`
+      )
+      setShowStockPopup(true)
+      return
+    }
+    updateQuantity(item.id, item.quantity + 1)
+  }
+
+
   function handleTaxToggle() {
     if (!taxEnabled && taxRates.length > 0 && !selectedTax) {
       setSelectedTax(taxRates[0])
@@ -229,7 +316,35 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
 
   return (
     <div className="flex flex-col h-full">
-      {/* Item Discount Modal */}
+      {/* Stock limit popup */}
+      {showStockPopup && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowStockPopup(false)}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+              <p className="text-sm font-semibold text-gray-900">Not Enough Ingredients</p>
+              <button onClick={() => setShowStockPopup(false)} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-4 py-4">
+              <p className="text-sm text-gray-600">{stockPopupMsg}</p>
+            </div>
+            <div className="px-4 pb-4">
+              <button
+                onClick={() => setShowStockPopup(false)}
+                className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
       {editingItem && (
         <ItemDiscountModal
           item={editingItem}
@@ -325,8 +440,9 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
                       </button>
                       <span className="text-sm font-medium w-6 text-center">{item.quantity}</span>
                       <button
-                        onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                        className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"
+                        onClick={() => handleIncrement(item)}
+                        disabled={(() => { const m = stockLimits.get(item.itemId); return m !== undefined && m !== Infinity && item.quantity >= m })()} 
+                        className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <Plus className="w-3 h-3" />
                       </button>

@@ -45,6 +45,7 @@ interface Employee {
   is_active: boolean
   is_kiosk_visible: boolean
   require_manager_approval: boolean
+  govt_deductions_enabled: boolean
   created_at: string
 }
 
@@ -186,6 +187,7 @@ const EMPTY_FORM = {
   employment_type: 'full-time' as EmploymentType,
   is_kiosk_visible: false,
   require_manager_approval: true,
+  govt_deductions_enabled: false,
 }
 
 // ─── Permissions Checklist (nav-structured) ───────────────────────────────────
@@ -438,6 +440,7 @@ export default function EmployeesPage() {
       employment_type:  emp.employment_type ?? 'full-time',
       is_kiosk_visible: emp.is_kiosk_visible ?? false,
       require_manager_approval: emp.require_manager_approval ?? true,
+      govt_deductions_enabled: emp.govt_deductions_enabled ?? false,
     })
     setShowHR(true)
     setShowPerms(true)
@@ -1003,6 +1006,24 @@ export default function EmployeesPage() {
                         />
                       </Field>
                     </div>
+
+                    {/* Govt deductions toggle */}
+                    <label className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Enable govt. contributions</p>
+                        <p className="text-xs text-gray-400 mt-0.5">Auto-compute SSS, PhilHealth, and Pag-IBIG when generating payslips</p>
+                      </div>
+                      <div
+                        onClick={() => setForm(f => ({ ...f, govt_deductions_enabled: !f.govt_deductions_enabled }))}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
+                          form.govt_deductions_enabled ? 'bg-indigo-600' : 'bg-gray-200'
+                        }`}
+                      >
+                        <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                          form.govt_deductions_enabled ? 'translate-x-6' : 'translate-x-1'
+                        }`} />
+                      </div>
+                    </label>
                   </div>
                 )}
               </section>

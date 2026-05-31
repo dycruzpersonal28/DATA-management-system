@@ -18,12 +18,6 @@ async function getShopId(admin: ReturnType<typeof createAdminClient>, userId: st
 }
 
 // ── GET /api/inventory ────────────────────────────────────────────────────────
-// Returns all items with their inventory_levels, joined to categories.
-// Query params:
-//   ?category=<uuid>   filter by category_id
-//   ?stock=low|out|ok  filter by stock status
-//   ?q=<string>        search by name or sku
-
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const admin    = createAdminClient()
@@ -60,39 +54,30 @@ export async function GET(req: NextRequest) {
 
   let items = data || []
 
-  // Stock filter (post-query — simpler than raw SQL)
   if (stock === 'out') {
-    items = items.filter(i => {
-      const qty = i.inventory_levels?.[0]?.quantity ?? 0
-      return qty === 0
-    })
+    items = items.filter(i => (i.inventory_levels?.[0]?.quantity ?? 0) === 0)
   } else if (stock === 'low') {
     items = items.filter(i => {
       const inv = i.inventory_levels?.[0]
-      const qty   = inv?.quantity ?? 0
-      const alert = inv?.low_stock_alert ?? 0
+      const qty = inv?.quantity ?? 0; const alert = inv?.low_stock_alert ?? 0
       return qty > 0 && alert > 0 && qty <= alert
     })
   } else if (stock === 'ok') {
     items = items.filter(i => {
       const inv = i.inventory_levels?.[0]
-      const qty   = inv?.quantity ?? 0
-      const alert = inv?.low_stock_alert ?? 0
+      const qty = inv?.quantity ?? 0; const alert = inv?.low_stock_alert ?? 0
       return qty > alert
     })
   }
 
-  // Summary stats
-  const totalItems  = items.length
-  const outOfStock  = items.filter(i => (i.inventory_levels?.[0]?.quantity ?? 0) === 0).length
-  const lowStock    = items.filter(i => {
+  const totalItems = items.length
+  const outOfStock = items.filter(i => (i.inventory_levels?.[0]?.quantity ?? 0) === 0).length
+  const lowStock   = items.filter(i => {
     const inv = i.inventory_levels?.[0]
-    const qty   = inv?.quantity ?? 0
-    const alert = inv?.low_stock_alert ?? 0
+    const qty = inv?.quantity ?? 0; const alert = inv?.low_stock_alert ?? 0
     return qty > 0 && alert > 0 && qty <= alert
   }).length
 
-  // Categories list for filter dropdown
   const { data: categories } = await admin
     .from('categories')
     .select('id, name, color')
@@ -107,16 +92,14 @@ export async function GET(req: NextRequest) {
 }
 
 // ── POST /api/inventory ───────────────────────────────────────────────────────
-// Adjust or set stock for a single item.
-//
 // Body:
 // {
-//   item_id:    string
-//   mode:       'adjust' | 'set'
-//   adj_type?:  'restock' | 'adjustment' | 'loss'   (required when mode=adjust)
-//   quantity:   number   (absolute qty when mode=set; delta when mode=adjust)
+//   item_id:          string
+//   mode:             'adjust' | 'set'
+//   adj_type?:        'restock' | 'adjustment' | 'loss'  (required when mode=adjust)
+//   quantity:         number
 //   low_stock_alert?: number  (only applied when mode=set)
-//   note?:      string
+//   note?:            string
 // }
 
 export async function POST(req: NextRequest) {
@@ -151,24 +134,24 @@ export async function POST(req: NextRequest) {
       .is('variant_id', null)
       .maybeSingle()
 
+    const beforeQty = inv ? Number(inv.quantity) : 0
+
     let newQty: number
     let movementQty: number
     let movementType: string
 
     if (mode === 'set') {
       newQty       = Math.max(0, Number(quantity))
-      movementQty  = newQty
+      movementQty  = newQty - beforeQty   // net delta so log makes sense
       movementType = 'adjustment'
     } else {
-      // mode === 'adjust'
       const delta  = Math.abs(Number(quantity))
-      const current = inv?.quantity ?? 0
       if (adj_type === 'loss') {
-        newQty      = Math.max(0, current - delta)
-        movementQty = -delta
+        newQty      = Math.max(0, beforeQty - delta)
+        movementQty = -(beforeQty - newQty)  // actual deducted (respects floor 0)
       } else {
         // restock | adjustment
-        newQty      = current + delta
+        newQty      = beforeQty + delta
         movementQty = delta
       }
       movementType = adj_type
@@ -176,7 +159,7 @@ export async function POST(req: NextRequest) {
 
     // Upsert inventory_levels
     if (inv?.id) {
-      const updateData: any = { quantity: newQty }
+      const updateData: any = { quantity: newQty, updated_at: new Date().toISOString() }
       if (mode === 'set' && low_stock_alert != null) {
         updateData.low_stock_alert = Number(low_stock_alert)
       }
@@ -189,24 +172,26 @@ export async function POST(req: NextRequest) {
       const { error } = await admin
         .from('inventory_levels')
         .insert({
-          shop_id: shopId,
+          shop_id:         shopId,
           item_id,
-          quantity: newQty,
+          quantity:        newQty,
           low_stock_alert: mode === 'set' ? (Number(low_stock_alert) || 0) : 0,
-          variant_id: null,
+          variant_id:      null,
         })
       if (error) throw error
     }
 
-    // Write stock_movement
+    // Write stock_movement with before/after snapshot
     const { error: mvErr } = await admin
       .from('stock_movements')
       .insert({
-        shop_id:   shopId,
+        shop_id:    shopId,
         item_id,
-        type:      movementType,
-        quantity:  movementQty,
-        note:      note || (mode === 'set' ? 'Manual stock set' : null),
+        type:       movementType,
+        quantity:   movementQty,
+        before_qty: beforeQty,
+        after_qty:  newQty,
+        note:       note || (mode === 'set' ? 'Manual stock set' : null),
       })
     if (mvErr) throw mvErr
 

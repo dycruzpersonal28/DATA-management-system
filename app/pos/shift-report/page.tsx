@@ -156,6 +156,66 @@ function EditTransactionModal({ receipt, currencySymbol, onClose, onSaved }: { r
   )
 }
 
+// ── Void Type Modal ──────────────────────────────────────────────────────────
+function VoidTypeModal({ onConfirm, onClose }: {
+  onConfirm: (type: 'return_stock' | 'wastage') => void
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-red-50">
+          <div className="w-9 h-9 bg-red-100 rounded-xl flex items-center justify-center">
+            <Ban className="w-5 h-5 text-red-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">How should stock be handled?</h3>
+            <p className="text-xs text-gray-500">Choose void type before confirming</p>
+          </div>
+          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-4 space-y-2.5">
+          <button
+            onClick={() => onConfirm('return_stock')}
+            className="w-full text-left p-3.5 rounded-xl border-2 border-gray-200 hover:border-emerald-400 hover:bg-emerald-50 transition-all group"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-gray-100 group-hover:bg-emerald-100 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors">
+                <ArrowDownCircle className="w-4 h-4 text-gray-400 group-hover:text-emerald-600 transition-colors" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-800 group-hover:text-emerald-700 transition-colors">Return to Stock</p>
+                <p className="text-xs text-gray-500 mt-0.5">Refund sale and restore ingredients back to inventory. COGS entry removed.</p>
+              </div>
+            </div>
+          </button>
+          <button
+            onClick={() => onConfirm('wastage')}
+            className="w-full text-left p-3.5 rounded-xl border-2 border-gray-200 hover:border-orange-400 hover:bg-orange-50 transition-all group"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-gray-100 group-hover:bg-orange-100 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors">
+                <ArrowUpCircle className="w-4 h-4 text-gray-400 group-hover:text-orange-600 transition-colors" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-800 group-hover:text-orange-700 transition-colors">Mark as Wastage</p>
+                <p className="text-xs text-gray-500 mt-0.5">Refund sale but stock stays consumed. COGS kept — ingredients already used.</p>
+              </div>
+            </div>
+          </button>
+        </div>
+        <div className="px-4 pb-4">
+          <button onClick={onClose} className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Helper: generate ref number from date + per-shift sequence ────────────────
 function buildRefNumber(date: Date, sequence: number): string {
   const m = String(date.getMonth() + 1).padStart(2, '0')
@@ -181,6 +241,7 @@ function ShiftReportContent() {
   const [pinAction, setPinAction] = useState<{ type: 'void' | 'edit' | 'reprint'; tx: any } | null>(null)
   const [showPin, setShowPin] = useState(false)
   const [editReceipt, setEditReceipt] = useState<any | null>(null)
+  const [voidPending, setVoidPending] = useState<{ tx: any; managerId: string; managerName: string } | null>(null)
 
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316']
 
@@ -274,13 +335,13 @@ function ShiftReportContent() {
     setShowPin(false)
     if (!pinAction) return
     const { type, tx } = pinAction
-    if (type === 'void') handleVoid(tx, managerId, managerName)
+    if (type === 'void') setVoidPending({ tx, managerId, managerName })
     else if (type === 'edit') setEditReceipt(tx)
     else if (type === 'reprint') handleReprint(tx)
     setPinAction(null)
   }
 
-  async function handleVoid(receipt: any, managerId: string, managerName: string) {
+  async function handleVoid(receipt: any, managerId: string, managerName: string, voidType: 'return_stock' | 'wastage') {
     const res = await fetch(`/api/transactions/${receipt.id}/void`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -288,12 +349,21 @@ function ShiftReportContent() {
         voided_by: managerId,
         voided_at: new Date().toISOString(),
         void_note: `Voided by ${managerName}`,
+        void_type: voidType,
       }),
     })
     const data = await res.json()
     if (!res.ok) { toast.error(data.error || 'Failed to void transaction'); return }
-    toast.success(`Transaction ${receipt._ref} voided — ${data.items_reverted} item(s) restocked`)
+    const action = voidType === 'wastage' ? 'logged as wastage' : `${data.items_reverted} item(s) restocked`
+    toast.success(`Transaction ${receipt._ref} voided — ${action}`)
     loadData()
+  }
+
+  function handleVoidTypeConfirmed(voidType: 'return_stock' | 'wastage') {
+    if (!voidPending) return
+    const { tx, managerId, managerName } = voidPending
+    setVoidPending(null)
+    handleVoid(tx, managerId, managerName, voidType)
   }
 
   function handleReprint(receipt: any) {
@@ -324,6 +394,12 @@ function ShiftReportContent() {
 
   return (
     <>
+      {voidPending && (
+        <VoidTypeModal
+          onConfirm={handleVoidTypeConfirmed}
+          onClose={() => setVoidPending(null)}
+        />
+      )}
       {showPin && (
         <ManagerPinModal
           onApprove={handlePinApproved}

@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
         ...period,
         payslip_count: slips?.length ?? 0,
         total_net_pay: slips?.reduce((sum, s) => sum + (s.net_pay ?? 0), 0) ?? 0,
-        finalized_count: slips?.filter(s => s.status === 'finalized').length ?? 0,
+        finalized_count: slips?.filter(s => s.status === 'released').length ?? 0,
       }
     })
   )
@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
 
   const { data: appUser } = await admin
     .from('app_users')
-    .select('shop_id')
+    .select('shop_id, role')
     .eq('auth_user_id', user.id)
     .single()
 
@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
     // Fetch all active employees for this shop
     const { data: employees, error: empError } = await admin
       .from('employees')
-      .select('id, name, employee_no, role, hourly_rate, allowance, employment_type, sss_no, philhealth_no, pagibig_no')
+      .select('id, name, employee_no, role, hourly_rate, allowance, employment_type, sss_no, philhealth_no, pagibig_no, govt_deductions_enabled')
       .eq('shop_id', shop_id)
       .eq('is_active', true)
 
@@ -211,18 +211,21 @@ export async function POST(req: NextRequest) {
       const overtime_pay = logs.overtime_hours * (hourlyRate * 1.25)
       const late_deduction = (logs.late_minutes / 60) * hourlyRate
 
-      // Philippine statutory deductions (semi-monthly approximations)
-      // These are defaults — admin can override per payslip
+      // Philippine statutory deductions — only applied if govt_deductions_enabled is true
+      const govtEnabled = emp.govt_deductions_enabled === true
       const monthly_basic = basic_pay * 2  // rough monthly estimate
-      const sss_contribution = Math.min(monthly_basic * 0.045, 900) / 2
-      const philhealth_contribution = (monthly_basic * 0.025) / 2
-      const pagibig_contribution = 100 / 2  // ₱100/month flat → ₱50 semi-monthly
+      const sss_contribution        = govtEnabled ? Math.min(monthly_basic * 0.045, 900) / 2 : 0
+      const philhealth_contribution = govtEnabled ? (monthly_basic * 0.025) / 2 : 0
+      const pagibig_contribution    = govtEnabled ? 100 / 2 : 0  // ₱100/month flat → ₱50 semi-monthly
 
       const gross_pay = basic_pay + overtime_pay + allowance
       const total_deductions = late_deduction + sss_contribution + philhealth_contribution + pagibig_contribution
       const net_pay = gross_pay - total_deductions
 
-      return {
+      // Only insert columns that exist in the payslips table.
+      // Snapshot columns (snapshot_name, snapshot_role, etc.) are optional —
+      // remove any that don't exist in your schema to avoid constraint errors.
+      const insert: Record<string, any> = {
         shop_id,
         employee_id: emp.id,
         period_id: period.id,
@@ -236,19 +239,22 @@ export async function POST(req: NextRequest) {
         tax_withheld: 0,
         net_pay: parseFloat(net_pay.toFixed(2)),
         status: 'draft',
-        // ── Attendance snapshot (frozen at generation time) ──────────────────
+        other_deductions: [],
         total_hours:    parseFloat(logs.total_hours.toFixed(2)),
         overtime_hours: parseFloat(logs.overtime_hours.toFixed(2)),
         late_minutes:   logs.late_minutes,
-        // ── Employee info snapshot (survives future profile changes) ─────────
-        snapshot_name:            emp.name,
-        snapshot_employee_no:     emp.employee_no    ?? null,
-        snapshot_role:            emp.role           ?? null,
-        snapshot_employment_type: emp.employment_type ?? null,
-        snapshot_sss_no:          emp.sss_no         ?? null,
-        snapshot_philhealth_no:   emp.philhealth_no  ?? null,
-        snapshot_pagibig_no:      emp.pagibig_no     ?? null,
       }
+
+      // ── Employee snapshot columns — comment out any that don't exist in your table ──
+      // insert.snapshot_name            = emp.name
+      // insert.snapshot_employee_no     = emp.employee_no    ?? null
+      // insert.snapshot_role            = emp.role           ?? null
+      // insert.snapshot_employment_type = emp.employment_type ?? null
+      // insert.snapshot_sss_no          = emp.sss_no         ?? null
+      // insert.snapshot_philhealth_no   = emp.philhealth_no  ?? null
+      // insert.snapshot_pagibig_no      = emp.pagibig_no     ?? null
+
+      return insert
     })
 
     const { data: payslips, error: insertError } = await admin
@@ -274,7 +280,7 @@ export async function POST(req: NextRequest) {
     // Finalize all draft payslips in this period
     const { error: slipError } = await admin
       .from('payslips')
-      .update({ status: 'finalized' })
+      .update({ status: 'released' })
       .eq('period_id', period_id)
       .eq('shop_id', shop_id)
       .eq('status', 'draft')
@@ -360,20 +366,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Payslip not found' }, { status: 404 })
     }
 
-    if (current.status === 'finalized') {
+    if (current.status === 'released') {
       return NextResponse.json({ error: 'Cannot edit a finalized payslip' }, { status: 400 })
     }
 
-    const merged = { ...current, ...updates }
+    // Strip any fields that must not be overwritten via this endpoint
+    const { status: _s, id: _i, shop_id: _sh, employee_id: _e, period_id: _p, ...safeUpdates } = updates as any
+
+    const merged = { ...current, ...safeUpdates }
 
     const gross = merged.basic_pay + merged.overtime_pay + merged.allowance
+    const otherTotal = (merged.other_deductions ?? []).reduce((s: number, o: any) => s + (o.amount ?? 0), 0)
     const deductions = merged.late_deduction + merged.sss_contribution +
-      merged.philhealth_contribution + merged.pagibig_contribution + merged.tax_withheld
+      merged.philhealth_contribution + merged.pagibig_contribution + merged.tax_withheld + otherTotal
     const net_pay = parseFloat((gross - deductions).toFixed(2))
 
     const { data: payslip, error } = await admin
       .from('payslips')
-      .update({ ...updates, net_pay })
+      .update({ ...safeUpdates, net_pay })
       .eq('id', payslip_id)
       .eq('shop_id', shop_id)
       .select()
@@ -384,6 +394,41 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ payslip })
+  }
+
+  // ── VOID PAYSLIP (owner/manager only) ────────────────────────────────────
+  if (action === 'void_payslip') {
+    const { payslip_id } = body
+
+    if (!payslip_id) {
+      return NextResponse.json({ error: 'payslip_id required' }, { status: 400 })
+    }
+
+    // Only owners and managers can void finalized payslips
+    if (!['owner', 'manager'].includes(appUser.role?.toLowerCase())) {
+      return NextResponse.json({ error: 'Forbidden: only owners and managers can void payslips' }, { status: 403 })
+    }
+
+    // Remove related financial_entries first
+    await admin
+      .from('financial_entries')
+      .delete()
+      .eq('shop_id', shop_id)
+      .eq('reference_type', 'payslip')
+      .eq('reference_id', payslip_id)
+
+    // Delete the payslip
+    const { error: deleteError } = await admin
+      .from('payslips')
+      .delete()
+      .eq('id', payslip_id)
+      .eq('shop_id', shop_id)
+
+    if (deleteError) {
+      return NextResponse.json({ error: deleteError.message }, { status: 500 })
+    }
+
+    return NextResponse.json({ success: true })
   }
 
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 })

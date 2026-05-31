@@ -5,14 +5,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   Download, Search, Package, TrendingUp, TrendingDown,
-  AlertTriangle, RefreshCcw, ShoppingCart, Wrench, Trash2,
+  AlertTriangle, RefreshCcw, ShoppingCart, Wrench, Trash2, RotateCcw,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { format, parseISO, subDays, startOfMonth } from 'date-fns'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type LogSource = 'sale' | 'restock' | 'adjustment' | 'loss'
+type LogSource = 'sale' | 'restock' | 'adjustment' | 'loss' | 'void'
 
 interface UnifiedLog {
   id: string
@@ -42,6 +42,7 @@ const sourceConfig: Record<LogSource, { label: string; icon: React.ElementType; 
   restock:    { label: 'Restock',    icon: TrendingUp,   badgeClass: 'bg-emerald-50 text-emerald-700' },
   adjustment: { label: 'Adjustment', icon: Wrench,       badgeClass: 'bg-blue-50 text-blue-700' },
   loss:       { label: 'Loss',       icon: Trash2,       badgeClass: 'bg-red-50 text-red-700' },
+  void:       { label: 'Void',       icon: RotateCcw,    badgeClass: 'bg-purple-50 text-purple-700' },
 }
 
 function todayStr() {
@@ -70,7 +71,7 @@ function exportCSV(logs: UnifiedLog[], dateFrom: string, dateTo: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `inventory_log_${dateFrom}_to_${dateTo}.csv`
+  a.download = `inventory_log_${dateFrom || 'all'}_to_${dateTo || 'all'}.csv`
   a.click()
   URL.revokeObjectURL(url)
   toast.success('CSV exported')
@@ -154,19 +155,28 @@ function ChangeBadge({ qty }: { qty: number }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function InventoryLogPage() {
-  const [logs, setLogs]         = useState<UnifiedLog[]>([])
-  const [stats, setStats]       = useState<SummaryStats>({ totalIn: 0, totalOut: 0, netMovement: 0, uniqueItems: 0, mostMoved: '' })
-  const [loading, setLoading]   = useState(true)
-  const [search, setSearch]     = useState('')
+  const [logs, setLogs]             = useState<UnifiedLog[]>([])
+  const [stats, setStats]           = useState<SummaryStats>({ totalIn: 0, totalOut: 0, netMovement: 0, uniqueItems: 0, mostMoved: '' })
+  const [loading, setLoading]       = useState(true)
+  const [search, setSearch]         = useState('')
   const [typeFilter, setTypeFilter] = useState<string>('')
-  const [dateFrom, setDateFrom] = useState(todayStr())
-  const [dateTo, setDateTo]     = useState(todayStr())
+  // null = no date filter (show all)
+  const [dateFrom, setDateFrom]     = useState<string>('')
+  const [dateTo, setDateTo]         = useState<string>('')
+
+  const tz = typeof window !== 'undefined'
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : 'UTC'
 
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const params = new URLSearchParams({ from: dateFrom, to: dateTo })
+      const params = new URLSearchParams()
+      // Only send date params if the user has actually set them
+      if (dateFrom) params.set('from', dateFrom)
+      if (dateTo)   params.set('to', dateTo)
       if (typeFilter) params.set('type', typeFilter)
+      params.set('tz', tz)
 
       const res = await fetch(`/api/inventory/movements?${params}`)
       if (!res.ok) {
@@ -182,11 +192,11 @@ export default function InventoryLogPage() {
     } finally {
       setLoading(false)
     }
-  }, [dateFrom, dateTo, typeFilter])
+  }, [dateFrom, dateTo, typeFilter, tz])
 
   useEffect(() => { loadAll() }, [loadAll])
 
-  // Client-side search filter only (type filter goes to API)
+  // Client-side search filter
   const filtered = useMemo(() =>
     logs.filter(l => {
       if (!search) return true
@@ -201,14 +211,22 @@ export default function InventoryLogPage() {
   function setPreset(preset: string) {
     const now = new Date()
     const t = format(now, 'yyyy-MM-dd')
-    if (preset === 'today')     { setDateFrom(t); setDateTo(t) }
-    else if (preset === 'yesterday') {
+    if (preset === 'all') {
+      // Clear both dates → load everything
+      setDateFrom(''); setDateTo('')
+    } else if (preset === 'today') {
+      setDateFrom(t); setDateTo(t)
+    } else if (preset === 'yesterday') {
       const y = format(subDays(now, 1), 'yyyy-MM-dd')
       setDateFrom(y); setDateTo(y)
+    } else if (preset === 'week') {
+      setDateFrom(format(subDays(now, 6), 'yyyy-MM-dd')); setDateTo(t)
+    } else if (preset === 'month') {
+      setDateFrom(format(startOfMonth(now), 'yyyy-MM-dd')); setDateTo(t)
     }
-    else if (preset === 'week')  { setDateFrom(format(subDays(now, 6), 'yyyy-MM-dd')); setDateTo(t) }
-    else if (preset === 'month') { setDateFrom(format(startOfMonth(now), 'yyyy-MM-dd')); setDateTo(t) }
   }
+
+  const isAllTime = !dateFrom && !dateTo
 
   return (
     <div className="p-6 space-y-5">
@@ -236,19 +254,31 @@ export default function InventoryLogPage() {
       <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
         <div className="flex flex-wrap gap-2">
           {[
+            { label: 'All time',    key: 'all' },
             { label: 'Today',       key: 'today' },
             { label: 'Yesterday',   key: 'yesterday' },
             { label: 'Last 7 days', key: 'week' },
             { label: 'This month',  key: 'month' },
-          ].map(p => (
-            <button
-              key={p.key}
-              onClick={() => setPreset(p.key)}
-              className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
-            >
-              {p.label}
-            </button>
-          ))}
+          ].map(p => {
+            const active =
+              p.key === 'all'       ? isAllTime :
+              p.key === 'today'     ? (dateFrom === todayStr() && dateTo === todayStr()) :
+              p.key === 'yesterday' ? (dateFrom === format(subDays(new Date(), 1), 'yyyy-MM-dd') && dateTo === dateFrom) :
+              false
+            return (
+              <button
+                key={p.key}
+                onClick={() => setPreset(p.key)}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                  active
+                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {p.label}
+              </button>
+            )
+          })}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
@@ -270,6 +300,14 @@ export default function InventoryLogPage() {
               className="w-40 text-sm"
             />
           </div>
+          {!isAllTime && (
+            <button
+              onClick={() => setPreset('all')}
+              className="text-xs text-gray-400 hover:text-gray-600 underline transition-colors"
+            >
+              Clear dates
+            </button>
+          )}
         </div>
       </div>
 
@@ -297,6 +335,7 @@ export default function InventoryLogPage() {
           <option value="restock">Restocks</option>
           <option value="adjustment">Adjustments</option>
           <option value="loss">Losses</option>
+          <option value="void">Voids</option>
         </select>
       </div>
 
@@ -308,24 +347,26 @@ export default function InventoryLogPage() {
           <div className="p-12 text-center">
             <Package className="w-10 h-10 text-gray-300 mx-auto mb-3" />
             <p className="text-gray-500 font-medium">No movements found</p>
-            <p className="text-sm text-gray-400 mt-1">Try adjusting your date range or filters</p>
+            <p className="text-sm text-gray-400 mt-1">
+              {isAllTime ? 'No stock movements recorded yet' : 'Try adjusting your date range or filters'}
+            </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-auto" style={{ maxHeight: '520px' }}>
             <table className="w-full min-w-[580px]">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Date &amp; Time</th>
-                  <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Item</th>
-                  <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Type</th>
-                  <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Receipt #</th>
-                  <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Change</th>
-                  <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Note</th>
+                  <th className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Date &amp; Time</th>
+                  <th className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Item</th>
+                  <th className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Type</th>
+                  <th className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Receipt #</th>
+                  <th className="sticky top-0 z-10 bg-gray-50 text-right text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Change</th>
+                  <th className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Note</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {filtered.map(log => {
-                  const cfg  = sourceConfig[log.source]
+                  const cfg  = sourceConfig[log.source] ?? sourceConfig['adjustment']
                   const Icon = cfg.icon
                   return (
                     <tr key={log.id} className="hover:bg-gray-50 transition-colors">

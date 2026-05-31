@@ -54,11 +54,58 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// ─── POST: clock in or clock out (kiosk) ─────────────────────────────────────
+// ─── POST: clock in or clock out (kiosk) OR manual log (admin) ───────────────
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const { action, employee_id, employee_pin, manager_pin, shift_schedule_id, shop_id } = body
+
+    // ── Manual log branch (admin/HR use) ─────────────────────────────────────
+    // Called from the payroll attendance tab with action='manual'
+    // Uses session auth instead of employee PIN
+    if (action === 'manual') {
+      const supabase = await createClient()
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+      const { data: caller } = await supabase
+        .from('app_users')
+        .select('role, shop_id')
+        .eq('auth_user_id', user.id)
+        .single()
+      if (!caller || !['owner', 'manager', 'admin'].includes(caller.role?.toLowerCase()))
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+      const { clock_in, clock_out } = body
+      if (!employee_id || !clock_in)
+        return NextResponse.json({ error: 'employee_id and clock_in are required' }, { status: 400 })
+
+      const admin = createAdminClient()
+
+      // Derive the date from clock_in (handles both "2025-05-30T08:00:00" and full ISO)
+      const date = clock_in.split('T')[0]
+
+      // Build the insert payload
+      const payload: Record<string, any> = {
+        shop_id: caller.shop_id,
+        employee_id,
+        clock_in,
+        date,
+        late_minutes: 0,
+        is_late: false,
+      }
+      if (clock_out) payload.clock_out = clock_out
+
+      const { data: log, error: logError } = await admin
+        .from('time_logs')
+        .insert(payload)
+        .select()
+        .single()
+
+      if (logError) return NextResponse.json({ error: logError.message }, { status: 400 })
+      return NextResponse.json({ success: true, log })
+    }
+    // ── End manual log branch ─────────────────────────────────────────────────
 
     if (!action || !employee_id || !employee_pin || !shop_id) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })

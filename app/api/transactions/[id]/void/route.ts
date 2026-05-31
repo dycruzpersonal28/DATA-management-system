@@ -32,9 +32,11 @@ export async function POST(
 
   // Optional void metadata from request body
   const body = await req.json().catch(() => ({}))
-  const voided_by = body.voided_by ?? null
-  const voided_at = body.voided_at ?? new Date().toISOString()
-  const void_note = body.void_note ?? null
+  const voided_by  = body.voided_by  ?? null
+  const voided_at  = body.voided_at  ?? new Date().toISOString()
+  const void_note  = body.void_note  ?? null
+  // 'return_stock' = restore inventory (default), 'wastage' = log as POS wastage, no restock
+  const void_type  = body.void_type  ?? 'return_stock'
 
   // Fetch the receipt
   const { data: receipt, error: receiptErr } = await admin
@@ -78,148 +80,153 @@ export async function POST(
     return NextResponse.json({ error: voidErr.message }, { status: 500 })
   }
 
-  // Revert inventory for each item that has an item_id
+  // ── Revert inventory + write stock_movements ─────────────────────────────
   const stockableItems = receiptItems.filter(i => i.item_id)
-  const logs: any[] = []
-
-  console.log('[VOID] stockableItems:', JSON.stringify(stockableItems))
+  console.log('[VOID DEBUG] void_type:', void_type, '| stockableItems:', stockableItems.length)
 
   for (const item of stockableItems) {
     const qty = Number(item.quantity)
+    console.log('[VOID DEBUG] Processing:', item.item_name, 'item_id:', item.item_id, 'qty:', qty)
 
-    // ── Check if this item has ingredients (recipe-based) ──────────────────────
+    // Check if this item has BOM ingredients
     const { data: ingredients, error: ingErr } = await admin
       .from('item_ingredients')
       .select('ingredient_id, quantity')
       .eq('item_id', item.item_id)
-      .eq('shop_id', shop_id)
 
-    console.log('[VOID] ingredients for', item.item_id, ':', JSON.stringify(ingredients), 'err:', ingErr?.message)
+    console.log('[VOID DEBUG] BOM rows:', JSON.stringify(ingredients), 'error:', ingErr)
 
     if (ingredients && ingredients.length > 0) {
-      // Fetch ingredient names — try both items and ingredients tables
-      const ingIds = ingredients.map((i: any) => i.ingredient_id)
-      const { data: ingNamesFromItems } = await admin
-        .from('items')
-        .select('id, name')
-        .in('id', ingIds)
-      const { data: ingNamesFromIngredients } = await admin
-        .from('ingredients')
-        .select('id, name')
-        .in('id', ingIds)
-      const ingNameMap: Record<string, string> = Object.fromEntries([
-        ...(ingNamesFromIngredients || []).map((i: any) => [i.id, i.name]),
-        ...(ingNamesFromItems || []).map((i: any) => [i.id, i.name]),
-      ])
-
-      console.log('[VOID] ingNameMap:', JSON.stringify(ingNameMap))
-
-      // Ingredient-based item — reverse each ingredient
+      // BOM-based item
       for (const ing of ingredients) {
-        const ingQty = Number(ing.quantity) * qty // scale by how many were sold
+        const ingQty = Number(ing.quantity) * qty
 
-        const { data: ingLevel, error: ingLevelErr } = await admin
+        if (void_type === 'return_stock') {
+          // Restore ingredient back to inventory
+          const { data: ingLevel, error: levelErr } = await admin
+            .from('inventory_levels')
+            .select('id, quantity')
+            .eq('shop_id', shop_id)
+            .eq('item_id', ing.ingredient_id)
+            .is('variant_id', null)
+            .maybeSingle()
+
+          console.log('[VOID DEBUG] ingLevel for', ing.ingredient_id, ':', JSON.stringify(ingLevel), 'error:', levelErr)
+
+          if (ingLevel) {
+            const { error: updateErr } = await admin
+              .from('inventory_levels')
+              .update({
+                quantity: Number(ingLevel.quantity) + ingQty,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', ingLevel.id)
+            console.log('[VOID DEBUG] inventory update error:', updateErr)
+          }
+
+          const { error: movErr } = await admin.from('stock_movements').insert({
+            shop_id,
+            item_id: ing.ingredient_id,
+            type: 'void',
+            quantity: ingQty,
+            reference_type: 'receipt',
+            reference_id: receipt_id,
+            note: `Void: ${item.item_name} x${item.quantity} — ingredient/s restored`,
+          })
+          console.log('[VOID DEBUG] stock_movement insert error:', movErr)
+        } else {
+          // Wastage — log as loss for audit trail, no inventory change (stock already dispensed at sale)
+          const { error: wastageMovErr } = await admin.from('stock_movements').insert({
+            shop_id,
+            item_id: ing.ingredient_id,
+            type: 'loss',
+            quantity: -ingQty,
+            reference_type: 'receipt',
+            reference_id: receipt_id,
+            note: `POS Wastage: ${item.item_name} x${item.quantity} — item dispensed at sale, no additional stock deducted`,
+          })
+          console.log('[VOID DEBUG] wastage stock_movement insert error:', wastageMovErr)
+        }
+      }
+    } else {
+      // Non-BOM item
+      if (void_type === 'return_stock') {
+        // Restore item back to inventory
+        let levelQuery = admin
           .from('inventory_levels')
           .select('id, quantity')
           .eq('shop_id', shop_id)
-          .eq('item_id', ing.ingredient_id)
-          .is('variant_id', null)
-          .maybeSingle()
+          .eq('item_id', item.item_id)
 
-        console.log('[VOID] ingLevel for', ing.ingredient_id, ':', JSON.stringify(ingLevel), 'err:', ingLevelErr?.message)
+        levelQuery = item.variant_id
+          ? levelQuery.eq('variant_id', item.variant_id)
+          : levelQuery.is('variant_id', null)
 
-        if (ingLevel) {
-          const before = Number(ingLevel.quantity ?? 0)
-          const after  = before + ingQty
+        const { data: level } = await levelQuery.maybeSingle()
 
+        if (level) {
           await admin
             .from('inventory_levels')
-            .update({ quantity: after, updated_at: new Date().toISOString() })
-            .eq('id', ingLevel.id)
-
-          logs.push({
-            shop_id,
-            receipt_id,
-            item_id:    ing.ingredient_id,
-            item_name:  ingNameMap[ing.ingredient_id] ?? `${item.item_name} (ingredient)`,
-            before_qty: before,
-            after_qty:  after,
-            change_qty: ingQty,
-          })
+            .update({
+              quantity: Number(level.quantity) + qty,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', level.id)
         }
-      }
-    }
 
-    // ── Always also revert the finished item in inventory_levels if it exists ──
-    let levelQuery = admin
-      .from('inventory_levels')
-      .select('id, quantity')
-      .eq('shop_id', shop_id)
-      .eq('item_id', item.item_id)
-
-    if (item.variant_id) {
-      levelQuery = levelQuery.eq('variant_id', item.variant_id)
-    } else {
-      levelQuery = levelQuery.is('variant_id', null)
-    }
-
-    const { data: level } = await levelQuery.single()
-
-    if (level) {
-      const before = Number(level.quantity ?? 0)
-      const after  = before + qty
-
-      await admin
-        .from('inventory_levels')
-        .update({ quantity: after, updated_at: new Date().toISOString() })
-        .eq('id', level.id)
-
-      logs.push({
-        shop_id,
-        receipt_id,
-        item_id:    item.item_id,
-        item_name:  item.item_name ?? 'Unknown',
-        before_qty: before,
-        after_qty:  after,
-        change_qty: qty,
-      })
-    } else if (!ingredients || ingredients.length === 0) {
-      // No inventory_levels row and no ingredients — create one
-      await admin
-        .from('inventory_levels')
-        .insert({
+        await admin.from('stock_movements').insert({
           shop_id,
-          item_id:    item.item_id,
+          item_id: item.item_id,
           variant_id: item.variant_id ?? null,
-          quantity:   qty,
+          type: 'void',
+          quantity: qty,
+          reference_type: 'receipt',
+          reference_id: receipt_id,
+          note: `Void: ${item.item_name} x${item.quantity}`,
         })
-
-      logs.push({
-        shop_id,
-        receipt_id,
-        item_id:    item.item_id,
-        item_name:  item.item_name ?? 'Unknown',
-        before_qty: 0,
-        after_qty:  qty,
-        change_qty: qty,
-      })
+      } else {
+        // Wastage — log as loss for audit trail, no inventory change (stock already dispensed at sale)
+        const { error: wastageMovErr } = await admin.from('stock_movements').insert({
+          shop_id,
+          item_id: item.item_id,
+          variant_id: item.variant_id ?? null,
+          type: 'loss',
+          quantity: -qty,
+          reference_type: 'receipt',
+          reference_id: receipt_id,
+          note: `Wastage: ${item.item_name} x${item.quantity} — item was dispensed at sale, no additional stock deducted`,
+        })
+        console.log('[VOID DEBUG] wastage stock_movement insert error:', wastageMovErr)
+      }
     }
   }
 
-  // Write all inventory_logs in one insert
-  if (logs.length > 0) {
-    const { error: logErr } = await admin
-      .from('inventory_logs')
-      .insert(logs)
-
-    if (logErr) {
-      console.error('inventory_logs insert failed on void:', logErr.message)
-    }
+  // ── Delete financial entries tied to this receipt ──────────────────────────
+  // For 'return_stock': delete everything — sale never happened, cost never incurred.
+  // For 'wastage': delete revenue/discount/tax but KEEP the COGS entry —
+  //   ingredients were still consumed, so the cost stands.
+  if (void_type === 'wastage') {
+    await admin
+      .from('financial_entries')
+      .delete()
+      .eq('reference_type', 'receipt')
+      .eq('reference_id', receipt_id)
+      .eq('shop_id', shop_id)
+      .in('type', ['revenue', 'discount', 'tax'])
+  } else {
+    // return_stock: wipe all entries including cogs
+    await admin
+      .from('financial_entries')
+      .delete()
+      .eq('reference_type', 'receipt')
+      .eq('reference_id', receipt_id)
+      .eq('shop_id', shop_id)
   }
 
   return NextResponse.json({
-    success:        true,
+    success: true,
     receipt_id,
+    void_type,
     items_reverted: stockableItems.length,
   })
 }

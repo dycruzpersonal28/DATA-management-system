@@ -37,83 +37,6 @@ type AvailabilityInfo = {
 // Note: unit field is kept for future use; currently empty string since schema has no unit column
 type AvailabilityMap = Map<string, AvailabilityInfo>
 
-// ── Stock Warning Modal ───────────────────────────────────────────────────────
-function StockWarningModal({
-  item,
-  availability,
-  onProceed,
-  onCancel,
-}: {
-  item: any
-  availability: AvailabilityInfo
-  onProceed: () => void
-  onCancel: () => void
-}) {
-  const outOfStock = availability.canMake === 0
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
-        <div className={`px-5 py-4 flex items-center gap-3 ${outOfStock ? 'bg-red-50' : 'bg-amber-50'}`}>
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${outOfStock ? 'bg-red-100' : 'bg-amber-100'}`}>
-            <AlertTriangle className={`w-5 h-5 ${outOfStock ? 'text-red-600' : 'text-amber-600'}`} />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">
-              {outOfStock ? 'Out of Stock' : 'Low Stock Warning'}
-            </h3>
-            <p className="text-xs text-gray-500 mt-0.5">{item.name}</p>
-          </div>
-        </div>
-
-        <div className="px-5 py-4">
-          <p className="text-xs text-gray-500 mb-3">
-            {outOfStock
-              ? 'The following ingredients are insufficient to make this item:'
-              : 'Some ingredients are running low for this item:'}
-          </p>
-          <div className="space-y-2 mb-4">
-            {availability.shortages.map((s, i) => (
-              <div key={i} className="flex items-center justify-between bg-red-50 rounded-xl px-3 py-2">
-                <span className="text-xs font-medium text-gray-800">{s.ingredient}</span>
-                <div className="text-right">
-                  <p className="text-xs text-red-600 font-semibold">
-                    Need {s.need}{s.unit ? ` ${s.unit}` : ''} · Have {s.have}{s.unit ? ` ${s.unit}` : ''}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-          {availability.canMake !== null && availability.canMake > 0 && (
-            <p className="text-xs text-amber-600 font-medium mb-4">
-              Only {availability.canMake} serving{availability.canMake !== 1 ? 's' : ''} can be made with current stock.
-            </p>
-          )}
-          <p className="text-xs text-gray-400">
-            {outOfStock
-              ? 'You can still add this item to the cart and proceed with the sale.'
-              : 'You can still proceed with the sale.'}
-          </p>
-        </div>
-
-        <div className="px-5 pb-5 flex gap-2">
-          <button
-            onClick={onCancel}
-            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onProceed}
-            className={`flex-1 py-2.5 rounded-xl text-white text-sm font-semibold active:scale-95 transition-all flex items-center justify-center gap-1.5 ${outOfStock ? 'bg-red-500 hover:bg-red-600' : 'bg-amber-500 hover:bg-amber-600'}`}
-          >
-            Add Anyway <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ── Variant Picker Modal ──────────────────────────────────────────────────────
 function VariantPickerModal({ item, variants, addonItems: initialAddons, onConfirm, onClose, currencySymbol }: PickerProps) {
   const [selected, setSelected] = useState<Variant | null>(null)
@@ -570,8 +493,6 @@ export default function POSPage() {
 
   // Inventory availability
   const [availabilityMap, setAvailabilityMap] = useState<AvailabilityMap>(new Map())
-  const [stockWarningItem, setStockWarningItem] = useState<{ item: any; availability: AvailabilityInfo } | null>(null)
-  const [pendingItemTap, setPendingItemTap] = useState<any | null>(null)
 
   useEffect(() => {
     setNow(new Date())
@@ -872,10 +793,12 @@ export default function POSPage() {
 
   async function handleItemTap(item: any) {
     const avail = availabilityMap.get(item.id)
-    // Show warning if: ingredients are tracked AND (can't make any OR there are shortages)
-    if (avail && (avail.canMake === 0 || avail.shortages.length > 0)) {
-      setPendingItemTap(item)
-      setStockWarningItem({ item, availability: avail })
+    // Hard block — cannot proceed if any ingredient is insufficient
+    if (avail && avail.shortages.length > 0) {
+      const names = avail.shortages.map(s => s.ingredient).join(', ')
+      toast.error(`Cannot add "${item.name}" — insufficient ingredients: ${names}`, {
+        duration: 4000,
+      })
       return
     }
     await openItemPicker(item)
@@ -901,19 +824,6 @@ export default function POSPage() {
     setPickerItem(null)
     setPickerVariants([])
     setPickerAddons([])
-  }
-
-  // ── Stock Warning Handlers ────────────────────────────────────────────────
-  async function handleStockWarningProceed() {
-    const item = pendingItemTap
-    setStockWarningItem(null)
-    setPendingItemTap(null)
-    if (item) await openItemPicker(item)
-  }
-
-  function handleStockWarningCancel() {
-    setStockWarningItem(null)
-    setPendingItemTap(null)
   }
 
   const itemsByCategory = useMemo(() => {
@@ -950,15 +860,7 @@ export default function POSPage() {
     // ── Outer shell: full screen, two-col on desktop, single-col on tablet ──
     <div className="flex h-screen bg-gray-100 overflow-hidden">
 
-      {/* ── Modals (unchanged) ── */}
-      {stockWarningItem && (
-        <StockWarningModal
-          item={stockWarningItem.item}
-          availability={stockWarningItem.availability}
-          onProceed={handleStockWarningProceed}
-          onCancel={handleStockWarningCancel}
-        />
-      )}
+      {/* ── Modals ── */}
       {pickerItem && !pickerLoading && (
         <VariantPickerModal
           item={pickerItem} variants={pickerVariants} addonItems={pickerAddons}
@@ -1209,12 +1111,13 @@ export default function POSPage() {
                   const hasIngredients = !!avail
                   return (
                     <button key={item.id} onClick={() => handleItemTap(item)}
-                      className={`bg-white rounded-xl border p-3 text-left hover:shadow-sm active:scale-95 transition-all relative ${
+                      disabled={outOfStock}
+                      className={`bg-white rounded-xl border p-3 text-left transition-all relative ${
                         outOfStock
-                          ? 'border-red-200 hover:border-red-300 opacity-80'
+                          ? 'border-red-200 opacity-50 cursor-not-allowed'
                           : lowStock
-                          ? 'border-amber-200 hover:border-amber-300'
-                          : 'border-gray-200 hover:border-indigo-300'
+                          ? 'border-amber-200 hover:border-amber-300 hover:shadow-sm active:scale-95'
+                          : 'border-gray-200 hover:border-indigo-300 hover:shadow-sm active:scale-95'
                       }`}>
                       <div className="w-full h-1 rounded-full mb-2" style={{ backgroundColor: selectedCategory.color || '#e5e7eb' }} />
                       <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
@@ -1254,12 +1157,13 @@ export default function POSPage() {
                   const hasIngredients = !!avail
                   return (
                     <button key={item.id} onClick={() => handleItemTap(item)}
-                      className={`w-full bg-white rounded-xl border px-4 py-3 flex items-center gap-4 hover:shadow-sm active:scale-[0.99] transition-all text-left ${
+                      disabled={outOfStock}
+                      className={`w-full bg-white rounded-xl border px-4 py-3 flex items-center gap-4 transition-all text-left ${
                         outOfStock
-                          ? 'border-red-200 hover:border-red-300 opacity-80'
+                          ? 'border-red-200 opacity-50 cursor-not-allowed'
                           : lowStock
-                          ? 'border-amber-200 hover:border-amber-300'
-                          : 'border-gray-200 hover:border-indigo-300'
+                          ? 'border-amber-200 hover:border-amber-300 hover:shadow-sm active:scale-[0.99]'
+                          : 'border-gray-200 hover:border-indigo-300 hover:shadow-sm active:scale-[0.99]'
                       }`}>
                       <div className="w-2 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: selectedCategory.color || '#6366f1' }} />
                       <div className="flex-1 min-w-0">

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
   TrendingUp, TrendingDown, ShoppingBag, DollarSign, Percent,
@@ -11,7 +12,7 @@ import {
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type UserRole = 'owner' | 'manager' | 'cashier' | 'staff' | null
+type UserRole = 'owner' | 'Owner' | 'manager' | 'Manager' | 'cashier' | 'Cashier' | 'staff' | 'Staff' | null
 
 type Summary = {
   grossSales: number
@@ -81,7 +82,8 @@ function fmtDateTime(s: string) {
   return new Date(s).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 function canSeeCogs(role: UserRole) {
-  return role === 'owner' || role === 'manager'
+  const r = role?.toLowerCase()
+  return r === 'owner' || r === 'manager'
 }
 
 // ── Sparkline / Sales Timeline Chart (pure SVG, no deps) ─────────────────────
@@ -430,11 +432,18 @@ function ReceiptModal({ receipt, onClose, currencySymbol }: {
 
 // ── Void Confirm Modal ────────────────────────────────────────────────────────
 function VoidModal({ receipt, onConfirm, onCancel, voiding }: {
-  receipt: ReceiptRow; onConfirm: () => void; onCancel: () => void; voiding: boolean
+  receipt: ReceiptRow
+  onConfirm: (voidType: 'return_stock' | 'wastage') => void
+  onCancel: () => void
+  voiding: boolean
 }) {
+  const [selected, setSelected] = useState<'return_stock' | 'wastage' | null>(null)
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+
+        {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-red-50">
           <div className="w-9 h-9 bg-red-100 rounded-xl flex items-center justify-center">
             <AlertTriangle className="w-5 h-5 text-red-600" />
@@ -447,27 +456,94 @@ function VoidModal({ receipt, onConfirm, onCancel, voiding }: {
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="px-5 py-4">
-          <p className="text-sm text-gray-600">
-            Voiding this transaction will mark it as void and reverse the financial entries.
-            This cannot be undone.
-          </p>
-          <div className="mt-3 bg-gray-50 rounded-xl p-3 flex justify-between">
+
+        {/* Amount */}
+        <div className="px-5 pt-4">
+          <div className="bg-gray-50 rounded-xl p-3 flex justify-between">
             <span className="text-sm text-gray-500">Amount</span>
             <span className="text-sm font-bold text-gray-900">{fmt(receipt.total)}</span>
           </div>
         </div>
+
+        {/* Void type selection */}
+        <div className="px-5 py-4 space-y-2.5">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">How should stock be handled?</p>
+
+          {/* Return to stock */}
+          <button
+            onClick={() => setSelected('return_stock')}
+            disabled={voiding}
+            className={`w-full text-left p-3.5 rounded-xl border-2 transition-all ${
+              selected === 'return_stock'
+                ? 'border-emerald-500 bg-emerald-50'
+                : 'border-gray-200 hover:border-gray-300 bg-white'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                selected === 'return_stock' ? 'bg-emerald-100' : 'bg-gray-100'
+              }`}>
+                <ArrowDownCircle className={`w-4 h-4 ${selected === 'return_stock' ? 'text-emerald-600' : 'text-gray-400'}`} />
+              </div>
+              <div>
+                <p className={`text-sm font-semibold ${selected === 'return_stock' ? 'text-emerald-700' : 'text-gray-800'}`}>
+                  Return to Stock
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Refund the sale and restore ingredients back to inventory. COGS entry removed.
+                </p>
+              </div>
+            </div>
+          </button>
+
+          {/* Wastage */}
+          <button
+            onClick={() => setSelected('wastage')}
+            disabled={voiding}
+            className={`w-full text-left p-3.5 rounded-xl border-2 transition-all ${
+              selected === 'wastage'
+                ? 'border-orange-500 bg-orange-50'
+                : 'border-gray-200 hover:border-gray-300 bg-white'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                selected === 'wastage' ? 'bg-orange-100' : 'bg-gray-100'
+              }`}>
+                <Trash2 className={`w-4 h-4 ${selected === 'wastage' ? 'text-orange-600' : 'text-gray-400'}`} />
+              </div>
+              <div>
+                <p className={`text-sm font-semibold ${selected === 'wastage' ? 'text-orange-700' : 'text-gray-800'}`}>
+                  Mark as Wastage
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Refund the sale but stock stays consumed. COGS entry kept — ingredients were already used.
+                </p>
+              </div>
+            </div>
+          </button>
+        </div>
+
+        {/* Actions */}
         <div className="flex gap-2 px-5 py-4 border-t border-gray-100">
           <button onClick={onCancel} disabled={voiding}
             className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
             Cancel
           </button>
-          <button onClick={onConfirm} disabled={voiding}
-            className="flex-1 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
+          <button
+            onClick={() => selected && onConfirm(selected)}
+            disabled={voiding || !selected}
+            className={`flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2 transition-colors ${
+              selected === 'wastage'
+                ? 'bg-orange-500 hover:bg-orange-600'
+                : 'bg-red-500 hover:bg-red-600'
+            }`}
+          >
             {voiding ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-            {voiding ? 'Voiding…' : 'Void'}
+            {voiding ? 'Voiding…' : selected === 'wastage' ? 'Void as Wastage' : selected === 'return_stock' ? 'Void & Return Stock' : 'Select an option'}
           </button>
         </div>
+
       </div>
     </div>
   )
@@ -479,10 +555,12 @@ export default function DashboardPage() {
 
   const [dateFrom, setDateFrom] = useState(startOfMonth)
   const [dateTo, setDateTo] = useState(today)
+  const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [currencySymbol, setCurrencySymbol] = useState('₱')
   const [userRole, setUserRole] = useState<UserRole>(null)
+  const [roleLoading, setRoleLoading] = useState(true)
 
   const [summary, setSummary] = useState<Summary | null>(null)
   const [receipts, setReceipts] = useState<ReceiptRow[]>([])
@@ -499,17 +577,29 @@ export default function DashboardPage() {
   const [voidTarget, setVoidTarget] = useState<ReceiptRow | null>(null)
   const [voiding, setVoiding] = useState(false)
 
-  // Fetch user role on mount
+  // Fetch user role on mount — guard page access
   useEffect(() => {
     async function fetchRole() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data: appUser } = await supabase
-        .from('app_users')
-        .select('role')
-        .eq('auth_user_id', user.id)
-        .single()
-      if (appUser?.role) setUserRole(appUser.role as UserRole)
+      setRoleLoading(true)
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) { router.push('/login'); return }
+        const { data: appUser } = await supabase
+          .from('app_users')
+          .select('role')
+          .eq('auth_user_id', user.id)
+          .single()
+        const role = appUser?.role as UserRole
+        const roleLower = role?.toLowerCase()
+        if (!roleLower || (roleLower !== 'owner' && roleLower !== 'manager')) {
+          // Cashiers and staff go back to POS
+          router.push('/pos')
+          return
+        }
+        setUserRole(role)
+      } finally {
+        setRoleLoading(false)
+      }
     }
     fetchRole()
   }, [])
@@ -531,8 +621,9 @@ export default function DashboardPage() {
     setError('')
     try {
       // ── Shop currency ──────────────────────────────────────────────────────
-      const { data: shop } = await supabase.from('shops').select('currency_symbol').single()
+      const { data: shop } = await supabase.from('shops').select('id, currency_symbol').single()
       if (shop?.currency_symbol) setCurrencySymbol(shop.currency_symbol)
+      const shopId = shop?.id
 
       // ── Date window (inclusive) ────────────────────────────────────────────
       const fromTs = `${dateFrom}T00:00:00`
@@ -665,13 +756,15 @@ export default function DashboardPage() {
         .filter((m: any) => m.type === 'cash_out')
         .reduce((s: number, m: any) => s + Number(m.amount), 0)
 
-      // COGS from financial_entries
-      const { data: cogsEntries } = await supabase
+      // COGS from financial_entries — filter by shop_id so RLS doesn't return empty
+      let cogsQuery = supabase
         .from('financial_entries')
         .select('amount')
         .eq('type', 'cogs')
         .gte('entry_date', dateFrom)
         .lte('entry_date', dateTo)
+      if (shopId) cogsQuery = cogsQuery.eq('shop_id', shopId)
+      const { data: cogsEntries, error: cogsErr } = await cogsQuery
       const cogs = (cogsEntries || []).reduce((s, e) => s + Number(e.amount), 0)
 
       const netSales = grossSales - cogs - cashoutTotal - discounts
@@ -742,23 +835,23 @@ export default function DashboardPage() {
 
   useEffect(() => { load() }, [load])
 
-  async function handleVoid() {
+  async function handleVoid(voidType: 'return_stock' | 'wastage') {
     if (!voidTarget) return
     setVoiding(true)
     try {
-      await supabase
-        .from('receipts')
-        .update({ status: 'voided' })
-        .eq('id', voidTarget.id)
-      await supabase
-        .from('financial_entries')
-        .delete()
-        .eq('reference_type', 'receipt')
-        .eq('reference_id', voidTarget.id)
+      const res = await fetch(`/api/transactions/${voidTarget.id}/void`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ void_note: `Voided from dashboard`, void_type: voidType }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to void transaction')
+      }
       setVoidTarget(null)
       load()
-    } catch {
-      setError('Failed to void transaction')
+    } catch (e: any) {
+      setError(e.message || 'Failed to void transaction')
     } finally {
       setVoiding(false)
     }
@@ -778,6 +871,18 @@ export default function DashboardPage() {
   // Cash movement totals for the table header
   const cashInTotal = cashMovements.filter(m => m.type === 'cash_in').reduce((s, m) => s + m.amount, 0)
   const cashOutTotal = cashMovements.filter(m => m.type === 'cash_out').reduce((s, m) => s + m.amount, 0)
+
+  // Don't render anything until role is confirmed — prevents flash of locked state
+  if (roleLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="flex items-center gap-3 text-gray-400">
+          <RefreshCw className="w-5 h-5 animate-spin" />
+          <span className="text-sm font-medium">Checking access…</span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 space-y-6 bg-gray-50 min-h-screen">
@@ -1240,7 +1345,7 @@ export default function DashboardPage() {
         <ReceiptModal receipt={receiptDetail} onClose={() => setReceiptDetail(null)} currencySymbol={currencySymbol} />
       )}
       {voidTarget && (
-        <VoidModal receipt={voidTarget} onConfirm={handleVoid} onCancel={() => setVoidTarget(null)} voiding={voiding} />
+        <VoidModal receipt={voidTarget} onConfirm={(voidType) => handleVoid(voidType)} onCancel={() => setVoidTarget(null)} voiding={voiding} />
       )}
     </div>
   )

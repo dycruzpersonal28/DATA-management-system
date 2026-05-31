@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
@@ -41,7 +40,6 @@ export default function StoreSettingsPage({
   shop?: any
   onShopUpdate?: (s: any) => void
 }) {
-  const supabase = createClient()
   const [shop, setShop] = useState<any>(shopProp ?? null)
   const [saving, setSaving] = useState(false)
 
@@ -58,20 +56,22 @@ export default function StoreSettingsPage({
   // Standalone fetch if not passed as prop
   useEffect(() => {
     if (!shopProp) {
-      supabase.from('shops').select('*').single().then(({ data }) => {
-        if (data) {
-          setShop(data)
-          setForm({
-            name:            data.name            ?? '',
-            address:         data.address         ?? '',
-            phone:           data.phone           ?? '',
-            email:           data.email           ?? '',
-            currency:        data.currency        ?? 'PHP',
-            currency_symbol: data.currency_symbol ?? '₱',
-            timezone:        data.timezone        ?? 'Asia/Manila',
-          })
-        }
-      })
+      fetch('/api/shop')
+        .then(r => r.json())
+        .then(({ shop: data }) => {
+          if (data) {
+            setShop(data)
+            setForm({
+              name:            data.name            ?? '',
+              address:         data.address         ?? '',
+              phone:           data.phone           ?? '',
+              email:           data.email           ?? '',
+              currency:        data.currency        ?? 'PHP',
+              currency_symbol: data.currency_symbol ?? '₱',
+              timezone:        data.timezone        ?? 'Asia/Manila',
+            })
+          }
+        })
     }
   }, [shopProp])
 
@@ -93,24 +93,15 @@ export default function StoreSettingsPage({
     if (!shop?.id) return
     if (!form.name.trim()) { toast.error('Store name is required'); return }
     setSaving(true)
-    const { data, error } = await supabase
-      .from('shops')
-      .update({
-        name:            form.name.trim(),
-        address:         form.address.trim(),
-        phone:           form.phone.trim(),
-        email:           form.email.trim(),
-        currency:        form.currency,
-        currency_symbol: form.currency_symbol,
-        timezone:        form.timezone,
-      })
-      .eq('id', shop.id)
-      .select()
-      .single()
-
-    if (error) { toast.error('Failed to save: ' + error.message); setSaving(false); return }
-    onShopUpdate?.(data)
-    setShop(data)
+    const res = await fetch('/api/shop', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form),
+    })
+    const { shop: updated, error: errMsg } = await res.json()
+    if (!res.ok) { toast.error('Failed to save: ' + errMsg); setSaving(false); return }
+    onShopUpdate?.(updated ?? shop)
+    setShop(updated ?? shop)
     toast.success('Store settings saved')
     setSaving(false)
   }

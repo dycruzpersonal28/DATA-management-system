@@ -7,7 +7,7 @@ const EMPLOYEE_SELECT = `
   id, name, email, role, role_id, employee_no, address, mobile_number,
   pin, hourly_rate, allowance, employment_type,
   sss_no, philhealth_no, pagibig_no,
-  is_active, is_kiosk_visible, require_manager_approval, created_at
+  is_active, is_kiosk_visible, require_manager_approval, govt_deductions_enabled, created_at
 `
 
 async function getAuthContext() {
@@ -164,7 +164,8 @@ export async function POST(req: NextRequest) {
         philhealth_no: philhealth_no || null,
         pagibig_no: pagibig_no || null,
         employment_type,
-        require_manager_approval,  // ← NEW
+        require_manager_approval,
+        govt_deductions_enabled: body.govt_deductions_enabled ?? false,
         is_active: true,
       })
       .select('id, name, email, role, role_id, employee_no')
@@ -291,7 +292,7 @@ export async function DELETE(req: NextRequest) {
       .eq('auth_user_id', user.id)
       .single()
 
-    if (!caller || caller.role !== 'owner') {
+    if (!caller || caller.role?.toLowerCase() !== 'owner') {
       return NextResponse.json({ error: 'Forbidden: only owners can delete employees' }, { status: 403 })
     }
 
