@@ -209,7 +209,8 @@ export default function KioskPage() {
         setShopId(pingData.shop_id ?? null)
       }
 
-      const today   = new Date().toISOString().split('T')[0]
+      const nowPHT  = new Date(Date.now() + 8 * 60 * 60 * 1000)
+      const today   = nowPHT.toISOString().split('T')[0]
       const logRes  = await fetch(`/api/time-logs?date_from=${today}&date_to=${today}`)
       const logData = await logRes.json()
       const active  = new Set<string>(
