@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   try {
     const caller = await getCallerShop()
     if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    if (!['owner', 'manager'].includes(caller.role))
+    if (!['owner', 'manager'].includes(caller.role?.toLowerCase()))
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const { name, start_time, end_time, is_overnight } = await req.json()
@@ -64,7 +64,7 @@ export async function PATCH(req: NextRequest) {
   try {
     const caller = await getCallerShop()
     if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    if (!['owner', 'manager'].includes(caller.role))
+    if (!['owner', 'manager'].includes(caller.role?.toLowerCase()))
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const { id, ...updates } = await req.json()
@@ -90,7 +90,7 @@ export async function DELETE(req: NextRequest) {
   try {
     const caller = await getCallerShop()
     if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    if (caller.role !== 'owner')
+    if (caller.role?.toLowerCase() !== 'owner')
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const { searchParams } = new URL(req.url)
