@@ -20,14 +20,16 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // FIX 2: also select 'name' so we can write created_by on every movement
   const { data: appUser } = await admin
     .from('app_users')
-    .select('shop_id')
+    .select('shop_id, name')          // ← was: 'shop_id' only
     .eq('auth_user_id', user.id)
     .single()
   if (!appUser) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
-  const { shop_id } = appUser
+  const { shop_id }    = appUser
+  const createdByName: string | null = appUser.name ?? null   // ← new
   const { id: receipt_id } = await params
 
   // Optional void metadata from request body
@@ -97,27 +99,29 @@ export async function POST(
     console.log('[VOID DEBUG] BOM rows:', JSON.stringify(ingredients), 'error:', ingErr)
 
     if (ingredients && ingredients.length > 0) {
-      // BOM-based item
+      // BOM-based item — loop each ingredient
       for (const ing of ingredients) {
         const ingQty = Number(ing.quantity) * qty
 
-        if (void_type === 'return_stock') {
-          // Restore ingredient back to inventory
-          const { data: ingLevel, error: levelErr } = await admin
-            .from('inventory_levels')
-            .select('id, quantity')
-            .eq('shop_id', shop_id)
-            .eq('item_id', ing.ingredient_id)
-            .is('variant_id', null)
-            .maybeSingle()
+        // FIX 1: always read current level so we can record before/after
+        const { data: ingLevel } = await admin
+          .from('inventory_levels')
+          .select('id, quantity')
+          .eq('shop_id', shop_id)
+          .eq('item_id', ing.ingredient_id)
+          .is('variant_id', null)
+          .maybeSingle()
 
-          console.log('[VOID DEBUG] ingLevel for', ing.ingredient_id, ':', JSON.stringify(ingLevel), 'error:', levelErr)
+        const beforeQty = ingLevel ? Number(ingLevel.quantity) : 0
+
+        if (void_type === 'return_stock') {
+          const afterQty = beforeQty + ingQty   // ← new
 
           if (ingLevel) {
             const { error: updateErr } = await admin
               .from('inventory_levels')
               .update({
-                quantity: Number(ingLevel.quantity) + ingQty,
+                quantity:   afterQty,
                 updated_at: new Date().toISOString(),
               })
               .eq('id', ingLevel.id)
@@ -126,23 +130,30 @@ export async function POST(
 
           const { error: movErr } = await admin.from('stock_movements').insert({
             shop_id,
-            item_id: ing.ingredient_id,
-            type: 'void',
-            quantity: ingQty,
+            item_id:        ing.ingredient_id,
+            type:           'void',
+            quantity:       ingQty,
+            before_qty:     beforeQty,    // ← FIX 1
+            after_qty:      afterQty,     // ← FIX 1
+            created_by:     createdByName, // ← FIX 2
             reference_type: 'receipt',
-            reference_id: receipt_id,
+            reference_id:   receipt_id,
             note: `Void: ${item.item_name} x${item.quantity} — ingredient/s restored`,
           })
           console.log('[VOID DEBUG] stock_movement insert error:', movErr)
+
         } else {
-          // Wastage — log as loss for audit trail, no inventory change (stock already dispensed at sale)
+          // Wastage — no inventory change; before = after
           const { error: wastageMovErr } = await admin.from('stock_movements').insert({
             shop_id,
-            item_id: ing.ingredient_id,
-            type: 'loss',
-            quantity: -ingQty,
+            item_id:        ing.ingredient_id,
+            type:           'loss',
+            quantity:       -ingQty,
+            before_qty:     beforeQty,    // ← FIX 1
+            after_qty:      beforeQty,    // ← FIX 1 (no change for wastage)
+            created_by:     createdByName, // ← FIX 2
             reference_type: 'receipt',
-            reference_id: receipt_id,
+            reference_id:   receipt_id,
             note: `POS Wastage: ${item.item_name} x${item.quantity} — item dispensed at sale, no additional stock deducted`,
           })
           console.log('[VOID DEBUG] wastage stock_movement insert error:', wastageMovErr)
@@ -150,25 +161,30 @@ export async function POST(
       }
     } else {
       // Non-BOM item
+
+      // FIX 1: always read current level so we can record before/after
+      let levelQuery = admin
+        .from('inventory_levels')
+        .select('id, quantity')
+        .eq('shop_id', shop_id)
+        .eq('item_id', item.item_id)
+
+      levelQuery = item.variant_id
+        ? levelQuery.eq('variant_id', item.variant_id)
+        : levelQuery.is('variant_id', null)
+
+      const { data: level } = await levelQuery.maybeSingle()
+
+      const beforeQty = level ? Number(level.quantity) : 0  // ← new
+
       if (void_type === 'return_stock') {
-        // Restore item back to inventory
-        let levelQuery = admin
-          .from('inventory_levels')
-          .select('id, quantity')
-          .eq('shop_id', shop_id)
-          .eq('item_id', item.item_id)
-
-        levelQuery = item.variant_id
-          ? levelQuery.eq('variant_id', item.variant_id)
-          : levelQuery.is('variant_id', null)
-
-        const { data: level } = await levelQuery.maybeSingle()
+        const afterQty = beforeQty + qty   // ← new
 
         if (level) {
           await admin
             .from('inventory_levels')
             .update({
-              quantity: Number(level.quantity) + qty,
+              quantity:   afterQty,
               updated_at: new Date().toISOString(),
             })
             .eq('id', level.id)
@@ -176,24 +192,31 @@ export async function POST(
 
         await admin.from('stock_movements').insert({
           shop_id,
-          item_id: item.item_id,
-          variant_id: item.variant_id ?? null,
-          type: 'void',
-          quantity: qty,
+          item_id:        item.item_id,
+          variant_id:     item.variant_id ?? null,
+          type:           'void',
+          quantity:       qty,
+          before_qty:     beforeQty,    // ← FIX 1
+          after_qty:      afterQty,     // ← FIX 1
+          created_by:     createdByName, // ← FIX 2
           reference_type: 'receipt',
-          reference_id: receipt_id,
+          reference_id:   receipt_id,
           note: `Void: ${item.item_name} x${item.quantity}`,
         })
+
       } else {
-        // Wastage — log as loss for audit trail, no inventory change (stock already dispensed at sale)
+        // Wastage — no inventory change; before = after
         const { error: wastageMovErr } = await admin.from('stock_movements').insert({
           shop_id,
-          item_id: item.item_id,
-          variant_id: item.variant_id ?? null,
-          type: 'loss',
-          quantity: -qty,
+          item_id:        item.item_id,
+          variant_id:     item.variant_id ?? null,
+          type:           'loss',
+          quantity:       -qty,
+          before_qty:     beforeQty,    // ← FIX 1
+          after_qty:      beforeQty,    // ← FIX 1 (no change for wastage)
+          created_by:     createdByName, // ← FIX 2
           reference_type: 'receipt',
-          reference_id: receipt_id,
+          reference_id:   receipt_id,
           note: `Wastage: ${item.item_name} x${item.quantity} — item was dispensed at sale, no additional stock deducted`,
         })
         console.log('[VOID DEBUG] wastage stock_movement insert error:', wastageMovErr)
@@ -202,9 +225,6 @@ export async function POST(
   }
 
   // ── Delete financial entries tied to this receipt ──────────────────────────
-  // For 'return_stock': delete everything — sale never happened, cost never incurred.
-  // For 'wastage': delete revenue/discount/tax but KEEP the COGS entry —
-  //   ingredients were still consumed, so the cost stands.
   if (void_type === 'wastage') {
     await admin
       .from('financial_entries')
@@ -214,7 +234,6 @@ export async function POST(
       .eq('shop_id', shop_id)
       .in('type', ['revenue', 'discount', 'tax'])
   } else {
-    // return_stock: wipe all entries including cogs
     await admin
       .from('financial_entries')
       .delete()

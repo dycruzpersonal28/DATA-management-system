@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useCart } from '@/lib/hooks/useCart'
-import { Trash2, Plus, Minus, ShoppingCart, Tag, Percent, ChevronDown, X, Check } from 'lucide-react'
+import { Trash2, Plus, Minus, ShoppingCart, Tag, Percent, ChevronDown, X, Check, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useShop } from '@/lib/hooks/useShop'
 import { createClient } from '@/lib/supabase/client'
@@ -11,18 +11,20 @@ import PaymentModal from './PaymentModal'
 interface CartProps {
   diningOption?: any
   activeShiftId?: string | null
+  cashierName?: string
   onPaymentComplete?: () => void
 }
 
 type TaxRate = { id: string; name: string; rate: number; is_active: boolean }
-type Discount = { id: string; name: string; type: 'percent' | 'fixed'; value: number; is_active: boolean }
-type ItemDiscount = { discount: Discount; amount: number }
+export type Discount = { id: string; name: string; type: 'percent' | 'fixed'; value: number; is_active: boolean }
+export type ItemDiscount = { discount: Discount; amount: number }
 
-// ── Item Discount Picker Modal ────────────────────────────────────────────────
-function ItemDiscountModal({
+// ── Item Edit Modal (discount + note) ────────────────────────────────────────
+function ItemEditModal({
   item,
   discounts,
   currentDiscount,
+  currentNote,
   currencySymbol,
   onApply,
   onRemove,
@@ -31,12 +33,14 @@ function ItemDiscountModal({
   item: any
   discounts: Discount[]
   currentDiscount: ItemDiscount | null
+  currentNote: string
   currencySymbol: string
-  onApply: (discount: Discount) => void
+  onApply: (discount: Discount | null, note: string) => void
   onRemove: () => void
   onClose: () => void
 }) {
   const [selected, setSelected] = useState<Discount | null>(currentDiscount?.discount || null)
+  const [note, setNote] = useState(currentNote)
 
   return (
     <div
@@ -44,9 +48,10 @@ function ItemDiscountModal({
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs overflow-hidden">
+        {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
           <div>
-            <p className="text-sm font-semibold text-gray-900">Item Discount</p>
+            <p className="text-sm font-semibold text-gray-900">Edit Item</p>
             <p className="text-xs text-gray-400 truncate max-w-[180px]">{item.name}</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
@@ -54,50 +59,73 @@ function ItemDiscountModal({
           </button>
         </div>
 
-        <div className="p-3 space-y-1.5">
-          {discounts.map(d => {
-            const isSelected = selected?.id === d.id
-            const previewAmt = d.type === 'percent'
-              ? Math.min(item.lineTotal * (d.value / 100), item.lineTotal)
-              : Math.min(d.value, item.lineTotal)
-            return (
-              <button
-                key={d.id}
-                onClick={() => setSelected(isSelected ? null : d)}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all text-left ${
-                  isSelected
-                    ? 'border-green-400 bg-green-50'
-                    : 'border-gray-200 hover:border-green-200 hover:bg-gray-50'
-                }`}
-              >
-                <div>
-                  <p className={`text-sm font-medium ${isSelected ? 'text-green-800' : 'text-gray-800'}`}>{d.name}</p>
-                  <p className="text-xs text-gray-400">
-                    {d.type === 'percent' ? `${d.value}%` : `${currencySymbol}${d.value.toFixed(2)}`}
-                    {' '}— saves {currencySymbol}{previewAmt.toFixed(2)}
-                  </p>
-                </div>
-                {isSelected && <Check className="w-4 h-4 text-green-600 flex-shrink-0" />}
-              </button>
-            )
-          })}
+        <div className="p-3 space-y-3">
+          {/* Discount section */}
+          {discounts.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                <Tag className="w-3 h-3" /> Discount
+              </p>
+              <div className="space-y-1.5">
+                {discounts.map(d => {
+                  const isSelected = selected?.id === d.id
+                  const previewAmt = d.type === 'percent'
+                    ? Math.min(item.lineTotal * (d.value / 100), item.lineTotal)
+                    : Math.min(d.value, item.lineTotal)
+                  return (
+                    <button
+                      key={d.id}
+                      onClick={() => setSelected(isSelected ? null : d)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl border transition-all text-left ${
+                        isSelected
+                          ? 'border-green-400 bg-green-50'
+                          : 'border-gray-200 hover:border-green-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div>
+                        <p className={`text-sm font-medium ${isSelected ? 'text-green-800' : 'text-gray-800'}`}>{d.name}</p>
+                        <p className="text-xs text-gray-400">
+                          {d.type === 'percent' ? `${d.value}%` : `${currencySymbol}${d.value.toFixed(2)}`}
+                          {' '}— saves {currencySymbol}{previewAmt.toFixed(2)}
+                        </p>
+                      </div>
+                      {isSelected && <Check className="w-4 h-4 text-green-600 flex-shrink-0" />}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Note section */}
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+              <FileText className="w-3 h-3" /> Note
+            </p>
+            <textarea
+              rows={2}
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder="e.g. No onions, extra sauce…"
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-300"
+            />
+          </div>
         </div>
 
         <div className="px-3 pb-4 flex gap-2">
-          {currentDiscount && (
+          {(currentDiscount || currentNote) && (
             <button
               onClick={onRemove}
               className="flex-1 py-2.5 rounded-xl border border-red-200 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors"
             >
-              Remove
+              Clear
             </button>
           )}
           <button
-            onClick={() => { if (selected) onApply(selected); else onClose() }}
-            disabled={!selected}
-            className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            onClick={() => onApply(selected, note.trim())}
+            className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all"
           >
-            Apply
+            Save
           </button>
         </div>
       </div>
@@ -105,12 +133,13 @@ function ItemDiscountModal({
   )
 }
 
-export default function Cart({ diningOption, activeShiftId, onPaymentComplete }: CartProps) {
+export default function Cart({ diningOption, activeShiftId, cashierName, onPaymentComplete }: CartProps) {
   const supabase = createClient()
   const { items, removeItem, updateQuantity, subtotal, discountAmount, setDiscount, clearCart } = useCart()
   const { currencySymbol } = useShop()
 
   const [showPayment, setShowPayment] = useState(false)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
   // Tax state
   const [taxRates, setTaxRates] = useState<TaxRate[]>([])
@@ -126,6 +155,8 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
 
   // Per-item discount state: itemId → ItemDiscount
   const [itemDiscounts, setItemDiscounts] = useState<Map<string, ItemDiscount>>(new Map())
+  // Per-item note state: itemId → note string
+  const [itemNotes, setItemNotes] = useState<Map<string, string>>(new Map())
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
 
   // Ingredient stock limits: itemId → max makeable qty
@@ -200,11 +231,12 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
 
       const { data: appUser } = await supabase
         .from('app_users')
-        .select('shop_id')
+        .select('id, shop_id')
         .eq('auth_user_id', user.id)
         .single()
 
       if (!appUser?.shop_id) return
+      setCurrentUserId(appUser.id)
 
       const [{ data: taxes }, { data: discs }] = await Promise.all([
         supabase.from('tax_rates').select('*').eq('shop_id', appUser.shop_id).eq('is_active', true).order('created_at'),
@@ -222,10 +254,17 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
     load()
   }, [])
 
-  // Clear item discounts for removed items
+  // Clear item discounts and notes for removed items
   useEffect(() => {
     const itemIds = new Set(items.map(i => i.id))
     setItemDiscounts(prev => {
+      const next = new Map(prev)
+      for (const key of next.keys()) {
+        if (!itemIds.has(key)) next.delete(key)
+      }
+      return next
+    })
+    setItemNotes(prev => {
       const next = new Map(prev)
       for (const key of next.keys()) {
         if (!itemIds.has(key)) next.delete(key)
@@ -295,16 +334,30 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
     setShowDiscountDropdown(false)
   }
 
-  function handleApplyItemDiscount(itemId: string, lineTotal: number, discount: Discount) {
-    const amount = discount.type === 'percent'
-      ? Math.min(lineTotal * (discount.value / 100), lineTotal)
-      : Math.min(discount.value, lineTotal)
-    setItemDiscounts(prev => new Map(prev).set(itemId, { discount, amount }))
+  function handleApplyItemEdit(itemId: string, lineTotal: number, discount: Discount | null, note: string) {
+    if (discount) {
+      const amount = discount.type === 'percent'
+        ? Math.min(lineTotal * (discount.value / 100), lineTotal)
+        : Math.min(discount.value, lineTotal)
+      setItemDiscounts(prev => new Map(prev).set(itemId, { discount, amount }))
+    } else {
+      setItemDiscounts(prev => { const next = new Map(prev); next.delete(itemId); return next })
+    }
+    if (note) {
+      setItemNotes(prev => new Map(prev).set(itemId, note))
+    } else {
+      setItemNotes(prev => { const next = new Map(prev); next.delete(itemId); return next })
+    }
     setEditingItemId(null)
   }
 
-  function handleRemoveItemDiscount(itemId: string) {
+  function handleRemoveItemEdit(itemId: string) {
     setItemDiscounts(prev => {
+      const next = new Map(prev)
+      next.delete(itemId)
+      return next
+    })
+    setItemNotes(prev => {
       const next = new Map(prev)
       next.delete(itemId)
       return next
@@ -346,13 +399,14 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
 
 
       {editingItem && (
-        <ItemDiscountModal
+        <ItemEditModal
           item={editingItem}
           discounts={discounts}
           currentDiscount={itemDiscounts.get(editingItem.id) || null}
+          currentNote={itemNotes.get(editingItem.id) || editingItem.note || ''}
           currencySymbol={currencySymbol}
-          onApply={d => handleApplyItemDiscount(editingItem.id, editingItem.lineTotal, d)}
-          onRemove={() => handleRemoveItemDiscount(editingItem.id)}
+          onApply={(discount, note) => handleApplyItemEdit(editingItem.id, editingItem.lineTotal, discount, note)}
+          onRemove={() => handleRemoveItemEdit(editingItem.id)}
           onClose={() => setEditingItemId(null)}
         />
       )}
@@ -386,6 +440,7 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
           <div className="p-3 space-y-2">
             {items.map(item => {
               const itemDisc = itemDiscounts.get(item.id)
+              const itemNote = itemNotes.get(item.id) || item.note
               return (
                 <div
                   key={item.id}
@@ -394,8 +449,8 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
                       ? 'bg-green-50 border border-green-200'
                       : 'bg-gray-50 hover:bg-gray-100 border border-transparent hover:border-gray-200'
                   }`}
-                  onClick={() => discounts.length > 0 && setEditingItemId(item.id)}
-                  title={discounts.length > 0 ? 'Tap to apply item discount' : undefined}
+                  onClick={() => setEditingItemId(item.id)}
+                  title="Tap to edit discount or note"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
@@ -409,8 +464,8 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
                           ))}
                         </div>
                       )}
-                      {item.note && (
-                        <p className="text-xs text-amber-600 mt-0.5">📝 {item.note}</p>
+                      {itemNote && (
+                        <p className="text-xs text-amber-600 mt-0.5">📝 {itemNote}</p>
                       )}
                       <p className="text-xs text-gray-400 mt-0.5">
                         {currencySymbol}{item.price.toFixed(2)}
@@ -605,8 +660,8 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
           </div>
         </div>
 
-        {discounts.length > 0 && items.length > 0 && (
-          <p className="text-[10px] text-gray-400 text-center -mt-1">Tap any item to apply an item-level discount</p>
+        {items.length > 0 && (
+          <p className="text-[10px] text-gray-400 text-center -mt-1">Tap any item to add a discount or note</p>
         )}
 
         <Button
@@ -622,6 +677,10 @@ export default function Cart({ diningOption, activeShiftId, onPaymentComplete }:
       {showPayment && (
         <PaymentModal
           total={tot}
+          itemNotes={itemNotes}
+          itemDiscounts={itemDiscounts}
+          employeeId={currentUserId ?? undefined}
+          cashierName={cashierName}
           onClose={() => {
             setShowPayment(false)
             onPaymentComplete?.()

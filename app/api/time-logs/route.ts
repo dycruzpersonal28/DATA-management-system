@@ -82,51 +82,60 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
       const { clock_in, clock_out } = body
-      if (!employee_id || !clock_in)
-        return NextResponse.json({ error: 'employee_id and clock_in are required' }, { status: 400 })
+      if (!employee_id || !clock_in || !shift_schedule_id)
+        return NextResponse.json({ error: 'employee_id, clock_in, and shift_schedule_id are required' }, { status: 400 })
 
       const admin = createAdminClient()
       const date = clock_in.split('T')[0]
 
+      // Fetch shift boundaries + shop timezone — both needed to compute late/OT correctly
+      const [{ data: shift, error: shiftError }, { data: shopData }] = await Promise.all([
+        admin.from('shift_schedules').select('start_time, end_time').eq('id', shift_schedule_id).single(),
+        admin.from('shops').select('timezone').eq('id', caller.shop_id).single(),
+      ])
+
+      if (shiftError || !shift)
+        return NextResponse.json({ error: 'Shift not found' }, { status: 400 })
+
+      const timezone = shopData?.timezone ?? 'Asia/Manila'
+
+      // The frontend sends clock_in/clock_out as UTC ISO strings (datetime-local → new Date().toISOString())
+      // Convert back to shop local time before comparing against shift start/end times
+      function toLocalHM(isoString: string): [number, number] {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false,
+        }).formatToParts(new Date(isoString))
+        return [
+          parseInt(parts.find(p => p.type === 'hour')!.value),
+          parseInt(parts.find(p => p.type === 'minute')!.value),
+        ]
+      }
+
+      const [ch, cm] = toLocalHM(clock_in)
+      const [sh, sm] = shift.start_time.split(':').map(Number)
+      const diffLate  = (ch * 60 + cm) - (sh * 60 + sm)
+
+      let overtime_hours = 0
+      if (clock_out) {
+        const [oh, om] = toLocalHM(clock_out)
+        const [eh, em] = shift.end_time.split(':').map(Number)
+        const diffOT   = (oh * 60 + om) - (eh * 60 + em)
+        if (diffOT > 0) overtime_hours = parseFloat((diffOT / 60).toFixed(2))
+      }
+
       const payload: Record<string, any> = {
-        shop_id: caller.shop_id,
+        shop_id:            caller.shop_id,
         employee_id,
+        shift_schedule_id,
         clock_in,
         date,
-        late_minutes: 0,
-        is_late: false,
-        log_type: 'work',
-        break_minutes: 0,
+        late_minutes:   diffLate > 0 ? diffLate : 0,
+        is_late:        diffLate > 0,
+        overtime_hours: overtime_hours > 0 ? overtime_hours : 0,
+        log_type:       'work',
+        break_minutes:  0,
       }
       if (clock_out) payload.clock_out = clock_out
-      if (shift_schedule_id) payload.shift_schedule_id = shift_schedule_id
-
-      if (shift_schedule_id && clock_in) {
-        const { data: shift } = await admin
-          .from('shift_schedules')
-          .select('start_time, end_time')
-          .eq('id', shift_schedule_id)
-          .single()
-
-        if (shift) {
-          const [ch, cm] = clock_in.split('T')[1].slice(0, 5).split(':').map(Number)
-          const [sh, sm] = shift.start_time.split(':').map(Number)
-          const diffLate = (ch * 60 + cm) - (sh * 60 + sm)
-          if (diffLate > 0) {
-            payload.late_minutes = diffLate
-            payload.is_late = true
-          }
-
-          if (clock_out) {
-            const [oh, om] = clock_out.split('T')[1].slice(0, 5).split(':').map(Number)
-            const [eh, em] = shift.end_time.split(':').map(Number)
-            const diffOT = (oh * 60 + om) - (eh * 60 + em)
-            if (diffOT > 0) {
-              payload.overtime_hours = parseFloat((diffOT / 60).toFixed(2))
-            }
-          }
-        }
-      }
 
       const { data: log, error: logError } = await admin
         .from('time_logs')
@@ -135,6 +144,53 @@ export async function POST(req: NextRequest) {
         .single()
 
       if (logError) return NextResponse.json({ error: logError.message }, { status: 400 })
+
+      // ── PAYROLL: write labor cost to financial_entries when clock_out is present ──
+      if (clock_out) {
+        // Fetch employee hourly rate
+        const { data: emp } = await admin
+          .from('employees')
+          .select('name, hourly_rate')
+          .eq('id', employee_id)
+          .single()
+
+        // Fetch break settings
+        const { data: payrollSettings } = await admin
+          .from('payroll_settings')
+          .select('break_mode, break_duration_minutes')
+          .eq('shop_id', caller.shop_id)
+          .single()
+
+        const breakMode            = payrollSettings?.break_mode ?? 'auto'
+        const breakDurationMinutes = payrollSettings?.break_duration_minutes ?? 0
+        const breakMins            = breakMode === 'auto' ? breakDurationMinutes : (payload.break_minutes ?? 0)
+
+        const clockInMs   = new Date(clock_in).getTime()
+        const clockOutMs  = new Date(clock_out).getTime()
+        const rawHours    = (clockOutMs - clockInMs) / 1000 / 3600
+        // Deduct break AND late minutes — late minutes are unpaid time
+        const lateMins    = payload.late_minutes ?? 0
+        const hoursWorked = parseFloat((rawHours - breakMins / 60 - lateMins / 60).toFixed(4))
+
+        const hourlyRate = Number(emp?.hourly_rate) || 0
+
+        if (hourlyRate > 0 && hoursWorked > 0) {
+          const laborCost = parseFloat((hoursWorked * hourlyRate).toFixed(2))
+          await admin.from('financial_entries').insert({
+            shop_id:        caller.shop_id,
+            entry_date:     date,
+            type:           'expense',
+            category:       'payroll',
+            amount:         laborCost,
+            direction:      'out',
+            reference_type: 'time_log',
+            reference_id:   log.id,
+            note: `Payroll (manual): ${emp?.name ?? employee_id} — ${hoursWorked.toFixed(2)}h × ₱${hourlyRate}/hr${lateMins > 0 ? ` (${lateMins}min late deducted)` : ''}`,
+          })
+        }
+      }
+      // ── end payroll ────────────────────────────────────────────────────────────
+
       return NextResponse.json({ success: true, log })
     }
     // ── End manual log branch ─────────────────────────────────────────────────

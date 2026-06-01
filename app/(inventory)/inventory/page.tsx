@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   Search, Plus, History, AlertTriangle, Package,
-  X, ArrowUp, ArrowDown, RotateCcw, ArrowUpCircle, ArrowDownCircle,
+  X, ArrowUp, ArrowDown, RotateCcw, ArrowUpCircle, ArrowDownCircle, DollarSign, ChevronRight,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -19,6 +19,8 @@ interface InventoryItem {
   name: string
   sku: string | null
   category_id: string | null
+  cost: number | null
+  price: number | null
   categories: { name: string; color: string } | null
   inventory_levels: { id: string; quantity: number; low_stock_alert: number }[]
 }
@@ -62,33 +64,28 @@ function QuickStockModal({
     if (!amount || amount <= 0) { toast.error('Enter a valid quantity'); return }
 
     setLoading(true)
-    const { data: shop } = await supabase.from('shops').select('id').single()
-    if (!shop) { setLoading(false); return }
-
-    const inv = selected.inventory_levels?.[0]
-    const current = inv?.quantity ?? 0
-    const newQty = mode === 'add' ? current + amount : Math.max(0, current - amount)
-
-    if (inv?.id) {
-      await supabase.from('inventory_levels').update({ quantity: newQty }).eq('id', inv.id)
-    } else {
-      await supabase.from('inventory_levels').insert({
-        shop_id: shop.id, item_id: selected.id, quantity: newQty, low_stock_alert: 0,
+    try {
+      const res = await fetch('/api/inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          item_id:  selected.id,
+          mode:     'adjust',
+          adj_type: mode === 'add' ? 'restock' : 'loss',
+          quantity: amount,
+          note:     note || (mode === 'add' ? 'Quick stock add' : 'Quick dispense'),
+        }),
       })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed to update stock')
+      toast.success(mode === 'add' ? `Added ${amount} to ${selected.name}` : `Dispensed ${amount} from ${selected.name}`)
+      onSaved()
+      onClose()
+    } catch (err: any) {
+      toast.error(err.message)
+    } finally {
+      setLoading(false)
     }
-
-    await supabase.from('stock_movements').insert({
-      shop_id: shop.id,
-      item_id: selected.id,
-      type: mode === 'add' ? 'restock' : 'loss',
-      quantity: mode === 'add' ? amount : -amount,
-      note: note || (mode === 'add' ? 'Quick stock add' : 'Quick dispense'),
-    })
-
-    toast.success(mode === 'add' ? `Added ${amount} to ${selected.name}` : `Dispensed ${amount} from ${selected.name}`)
-    setLoading(false)
-    onSaved()
-    onClose()
   }
 
   const isAdd = mode === 'add'
@@ -212,36 +209,46 @@ function AdjustModal({ item, onClose, onSaved }: { item: InventoryItem; onClose:
 
   async function handleSave() {
     setLoading(true)
-    const { data: shop } = await supabase.from('shops').select('id').single()
-    if (!shop) return
+    try {
+      const body =
+        tab === 'set'
+          ? {
+              item_id:          item.id,
+              mode:             'set',
+              quantity:         parseFloat(quantity) || 0,
+              low_stock_alert:  parseFloat(lowAlert) || 0,
+              note:             note || 'Manual stock set',
+            }
+          : {
+              item_id:  item.id,
+              mode:     'adjust',
+              adj_type: adjType,
+              quantity: parseFloat(adjQty) || 0,
+              note:     note || null,
+            }
 
-    if (tab === 'set') {
-      const qty = parseFloat(quantity) || 0
-      const alert = parseFloat(lowAlert) || 0
-      if (inv?.id) {
-        await supabase.from('inventory_levels').update({ quantity: qty, low_stock_alert: alert }).eq('id', inv.id)
-      } else {
-        await supabase.from('inventory_levels').insert({ shop_id: shop.id, item_id: item.id, quantity: qty, low_stock_alert: alert })
+      if (tab === 'adjust' && !(parseFloat(adjQty) > 0)) {
+        toast.error('Enter a quantity')
+        setLoading(false)
+        return
       }
-      await supabase.from('stock_movements').insert({ shop_id: shop.id, item_id: item.id, type: 'adjustment', quantity: qty, note: note || 'Manual stock set' })
-      toast.success('Stock updated')
-    } else {
-      const qty = parseFloat(adjQty) || 0
-      if (!qty) { toast.error('Enter a quantity'); setLoading(false); return }
-      const current = inv?.quantity ?? 0
-      const newQty = adjType === 'loss' ? Math.max(0, current - qty) : current + qty
-      if (inv?.id) {
-        await supabase.from('inventory_levels').update({ quantity: newQty }).eq('id', inv.id)
-      } else {
-        await supabase.from('inventory_levels').insert({ shop_id: shop.id, item_id: item.id, quantity: newQty, low_stock_alert: 0 })
-      }
-      await supabase.from('stock_movements').insert({ shop_id: shop.id, item_id: item.id, type: adjType, quantity: adjType === 'loss' ? -qty : qty, note: note || null })
-      toast.success('Stock adjusted')
+
+      const res = await fetch('/api/inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed to update stock')
+
+      toast.success(tab === 'set' ? 'Stock updated' : 'Stock adjusted')
+      onSaved()
+      onClose()
+    } catch (err: any) {
+      toast.error(err.message)
+    } finally {
+      setLoading(false)
     }
-
-    setLoading(false)
-    onSaved()
-    onClose()
   }
 
   return (
@@ -368,6 +375,147 @@ function HistoryModal({ item, onClose }: { item: InventoryItem; onClose: () => v
   )
 }
 
+
+// ── Item Pricing Drawer (owner / manager only) ────────────────────────────────
+function ItemDrawer({
+  item,
+  onClose,
+  onSaved,
+}: {
+  item: InventoryItem
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [cost, setCost] = useState(item.cost != null ? String(item.cost) : '')
+  const [price, setPrice] = useState(item.price != null ? String(item.price) : '')
+  const [loading, setLoading] = useState(false)
+
+  const margin =
+    parseFloat(price) > 0 && parseFloat(cost) >= 0
+      ? (((parseFloat(price) - parseFloat(cost)) / parseFloat(price)) * 100).toFixed(1)
+      : null
+
+  async function handleSave() {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/items/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cost:  cost  !== '' ? parseFloat(cost)  : null,
+          price: price !== '' ? parseFloat(price) : null,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed to save')
+      toast.success('Pricing updated')
+      onSaved()
+      onClose()
+    } catch (err: any) {
+      toast.error(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-black/40 z-40 transition-opacity"
+        onClick={onClose}
+      />
+      {/* Drawer */}
+      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-sm bg-white shadow-2xl flex flex-col">
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+          <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center flex-shrink-0">
+            <DollarSign className="w-5 h-5 text-indigo-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-semibold text-gray-900 truncate">{item.name}</h2>
+            {item.sku && <p className="text-xs text-gray-400">SKU: {item.sku}</p>}
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+
+          {/* Stock snapshot */}
+          <div className="bg-gray-50 rounded-xl p-4">
+            <p className="text-xs font-medium text-gray-500 mb-2">Current Stock</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {item.inventory_levels?.[0]?.quantity ?? '—'}
+            </p>
+          </div>
+
+          {/* Pricing fields */}
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-gray-600">Cost Price</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={cost}
+                  onChange={e => setCost(e.target.value)}
+                  placeholder="0.00"
+                  className="pl-7"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-gray-600">Selling Price</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₱</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={price}
+                  onChange={e => setPrice(e.target.value)}
+                  placeholder="0.00"
+                  className="pl-7"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Margin indicator */}
+          {margin !== null && (
+            <div className={`rounded-xl p-4 ${parseFloat(margin) >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}>
+              <p className="text-xs font-medium text-gray-500 mb-0.5">Gross Margin</p>
+              <p className={`text-xl font-bold ${parseFloat(margin) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                {margin}%
+              </p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                ₱{(parseFloat(price) - parseFloat(cost)).toFixed(2)} per unit
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-5 border-t border-gray-100">
+          <Button
+            className="w-full"
+            onClick={handleSave}
+            disabled={loading}
+          >
+            {loading ? 'Saving…' : 'Save Pricing'}
+          </Button>
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function InventoryPage() {
   const router = useRouter()
@@ -382,6 +530,24 @@ export default function InventoryPage() {
   const [quickMode, setQuickMode] = useState<'add' | 'dispense' | null>(null)
   const [rowsPerPage, setRowsPerPage] = useState(25)
   const [page, setPage] = useState(1)
+  const [userRole, setUserRole] = useState<string | null>(null)
+  const [drawerItem, setDrawerItem] = useState<InventoryItem | null>(null)
+
+  const canViewPricing = ['owner', 'manager'].includes((userRole ?? '').toLowerCase())
+
+  useEffect(() => {
+    async function fetchRole() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data } = await supabase
+        .from('app_users')
+        .select('role')
+        .eq('auth_user_id', user.id)
+        .single()
+      if (data?.role) setUserRole(data.role)
+    }
+    fetchRole()
+  }, [])
 
   const load = useCallback(async () => {
     // Only load categories that have show_in_inventory = true
@@ -396,7 +562,7 @@ export default function InventoryPage() {
 
     const { data } = await supabase
       .from('items')
-      .select('id, name, sku, category_id, categories!items_category_id_fkey(name, color), inventory_levels(id, quantity, low_stock_alert)')
+      .select('id, name, sku, category_id, cost, price, categories!items_category_id_fkey(name, color), inventory_levels(id, quantity, low_stock_alert)')
       .order('name')
 
     // Only show items belonging to inventory-visible categories
@@ -550,7 +716,15 @@ export default function InventoryPage() {
                     const inv = item.inventory_levels?.[0]
                     const status = getStockStatus(item)
                     return (
-                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                      <tr
+                        key={item.id}
+                        className={`transition-colors ${
+                          canViewPricing
+                            ? 'hover:bg-indigo-50/60 cursor-pointer'
+                            : 'hover:bg-gray-50'
+                        }`}
+                        onClick={() => canViewPricing && setDrawerItem(item)}
+                      >
                         <td className="px-3 sm:px-4 py-3">
                           <p className="text-sm font-medium text-gray-900 leading-tight">{item.name}</p>
                           {item.sku && <p className="text-xs text-gray-400">SKU: {item.sku}</p>}
@@ -583,14 +757,17 @@ export default function InventoryPage() {
                         </td>
                         <td className="px-3 sm:px-4 py-3">
                           <div className="flex items-center gap-1.5 sm:gap-2 justify-end">
-                            <button onClick={() => setHistoryItem(item)}
+                            <button onClick={e => { e.stopPropagation(); setHistoryItem(item) }}
                               className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors" title="View history">
                               <History className="w-4 h-4" />
                             </button>
-                            <button onClick={() => setAdjustItem(item)}
+                            <button onClick={e => { e.stopPropagation(); setAdjustItem(item) }}
                               className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors" title="Adjust stock">
                               <Plus className="w-4 h-4" />
                             </button>
+                            {canViewPricing && (
+                              <ChevronRight className="w-4 h-4 text-gray-300" />
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -668,6 +845,9 @@ export default function InventoryPage() {
       )}
       {adjustItem && <AdjustModal item={adjustItem} onClose={() => setAdjustItem(null)} onSaved={load} />}
       {historyItem && <HistoryModal item={historyItem} onClose={() => setHistoryItem(null)} />}
+      {drawerItem && canViewPricing && (
+        <ItemDrawer item={drawerItem} onClose={() => setDrawerItem(null)} onSaved={load} />
+      )}
     </div>
   )
 }

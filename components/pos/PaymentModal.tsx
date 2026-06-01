@@ -8,12 +8,18 @@ import { X, Check, Printer } from 'lucide-react'
 import { toast } from 'sonner'
 import { useShop } from '@/lib/hooks/useShop'
 
+import type { ItemDiscount } from './Cart'
+
 interface Props {
   total: number
   onClose: () => void
+  employeeId?: string
+  itemNotes?: Map<string, string>
+  itemDiscounts?: Map<string, ItemDiscount>
+  cashierName?: string
 }
 
-function buildReceiptText(receipt: any, items: any[], shop: any, currencySymbol: string, change: number, paymentName: string): string {
+function buildReceiptText(receipt: any, items: any[], shop: any, currencySymbol: string, change: number, paymentName: string, cashierName?: string | null): string {
   const line = '--------------------------------'
   const center = (s: string) => s.padStart(Math.floor((32 + s.length) / 2)).padEnd(32)
   const row = (left: string, right: string) => {
@@ -27,6 +33,7 @@ function buildReceiptText(receipt: any, items: any[], shop: any, currencySymbol:
     '',
     center(`Receipt #${receipt.receipt_number}`),
     center(new Date(receipt.created_at).toLocaleString()),
+    cashierName ? center(`Cashier: ${cashierName}`) : '',
     line,
   ]
   for (const item of items) {
@@ -190,13 +197,31 @@ async function sendToNetworkPrinter(ip: string, text: string): Promise<boolean> 
   } catch { return false }
 }
 
-function printViaWindow(text: string, title: string) {
+function printViaWindow(text: string, title: string, logoUrl?: string | null) {
   const win = window.open('', '_blank', 'width=400,height=600')
   if (!win) return
+
+  const logoHtml = logoUrl
+    ? `<div style="text-align:center;margin-bottom:8px;"><img src="${logoUrl}" style="max-height:64px;max-width:180px;object-fit:contain;" /></div>`
+    : ''
+
+  // Split receipt: header lines (before first divider) get centered HTML; body keeps monospace pre
+  const lines = text.split('\n')
+  const dividerIndex = lines.findIndex(l => /^-{10,}/.test(l))
+  const headerLines = dividerIndex > 0 ? lines.slice(0, dividerIndex) : []
+  const bodyLines   = dividerIndex > 0 ? lines.slice(dividerIndex)    : lines
+
+  const headerHtml = headerLines
+    .map(l => `<div style="text-align:center;">${l.replace(/</g, '&lt;') || '&nbsp;'}</div>`)
+    .join('')
+  const bodyHtml = `<pre style="margin:0;">${bodyLines.map(l => l.replace(/</g, '&lt;')).join('\n')}</pre>`
+
   win.document.write(`<html><head><title>${title}</title>
-    <style>body{font-family:'Courier New',monospace;font-size:12px;white-space:pre;margin:16px;}
-    @media print{@page{margin:0;}body{margin:8mm;}}</style></head>
-    <body>${text.replace(/</g, '&lt;')}</body></html>`)
+    <style>
+      body { font-family: 'Courier New', monospace; font-size: 12px; margin: 16px; }
+      @media print { @page { margin: 0; } body { margin: 8mm; } }
+    </style></head>
+    <body>${logoHtml}${headerHtml}${bodyHtml}</body></html>`)
   win.document.close(); win.focus(); win.print()
 }
 
@@ -318,7 +343,7 @@ function buildFallbackText(
   return lines.join('\n')
 }
 
-export default function PaymentModal({ total, onClose }: Props) {
+export default function PaymentModal({ total, onClose, itemNotes, itemDiscounts, cashierName: cashierNameProp }: Props) {
   const supabase = createClient()
   const { items, customerId, discountAmount, clearCart, subtotal } = useCart()
   const [paymentTypes, setPaymentTypes] = useState<any[]>([])
@@ -330,6 +355,7 @@ export default function PaymentModal({ total, onClose }: Props) {
   const [shop, setShop] = useState<any>(null)
   const [lastReceipt, setLastReceipt] = useState<any>(null)
   const [lastReceiptItems, setLastReceiptItems] = useState<any[]>([])
+  const [cashierName, setCashierName] = useState<string | null>(cashierNameProp ?? null)
   const { shop: shopFromHook, currencySymbol } = useShop()
 
   useEffect(() => { if (shopFromHook) setShop(shopFromHook) }, [shopFromHook])
@@ -368,11 +394,19 @@ export default function PaymentModal({ total, onClose }: Props) {
       try { const shift = JSON.parse(localStorage.getItem('pos_active_shift') || 'null'); activeShiftId = shift?.id || null } catch {}
 
       let appUserId: string | null = null
+      let employeeRecordId: string | null = null
+      let resolvedEmployeeName: string | null = null
       try {
         const { data: { user } } = await supabase.auth.getUser()
         if (user) {
-          const { data: appUser } = await supabase.from('app_users').select('id').eq('auth_user_id', user.id).single()
+          const { data: appUser } = await supabase.from('app_users').select('id, name').eq('auth_user_id', user.id).single()
           appUserId = appUser?.id || null
+          resolvedEmployeeName = appUser?.name || null
+          setCashierName(resolvedEmployeeName)
+          if (appUserId) {
+            const { data: empRow } = await supabase.from('employees').select('id').eq('app_user_id', appUserId).maybeSingle()
+            employeeRecordId = empRow?.id || null
+          }
         }
       } catch {}
 
@@ -390,24 +424,28 @@ export default function PaymentModal({ total, onClose }: Props) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          shop_id: shop.id, employee_id: employeeId, customer_id: customerId || null,
+          shop_id: shop.id, employee_id: employeeRecordId, customer_id: customerId || null,
           receipt_number: receiptNumber, subtotal: sub, discount_amount: discountAmount,
           tax_amount: 0, total,
           payment_type_id: selectedType?.id !== 'cash' && selectedType?.id !== 'card' ? selectedType.id : null,
           amount_tendered: isCash ? cashAmount : total, change_amount: changeAmount,
           loyalty_points_earned: Math.floor(total), loyalty_points_redeemed: 0,
-          shift_id: activeShiftId, status: 'completed', items,
+          shift_id: activeShiftId, status: 'completed',
+          items: items.map(item => ({
+            ...item,
+            note: itemNotes?.get(item.id) ?? item.note ?? undefined,
+          })),
         }),
       })
 
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to process payment') }
       const { receipt, receiptItems } = await res.json()
 
-      const receiptText = buildReceiptText(receipt, receiptItems, shop, currencySymbol, changeAmount, selectedType?.name || '')
+      const receiptText = buildReceiptText(receipt, receiptItems, shop, currencySymbol, changeAmount, selectedType?.name || '', resolvedEmployeeName)
       if (shop.printer_enabled) {
         if (shop.receipt_printer_type === 'network' && shop.receipt_printer_address) {
           const ok = await sendToNetworkPrinter(shop.receipt_printer_address, receiptText)
-          if (!ok) printViaWindow(receiptText, `Receipt ${receiptNumber}`)
+          if (!ok) printViaWindow(receiptText, `Receipt ${receiptNumber}`, shop?.logo_url)
         } else if (shop.receipt_printer_type === 'bluetooth') {
           try {
             const device = await (navigator as any).bluetooth.requestDevice({ filters: [{ services: ['000018f0-0000-1000-8000-00805f9b34fb'] }] })
@@ -415,9 +453,9 @@ export default function PaymentModal({ total, onClose }: Props) {
             const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb')
             const characteristic = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb')
             await characteristic.writeValue(new TextEncoder().encode(receiptText))
-          } catch { printViaWindow(receiptText, `Receipt ${receiptNumber}`) }
+          } catch { printViaWindow(receiptText, `Receipt ${receiptNumber}`, shop?.logo_url) }
         } else {
-          printViaWindow(receiptText, `Receipt ${receiptNumber}`)
+          printViaWindow(receiptText, `Receipt ${receiptNumber}`, shop?.logo_url)
         }
       }
 
@@ -454,8 +492,9 @@ export default function PaymentModal({ total, onClose }: Props) {
             <Button variant="outline" className="flex-1" onClick={() => {
               if (lastReceipt && lastReceiptItems.length > 0 && shop) {
                 printViaWindow(
-                  buildReceiptText(lastReceipt, lastReceiptItems, shop, currencySymbol, change, selectedType?.name || ''),
-                  `Receipt ${lastReceipt.receipt_number}`
+                  buildReceiptText(lastReceipt, lastReceiptItems, shop, currencySymbol, change, selectedType?.name || '', cashierName),
+                  `Receipt ${lastReceipt.receipt_number}`,
+                  shop?.logo_url
                 )
               }
             }}>

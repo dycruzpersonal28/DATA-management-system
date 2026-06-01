@@ -8,7 +8,7 @@ import {
   RefreshCw, X, Receipt, Package, Eye,
   Printer, Trash2, AlertTriangle, ChevronRight,
   BarChart2, ArrowUpCircle, CreditCard,
-  Banknote, Smartphone, ArrowDownCircle, Lock,
+  Banknote, Smartphone, ArrowDownCircle, Lock, Flame, Warehouse,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -21,6 +21,9 @@ type Summary = {
   discounts: number
   taxes: number
   netSales: number
+  netAfterCogs: number
+  wastageTotal: number
+  wastageItems: { name: string; qty: number; total: number }[]
   paymentBreakdown: { name: string; amount: number; count: number }[]
   cashoutBreakdown: { note: string; amount: number; date: string; shift: string }[]
   discountBreakdown: { receipt_number: string; amount: number; date: string }[]
@@ -159,6 +162,64 @@ function SalesChart({ data, currencySymbol }: { data: ChartPoint[]; currencySymb
           </g>
         ))}
       </svg>
+    </div>
+  )
+}
+
+// ── Stock Value Modal ─────────────────────────────────────────────────────────
+function StockValueModal({
+  items, total, onClose,
+}: {
+  items: { name: string; qty: number; cost: number; value: number }[]
+  total: number
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-teal-50">
+          <div className="w-9 h-9 bg-teal-100 rounded-xl flex items-center justify-center">
+            <Warehouse className="w-5 h-5 text-teal-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Raw Stock Value</h3>
+            <p className="text-xs text-gray-500">Cost × quantity on hand</p>
+          </div>
+          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-5 space-y-2 max-h-[60vh] overflow-y-auto">
+          {items.length === 0 && (
+            <p className="text-sm text-gray-400 text-center py-4">No Raw Stocks items with cost assigned</p>
+          )}
+          {items.map((item, i) => {
+            const pct = total > 0 ? (item.value / total) * 100 : 0
+            return (
+              <div key={i} className="p-3 bg-gray-50 rounded-xl">
+                <div className="flex justify-between items-start mb-1.5">
+                  <span className="text-sm font-medium text-gray-800 truncate pr-2">{item.name}</span>
+                  <span className="text-sm font-bold text-teal-700 flex-shrink-0">
+                    {`₱${item.value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mb-1.5">
+                  <div className="h-full bg-teal-500 rounded-full" style={{ width: `${pct}%` }} />
+                </div>
+                <p className="text-xs text-gray-400">
+                  {item.qty} units × ₱{item.cost.toFixed(2)} cost · {pct.toFixed(1)}% of total
+                </p>
+              </div>
+            )
+          })}
+        </div>
+        <div className="px-5 py-4 border-t border-gray-100 flex justify-between items-center">
+          <span className="text-sm font-semibold text-gray-700">Total Stock Value</span>
+          <span className="text-base font-bold text-teal-700">
+            {`₱${total.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          </span>
+        </div>
+      </div>
     </div>
   )
 }
@@ -449,6 +510,114 @@ function ReceiptModal({ receipt, onClose, currencySymbol }: {
   )
 }
 
+// ── Cash Movement Detail Modal ────────────────────────────────────────────────
+function CashDetailModal({ movement, onClose }: {
+  movement: CashMovementRow; onClose: () => void
+}) {
+  const isIn = movement.type === 'cash_in'
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+        <div className={`flex items-center gap-3 px-5 py-4 border-b border-gray-100 ${isIn ? 'bg-emerald-50' : 'bg-red-50'}`}>
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${isIn ? 'bg-emerald-100' : 'bg-red-100'}`}>
+            {isIn
+              ? <ArrowDownCircle className="w-5 h-5 text-emerald-600" />
+              : <ArrowUpCircle className="w-5 h-5 text-red-600" />}
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">{isIn ? 'Cash In' : 'Cash Out'}</h3>
+            <p className="text-xs text-gray-500">
+              {new Date(movement.created_at).toLocaleString('en-PH', {
+                month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+              })}
+            </p>
+          </div>
+          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-white/60 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-gray-500">Amount</span>
+              <span className={`text-xl font-bold ${isIn ? 'text-emerald-700' : 'text-red-600'}`}>
+                {isIn ? '+' : '−'}{fmt(movement.amount)}
+              </span>
+            </div>
+            <div className="flex justify-between items-center border-t border-gray-200 pt-3">
+              <span className="text-xs text-gray-500">Note</span>
+              <span className="text-sm text-gray-800 font-medium text-right max-w-[200px]">{movement.note || '—'}</span>
+            </div>
+            <div className="flex justify-between items-center border-t border-gray-200 pt-3">
+              <span className="text-xs text-gray-500">Cashier</span>
+              <span className="text-sm text-gray-800 font-medium">{movement.cashier}</span>
+            </div>
+            <div className="flex justify-between items-start border-t border-gray-200 pt-3">
+              <span className="text-xs text-gray-500">Shift</span>
+              <span className="text-xs text-gray-600 text-right max-w-[200px]">{movement.shift_label}</span>
+            </div>
+          </div>
+        </div>
+        <div className="px-5 pb-5">
+          <button onClick={onClose}
+            className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Wastage Modal ─────────────────────────────────────────────────────────────
+function WastageModal({ items, total, onClose }: {
+  items: { name: string; qty: number; total: number }[]
+  total: number; onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-orange-50">
+          <div className="w-9 h-9 bg-orange-100 rounded-xl flex items-center justify-center">
+            <Flame className="w-5 h-5 text-orange-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Wastage Summary</h3>
+            <p className="text-xs text-gray-500">Items voided without returning stock</p>
+          </div>
+          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-5 space-y-2 max-h-[60vh] overflow-y-auto">
+          {items.length === 0 && (
+            <p className="text-sm text-gray-400 text-center py-4">No wastage recorded in this period</p>
+          )}
+          {items.map((item, i) => (
+            <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+              <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                <Flame className="w-4 h-4 text-orange-500" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex justify-between items-center">
+                  <p className="text-sm font-medium text-gray-800 truncate pr-2">{item.name}</p>
+                  <span className="text-sm font-bold text-orange-600 flex-shrink-0">{fmt(item.total)}</span>
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">{item.qty} unit{item.qty !== 1 ? 's' : ''} wasted</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="px-5 py-4 border-t border-gray-100 flex justify-between items-center">
+          <span className="text-sm font-semibold text-gray-700">Total Wastage</span>
+          <span className="text-base font-bold text-orange-600">{fmt(total)}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Void Confirm Modal ────────────────────────────────────────────────────────
 function VoidModal({ receipt, onConfirm, onCancel, voiding }: {
   receipt: ReceiptRow
@@ -588,12 +757,17 @@ export default function DashboardPage() {
   const [topItems, setTopItems] = useState<TopItem[]>([])
   const [chartData, setChartData] = useState<ChartPoint[]>([])
 
+  // Inventory stock value (Raw Stocks category, cost × qty)
+  const [stockValue, setStockValue] = useState<number | null>(null)
+  const [stockValueItems, setStockValueItems] = useState<{ name: string; qty: number; cost: number; value: number }[]>([])
+
   // Table tab: 'sales' | 'cash'
   const [tableTab, setTableTab] = useState<'sales' | 'cash'>('sales')
 
   // Modal states
-  const [modal, setModal] = useState<'payment' | 'cashout' | 'discount' | null>(null)
+  const [modal, setModal] = useState<'payment' | 'cashout' | 'discount' | 'wastage' | 'stockvalue' | null>(null)
   const [receiptDetail, setReceiptDetail] = useState<ReceiptRow | null>(null)
+  const [cashDetail, setCashDetail] = useState<CashMovementRow | null>(null)
   const [voidTarget, setVoidTarget] = useState<ReceiptRow | null>(null)
   const [voiding, setVoiding] = useState(false)
 
@@ -671,28 +845,40 @@ export default function DashboardPage() {
       const fromTs = `${dateFrom}T00:00:00`
       const toTs = `${dateTo}T23:59:59`
 
-      // ── Receipts with items, shift, employee, payment type ────────────────
-      const { data: rawReceipts, error: rErr } = await supabase
-        .from('receipts')
-        .select(`
-          id, receipt_number, subtotal, discount_amount, tax_amount,
-          total, status, created_at, shift_id,
-          payment_types ( name ),
-          app_users ( name ),
-          receipt_items (
-            id, item_name, quantity, unit_price, line_total,
-            modifiers, addons, note, variant_id, item_id
-          )
-        `)
-        .in('status', ['completed', 'voided'])
-        .gte('created_at', fromTs)
-        .lte('created_at', toTs)
-        .order('created_at', { ascending: false })
+      // ── Receipts + Cash movements fetched in parallel ─────────────────────
+      const [{ data: rawReceipts, error: rErr }, { data: rawCashMovements }] = await Promise.all([
+        supabase
+          .from('receipts')
+          .select(`
+            id, receipt_number, subtotal, discount_amount, tax_amount,
+            total, status, created_at, shift_id,
+            payment_types ( name ),
+            app_users ( name ),
+            receipt_items (
+              id, item_name, quantity, unit_price, line_total,
+              modifiers, addons, note, variant_id, item_id
+            )
+          `)
+          .in('status', ['completed', 'voided'])
+          .gte('created_at', fromTs)
+          .lte('created_at', toTs)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('shift_cash_movements')
+          .select('id, shift_id, type, amount, note, created_at')
+          .in('type', ['cash_in', 'cash_out'])
+          .gte('created_at', fromTs)
+          .lte('created_at', toTs)
+          .order('created_at', { ascending: false }),
+      ])
 
       if (rErr) throw rErr
 
       // ── Shift labels ──────────────────────────────────────────────────────
-      const shiftIds = [...new Set((rawReceipts || []).map((r: any) => r.shift_id).filter(Boolean))]
+      const shiftIds = [...new Set([
+        ...(rawReceipts || []).map((r: any) => r.shift_id),
+        ...(rawCashMovements || []).map((m: any) => m.shift_id),
+      ].filter(Boolean))]
       let shiftMap: Record<string, { label: string; cashier: string }> = {}
       if (shiftIds.length > 0) {
         const { data: shifts } = await supabase
@@ -726,15 +912,6 @@ export default function DashboardPage() {
           ingredientMap[row.item_id].push({ name: (row as any).items?.name || '', quantity: row.quantity })
         }
       }
-
-      // ── Cash movements (both cash_in and cash_out) in date range ──────────
-      const { data: rawCashMovements } = await supabase
-        .from('shift_cash_movements')
-        .select('id, shift_id, type, amount, note, created_at')
-        .in('type', ['cash_in', 'cash_out'])
-        .gte('created_at', fromTs)
-        .lte('created_at', toTs)
-        .order('created_at', { ascending: false })
 
       // ── Build cash movement rows ───────────────────────────────────────────
       const cashRows: CashMovementRow[] = (rawCashMovements || []).map((m: any) => ({
@@ -828,7 +1005,23 @@ export default function DashboardPage() {
       const { data: cogsEntries, error: cogsErr } = await cogsQuery
       const cogs = (cogsEntries || []).reduce((s, e) => s + Number(e.amount), 0)
 
-      const netSales = grossSales - cogs - cashoutTotal - discounts
+      const netSales = grossSales - cogs - cashoutTotal - discounts - taxes
+      const netAfterCogs = grossSales - cogs - discounts - taxes
+
+      // ── Wastage — voided receipts marked as wastage ───────────────────────
+      const wastageRows = rows.filter(r => r.status === 'voided')
+      const wastageAgg: Record<string, { qty: number; total: number }> = {}
+      for (const r of wastageRows) {
+        for (const item of r.items) {
+          if (!wastageAgg[item.item_name]) wastageAgg[item.item_name] = { qty: 0, total: 0 }
+          wastageAgg[item.item_name].qty += item.quantity
+          wastageAgg[item.item_name].total += item.line_total
+        }
+      }
+      const wastageItems = Object.entries(wastageAgg)
+        .map(([name, v]) => ({ name, ...v }))
+        .sort((a, b) => b.total - a.total)
+      const wastageTotal = wastageItems.reduce((s, i) => s + i.total, 0)
 
       // ── Cashout breakdown ─────────────────────────────────────────────────
       const cashoutBreakdown = (rawCashMovements || [])
@@ -845,9 +1038,28 @@ export default function DashboardPage() {
         .filter(r => r.discount_amount > 0)
         .map(r => ({ receipt_number: r.receipt_number, amount: r.discount_amount, date: r.created_at }))
 
+      // ── Raw Stocks inventory value (cost × qty, category name = 'Raw Stocks') ─
+      const { data: rawStockItems } = await supabase
+        .from('items')
+        .select('name, cost, inventory_levels(quantity), categories!items_category_id_fkey(name)')
+        .not('cost', 'is', null)
+      const rawStockRows = (rawStockItems || []).filter(
+        (i: any) => i.categories?.name === 'Raw Stocks' && (i.inventory_levels?.[0]?.quantity ?? 0) > 0
+      )
+      const stockValueRows = rawStockRows.map((i: any) => ({
+        name:  i.name,
+        qty:   Number(i.inventory_levels?.[0]?.quantity ?? 0),
+        cost:  Number(i.cost),
+        value: Number(i.inventory_levels?.[0]?.quantity ?? 0) * Number(i.cost),
+      })).sort((a: any, b: any) => b.value - a.value)
+      const totalStockValue = stockValueRows.reduce((s: number, i: any) => s + i.value, 0)
+      setStockValue(totalStockValue)
+      setStockValueItems(stockValueRows)
+
       setSummary({
         grossSales, cogs, cashouts: cashoutTotal, discounts, taxes,
-        netSales, paymentBreakdown, cashoutBreakdown, discountBreakdown,
+        netSales, netAfterCogs, wastageTotal, wastageItems,
+        paymentBreakdown, cashoutBreakdown, discountBreakdown,
       })
 
       // ── Top selling items — completed only ───────────────────────────────
@@ -988,7 +1200,7 @@ export default function DashboardPage() {
       )}
 
       {/* ── P&L Summary Strip ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
           label="Gross Sales" icon={TrendingUp} color="text-emerald-700" bg="bg-emerald-50"
           value={fmt(summary?.grossSales ?? 0)}
@@ -1013,8 +1225,33 @@ export default function DashboardPage() {
           sub={`${fmt(summary?.taxes ?? 0)} tax · ${fmt(summary?.discounts ?? 0)} disc.`}
           clickable onClick={() => setModal('discount')}
         />
+        <StatCard
+          label="Wastage" icon={Flame} color="text-red-500" bg="bg-red-50"
+          value={fmt(summary?.wastageTotal ?? 0)}
+          sub="Voided without returning stock"
+          clickable onClick={() => setModal('wastage')}
+        />
+        {/* Net after COGS (excludes cashout expenses) */}
+        <div className={`rounded-2xl border-2 p-5 ${
+          (summary?.netAfterCogs ?? 0) >= 0 ? 'border-blue-200 bg-blue-50' : 'border-red-300 bg-red-50'
+        }`}>
+          <div className="flex items-start justify-between mb-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+              (summary?.netAfterCogs ?? 0) >= 0 ? 'bg-blue-100' : 'bg-red-100'
+            }`}>
+              {(summary?.netAfterCogs ?? 0) >= 0
+                ? <TrendingUp className="w-5 h-5 text-blue-700" />
+                : <TrendingDown className="w-5 h-5 text-red-600" />}
+            </div>
+          </div>
+          <p className={`text-2xl font-bold tracking-tight ${
+            (summary?.netAfterCogs ?? 0) >= 0 ? 'text-blue-700' : 'text-red-600'
+          }`}>{fmt(summary?.netAfterCogs ?? 0)}</p>
+          <p className="text-xs font-medium text-gray-500 mt-1">Net after COGS</p>
+          <p className="text-xs text-gray-400 mt-0.5">Gross − COGS − disc/taxes</p>
+        </div>
         {/* Net Sales */}
-        <div className={`col-span-2 lg:col-span-1 rounded-2xl border-2 p-5 ${
+        <div className={`rounded-2xl border-2 p-5 ${
           (summary?.netSales ?? 0) >= 0 ? 'border-emerald-300 bg-emerald-50' : 'border-red-300 bg-red-50'
         }`}>
           <div className="flex items-start justify-between mb-3">
@@ -1032,6 +1269,23 @@ export default function DashboardPage() {
           <p className="text-xs font-medium text-gray-500 mt-1">Net Sales</p>
           <p className="text-xs text-gray-400 mt-0.5">After COGS, expenses & discounts</p>
         </div>
+        {/* Stock Value at Cost — Raw Stocks category */}
+        <button
+          onClick={() => setModal('stockvalue')}
+          className="rounded-2xl border-2 border-teal-200 bg-teal-50 p-5 text-left hover:shadow-md hover:border-teal-300 active:scale-[0.98] transition-all cursor-pointer"
+        >
+          <div className="flex items-start justify-between mb-3">
+            <div className="w-10 h-10 bg-teal-100 rounded-xl flex items-center justify-center">
+              <Warehouse className="w-5 h-5 text-teal-600" />
+            </div>
+            <ChevronRight className="w-4 h-4 text-teal-300 mt-1" />
+          </div>
+          <p className="text-2xl font-bold text-teal-700 tracking-tight">
+            {stockValue !== null ? fmt(stockValue) : '—'}
+          </p>
+          <p className="text-xs font-medium text-gray-500 mt-1">Stock Value at Cost</p>
+          <p className="text-xs text-gray-400 mt-0.5">Raw Stocks on hand · cost basis</p>
+        </button>
       </div>
 
       {/* ── Sales Activity Graph ── */}
@@ -1195,12 +1449,12 @@ export default function DashboardPage() {
                 <p className="text-sm text-gray-400 mt-1">Adjust the date range or check the POS</p>
               </div>
             ) : (
-              <div className="overflow-x-auto" style={{ maxHeight: '600px', overflowY: 'auto' }}>
+              <div style={{ maxHeight: '600px', overflowY: 'auto', overflowX: 'auto' }}>
                 <table className="w-full text-sm min-w-[1050px]">
                   <thead className="sticky top-0 z-10 bg-gray-50">
                     <tr className="border-b border-gray-200">
-                      {['Receipt #', 'Ref #', 'Time', 'Cashier', 'Shift', 'Items', 'Payment', 'Amount', 'Actions'].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
+                      {['Receipt #', 'Ref #', 'Time', 'Cashier', 'Shift', 'Items', 'Payment', 'Amount', 'Actions'].map((h, i) => (
+                        <th key={h} className={`px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-gray-50 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]' : ''}`}>
                           {h}
                         </th>
                       ))}
@@ -1208,8 +1462,8 @@ export default function DashboardPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {receipts.map(r => (
-                      <tr key={r.id} className={`hover:bg-gray-50/80 transition-colors group ${r.status === 'voided' ? 'opacity-60 bg-red-50/40' : ''}`}>
-                        <td className="px-4 py-3">
+                      <tr key={r.id} onClick={() => setReceiptDetail(r)} className={`hover:bg-gray-50/80 transition-colors group cursor-pointer ${r.status === 'voided' ? 'opacity-60 bg-red-50/40' : ''}`}>
+                        <td className={`px-4 py-3 sticky left-0 z-10 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)] ${r.status === 'voided' ? 'bg-red-50' : 'bg-white'} group-hover:bg-gray-50/80`}>
                           <div className="flex flex-col gap-0.5">
                             <span className={`text-sm font-semibold ${r.status === 'voided' ? 'text-gray-400 line-through' : 'text-indigo-600'}`}>{r.receipt_number}</span>
                             {r.status === 'voided' && (
@@ -1280,7 +1534,7 @@ export default function DashboardPage() {
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
                             <button onClick={() => setReceiptDetail(r)} title="View receipt"
                               className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
                               <Eye className="w-3.5 h-3.5" />
@@ -1316,12 +1570,12 @@ export default function DashboardPage() {
                 <p className="text-sm text-gray-400 mt-1">Cash ins and outs will appear here</p>
               </div>
             ) : (
-              <div className="overflow-x-auto" style={{ maxHeight: '600px', overflowY: 'auto' }}>
+              <div style={{ maxHeight: '600px', overflowY: 'auto', overflowX: 'auto' }}>
                 <table className="w-full text-sm min-w-[700px]">
                   <thead className="sticky top-0 z-10 bg-gray-50">
                     <tr className="border-b border-gray-200">
-                      {['Type', 'Time', 'Cashier', 'Shift', 'Note', 'Amount'].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
+                      {['Type', 'Time', 'Cashier', 'Shift', 'Note', 'Amount'].map((h, i) => (
+                        <th key={h} className={`px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap ${i === 0 ? 'sticky left-0 z-20 bg-gray-50 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]' : ''}`}>
                           {h}
                         </th>
                       ))}
@@ -1329,9 +1583,8 @@ export default function DashboardPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {cashMovements.map(m => (
-                      <tr key={m.id} className="hover:bg-gray-50/80 transition-colors">
-                        {/* Type badge */}
-                        <td className="px-4 py-3">
+                      <tr key={m.id} onClick={() => setCashDetail(m)} className="hover:bg-gray-50/80 transition-colors cursor-pointer">
+                        <td className="px-4 py-3 sticky left-0 z-10 bg-white group-hover:bg-gray-50/80 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">
                           {m.type === 'cash_in' ? (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">
                               <ArrowDownCircle className="w-3 h-3" /> Cash In
@@ -1415,11 +1668,20 @@ export default function DashboardPage() {
       {modal === 'discount' && summary && (
         <DiscountModal breakdown={summary.discountBreakdown} total={summary.discounts} taxes={summary.taxes} onClose={() => setModal(null)} />
       )}
+      {modal === 'wastage' && summary && (
+        <WastageModal items={summary.wastageItems} total={summary.wastageTotal} onClose={() => setModal(null)} />
+      )}
       {receiptDetail && (
         <ReceiptModal receipt={receiptDetail} onClose={() => setReceiptDetail(null)} currencySymbol={currencySymbol} />
       )}
+      {cashDetail && (
+        <CashDetailModal movement={cashDetail} onClose={() => setCashDetail(null)} />
+      )}
       {voidTarget && (
         <VoidModal receipt={voidTarget} onConfirm={(voidType) => handleVoid(voidType)} onCancel={() => setVoidTarget(null)} voiding={voiding} />
+      )}
+      {modal === 'stockvalue' && (
+        <StockValueModal items={stockValueItems} total={stockValue ?? 0} onClose={() => setModal(null)} />
       )}
     </div>
   )

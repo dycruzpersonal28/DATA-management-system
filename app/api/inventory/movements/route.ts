@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     .select(`
       id, type, quantity, before_qty, after_qty,
       note, created_at, item_id, variant_id,
-      reference_type, reference_id,
+      reference_type, reference_id, created_by,
       items!stock_movements_item_id_fkey(name)
     `)
     .eq('shop_id', shop_id)
@@ -58,13 +58,16 @@ export async function GET(req: NextRequest) {
   )]
 
   let receiptMap: Record<string, string> = {}
+  let receiptStaffMap: Record<string, string> = {}
   if (receiptIds.length > 0) {
     const { data: receipts } = await admin
       .from('receipts')
-      .select('id, receipt_number')
+      .select('id, receipt_number, app_users:employee_id(name)')
       .in('id', receiptIds)
     for (const r of receipts || []) {
       receiptMap[r.id] = r.receipt_number
+      const staffName = (r.app_users as any)?.name
+      if (staffName) receiptStaffMap[r.id] = staffName
     }
   }
 
@@ -83,6 +86,12 @@ export async function GET(req: NextRequest) {
     after_qty:      m.after_qty  !== null ? Number(m.after_qty)  : null,
     note:           m.note ?? null,
     created_at:     m.created_at,
+    created_by:     m.type === 'void'
+                      // void: always use who actioned the void, not the original cashier
+                      ? m.created_by ?? null
+                      : (m.reference_type === 'receipt' && m.reference_id)
+                        ? receiptStaffMap[m.reference_id] ?? m.created_by ?? null
+                        : m.created_by ?? null,
   }))
 
   // ── Summary stats ─────────────────────────────────────────────────────────

@@ -6,17 +6,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-async function getShopId(admin: ReturnType<typeof createAdminClient>, userId: string) {
-  const { data } = await admin
-    .from('app_users')
-    .select('shop_id')
-    .eq('auth_user_id', userId)
-    .single()
-  return data?.shop_id ?? null
-}
-
 // ── GET /api/inventory ────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
@@ -27,7 +16,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const shopId = await getShopId(admin, user.id)
+  const shopId = await (async () => {
+    const { data } = await admin
+      .from('app_users')
+      .select('shop_id')
+      .eq('auth_user_id', user.id)
+      .single()
+    return data?.shop_id ?? null
+  })()
   if (!shopId) return NextResponse.json({ error: 'Shop not found' }, { status: 404 })
 
   const { searchParams } = new URL(req.url)
@@ -111,8 +107,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const shopId = await getShopId(admin, user.id)
+  // Fetch app_user row to get name (same pattern as receipts → employee_id → app_users(name))
+  const { data: appUser } = await admin
+    .from('app_users')
+    .select('shop_id, name')
+    .eq('auth_user_id', user.id)
+    .single()
+
+  const shopId = appUser?.shop_id ?? null
   if (!shopId) return NextResponse.json({ error: 'Shop not found' }, { status: 404 })
+
+  const createdByName: string | null = appUser?.name ?? null
 
   const body = await req.json()
   const { item_id, mode, adj_type, quantity, low_stock_alert, note } = body
@@ -181,7 +186,7 @@ export async function POST(req: NextRequest) {
       if (error) throw error
     }
 
-    // Write stock_movement with before/after snapshot
+    // Write stock_movement with before/after snapshot and who made the change
     const { error: mvErr } = await admin
       .from('stock_movements')
       .insert({
@@ -192,6 +197,7 @@ export async function POST(req: NextRequest) {
         before_qty: beforeQty,
         after_qty:  newQty,
         note:       note || (mode === 'set' ? 'Manual stock set' : null),
+        created_by: createdByName,
       })
     if (mvErr) throw mvErr
 

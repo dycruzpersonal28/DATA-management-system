@@ -25,6 +25,7 @@ interface UnifiedLog {
   after_qty?: number | null
   note?: string | null
   created_at: string
+  created_by?: string | null
 }
 
 interface SummaryStats {
@@ -55,14 +56,17 @@ function exportCSV(logs: UnifiedLog[], dateFrom: string, dateTo: string, tz = 'A
   const fmtDate = (iso: string) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(iso))
   const fmtTime = (iso: string) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(iso))
   const rows: (string | number)[][] = [
-    ['Date', 'Time', 'Item', 'Type', 'Receipt #', 'Change', 'Note'],
+    ['Date', 'Time', 'Item', 'Type', 'By', 'Receipt #', 'Change', 'Before Qty', 'After Qty', 'Note'],
     ...logs.map(l => [
       fmtDate(l.created_at),
       fmtTime(l.created_at),
       l.item_name,
       sourceConfig[l.source].label,
+      l.created_by ?? '—',
       l.receipt_number ?? '—',
       l.change_qty > 0 ? `+${l.change_qty}` : l.change_qty,
+      l.before_qty != null ? l.before_qty : '—',
+      l.after_qty  != null ? l.after_qty  : '—',
       l.note ?? '—',
     ]),
   ]
@@ -166,6 +170,7 @@ export default function InventoryLogPage() {
   // null = no date filter (show all)
   const [dateFrom, setDateFrom]     = useState<string>('')
   const [dateTo, setDateTo]         = useState<string>('')
+  const [selectedLog, setSelectedLog] = useState<UnifiedLog | null>(null)
 
   // Fetch shop timezone on mount
   useEffect(() => {
@@ -368,16 +373,30 @@ export default function InventoryLogPage() {
             </p>
           </div>
         ) : (
-          <div className="overflow-auto" style={{ maxHeight: '520px' }}>
-            <table className="w-full min-w-[580px]">
+          <div style={{ maxHeight: '520px', overflowY: 'auto', overflowX: 'auto' }}>
+            <table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Date &amp; Time</th>
-                  <th className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Item</th>
-                  <th className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Type</th>
-                  <th className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Receipt #</th>
-                  <th className="sticky top-0 z-10 bg-gray-50 text-right text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Change</th>
-                  <th className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100">Note</th>
+                  {[
+                    { label: 'Date & Time', align: 'text-left' },
+                    { label: 'Item',        align: 'text-left' },
+                    { label: 'Type',        align: 'text-left' },
+                    { label: 'By',          align: 'text-left' },
+                    { label: 'Receipt #',   align: 'text-left' },
+                    { label: 'Change',      align: 'text-right' },
+                    { label: 'Before Qty',  align: 'text-right' },
+                    { label: 'After Qty',   align: 'text-right' },
+                    { label: 'Note',        align: 'text-left' },
+                  ].map((h, i) => (
+                    <th
+                      key={h.label}
+                      className={`sticky top-0 bg-gray-50 ${h.align} text-xs font-medium text-gray-500 px-4 py-3 border-b border-gray-100${
+                        i === 0 ? ' left-0 z-20 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]' : ' z-10'
+                      }`}
+                    >
+                      {h.label}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -385,10 +404,14 @@ export default function InventoryLogPage() {
                   const cfg  = sourceConfig[log.source] ?? sourceConfig['adjustment']
                   const Icon = cfg.icon
                   return (
-                    <tr key={log.id} className="hover:bg-gray-50 transition-colors">
+                    <tr
+                      key={log.id}
+                      className="hover:bg-gray-50 transition-colors cursor-pointer"
+                      onClick={() => setSelectedLog(log)}
+                    >
 
-                      {/* Date */}
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      {/* Date — sticky first column */}
+                      <td className="sticky left-0 z-10 bg-white px-4 py-3 whitespace-nowrap shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">
                         <p className="text-sm text-gray-700">
                           {new Intl.DateTimeFormat('en-GB', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(log.created_at))}
                         </p>
@@ -410,6 +433,11 @@ export default function InventoryLogPage() {
                         </span>
                       </td>
 
+                      {/* By */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className="text-sm text-gray-600">{log.created_by || '—'}</span>
+                      </td>
+
                       {/* Receipt */}
                       <td className="px-4 py-3">
                         {log.receipt_number
@@ -420,6 +448,20 @@ export default function InventoryLogPage() {
                       {/* Change */}
                       <td className="px-4 py-3 text-right">
                         <ChangeBadge qty={log.change_qty} />
+                      </td>
+
+                      {/* Before Qty */}
+                      <td className="px-4 py-3 text-right">
+                        <span className="text-sm tabular-nums text-gray-500">
+                          {log.before_qty != null ? log.before_qty : '—'}
+                        </span>
+                      </td>
+
+                      {/* After Qty */}
+                      <td className="px-4 py-3 text-right">
+                        <span className="text-sm tabular-nums text-gray-700 font-medium">
+                          {log.after_qty != null ? log.after_qty : '—'}
+                        </span>
                       </td>
 
                       {/* Note */}
@@ -441,6 +483,84 @@ export default function InventoryLogPage() {
         {filtered.length} entr{filtered.length !== 1 ? 'ies' : 'y'}
         {filtered.length !== logs.length && ` (filtered from ${logs.length})`}
       </p>
+
+      {/* Log detail modal */}
+      {selectedLog && (() => {
+        const cfg  = sourceConfig[selectedLog.source] ?? sourceConfig['adjustment']
+        const Icon = cfg.icon
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+            onClick={() => setSelectedLog(null)}
+          >
+            <div
+              className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6 space-y-4"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-semibold text-gray-900">Movement Detail</h2>
+                <button onClick={() => setSelectedLog(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+              </div>
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Item</span>
+                  <span className="font-medium text-gray-900">{selectedLog.item_name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Type</span>
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cfg.badgeClass}`}>
+                    <Icon className="w-3 h-3" />{cfg.label}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">By</span>
+                  <span className="font-medium text-gray-900">{selectedLog.created_by || '—'}</span>
+                </div>
+                {selectedLog.receipt_number && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Receipt #</span>
+                    <span className="text-indigo-600 font-medium">{selectedLog.receipt_number}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Change</span>
+                  <ChangeBadge qty={selectedLog.change_qty} />
+                </div>
+                {selectedLog.before_qty != null && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Before Qty</span>
+                    <span className="text-gray-700 tabular-nums">{selectedLog.before_qty}</span>
+                  </div>
+                )}
+                {selectedLog.after_qty != null && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">After Qty</span>
+                    <span className="text-gray-700 tabular-nums font-medium">{selectedLog.after_qty}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Date</span>
+                  <span className="text-gray-700">
+                    {new Intl.DateTimeFormat('en-GB', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(selectedLog.created_at))}
+                  </span>
+                </div>
+                {selectedLog.note && (
+                  <div className="flex justify-between gap-4">
+                    <span className="text-gray-500">Note</span>
+                    <span className="text-gray-700 text-right">{selectedLog.note}</span>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setSelectedLog(null)}
+                className="w-full mt-2 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-medium text-gray-700 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )
+      })()}
 
     </div>
   )

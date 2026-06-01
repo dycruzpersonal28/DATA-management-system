@@ -388,6 +388,7 @@ function CartBottomSheet({
   currencySymbol,
   diningOption,
   activeShiftId,
+  cashierName,
   onPaymentComplete,
 }: {
   open: boolean
@@ -397,6 +398,7 @@ function CartBottomSheet({
   currencySymbol: string
   diningOption?: any
   activeShiftId?: string | null
+  cashierName?: string
   onPaymentComplete?: () => void
 }) {
   return (
@@ -436,6 +438,7 @@ function CartBottomSheet({
           <Cart
             diningOption={diningOption}
             activeShiftId={activeShiftId}
+            cashierName={cashierName}
             onPaymentComplete={() => {
               onClose()
               onPaymentComplete?.()
@@ -1210,6 +1213,7 @@ export default function POSPage() {
         <Cart
           diningOption={selectedDiningOption}
           activeShiftId={activeShift?.id || null}
+          cashierName={userName}
           onPaymentComplete={() => {
             handleNewTransaction()
             window.location.reload()
@@ -1247,6 +1251,7 @@ export default function POSPage() {
         currencySymbol={currencySymbol}
         diningOption={selectedDiningOption}
         activeShiftId={activeShift?.id || null}
+        cashierName={userName}
         onPaymentComplete={() => {
           setCartSheetOpen(false)
           handleNewTransaction()

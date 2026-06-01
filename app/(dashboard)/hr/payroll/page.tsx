@@ -70,6 +70,7 @@ interface TimeLog {
 interface PayrollSettings {
   late_deduction_per_minute: number
   late_deduction_type?: 'flat' | 'per_minute'
+  late_deduction_flat_amount?: number
   shop_timezone?: string
   sss_rate: number
   philhealth_rate: number
@@ -447,7 +448,7 @@ function PayslipRow({ slip, onUpdate, onPrint, onVoid }: {
 
 // ─── Print Payslip ────────────────────────────────────────────────────────────
 
-function printPayslip(slip: Payslip, period: PayrollPeriod, tpl: PayslipTemplate | null = null, lateLogs?: { date: string; minutes: number }[], payslipNotes?: string, shopTimezone = 'Asia/Manila') {
+function printPayslip(slip: Payslip, period: PayrollPeriod, tpl: PayslipTemplate | null = null, lateLogs?: { date: string; minutes: number }[], payslipNotes?: string, shopTimezone = 'Asia/Manila', allLogs?: { date: string; shift_name?: string; clock_in: string; clock_out: string | null; total_hours: number | null; late_minutes: number | null }[]) {
   // ── Other (free-form) deductions — use values stored ON the payslip ──
   const otherDeductions = (slip.other_deductions ?? []).filter(o => o.label.trim() && o.amount > 0)
 
@@ -472,6 +473,26 @@ function printPayslip(slip: Payslip, period: PayrollPeriod, tpl: PayslipTemplate
                    + slip.philhealth_contribution + slip.pagibig_contribution
                    + slip.tax_withheld + otherTotal
 
+  // ── Group logs by shift name for the attendance summary ──
+  const shiftSummary: Record<string, { days: number; totalHours: number }> = {}
+  if (allLogs && allLogs.length > 0) {
+    for (const log of allLogs) {
+      const key = log.shift_name || 'Unassigned'
+      if (!shiftSummary[key]) shiftSummary[key] = { days: 0, totalHours: 0 }
+      shiftSummary[key].days++
+      shiftSummary[key].totalHours += log.total_hours ?? 0
+    }
+  }
+  const shiftRows = Object.entries(shiftSummary)
+    .map(([name, v]) => `<div class="late-row"><span>${name}</span><span>${v.days} day${v.days !== 1 ? 's' : ''} · ${v.totalHours.toFixed(2)}h total</span></div>`)
+    .join('')
+
+  // ── Late day detail rows ──
+  const lateDayCount = lateLogs?.length ?? 0
+  const lateDayRows = (lateLogs ?? [])
+    .map(l => `<div class="late-row"><span>${fmtDate(l.date)}</span><span class="late-tag">${l.minutes} min late</span></div>`)
+    .join('')
+
   const html = `<!DOCTYPE html><html><head><title>Payslip — ${slip.employees.name}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
@@ -489,7 +510,9 @@ function printPayslip(slip: Payslip, period: PayrollPeriod, tpl: PayslipTemplate
   .employee p{margin:2px 0}
   .footer{margin-top:32px;font-size:10px;color:#aaa}
   .notes-box{margin-top:16px;padding:10px 12px;background:#f9f9f9;border:1px solid #e0e0e0;border-radius:6px;font-size:11px;color:#444;white-space:pre-wrap}
-  .late-row{display:flex;justify-content:space-between;padding:3px 0;font-size:11px;color:#666;border-bottom:1px solid #f5f5f5}
+  .late-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:11px;color:#444;border-bottom:1px solid #f5f5f5}
+  .late-tag{background:#fee2e2;color:#b91c1c;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600}
+  .no-late{font-size:11px;color:#16a34a;padding:4px 0}
   @media print{body{padding:16px}}
 </style>
 </head><body>
@@ -505,6 +528,8 @@ ${companyAddr ? `<p class="company">${companyAddr}</p>` : ''}
   ${slip.employees.employment_type ? `<p>${slip.employees.employment_type.replace('-',' ').replace(/\b\w/g,c=>c.toUpperCase())}</p>` : ''}
 </div>
 
+${shiftRows ? `<p class="section-title">Attendance Summary</p>${shiftRows}` : ''}
+
 <p class="section-title">Earnings</p>
 <div class="row"><span>Basic Pay</span><span>${fmt(slip.basic_pay)}</span></div>
 ${showOT && slip.overtime_pay > 0 ? `<div class="row"><span>Overtime Pay</span><span>${fmt(slip.overtime_pay)}</span></div>` : ''}
@@ -512,7 +537,7 @@ ${showAllow && slip.allowance > 0 ? `<div class="row"><span>Allowance</span><spa
 <div class="row total"><span>Gross Pay</span><span>${fmt(gross)}</span></div>
 
 <p class="section-title">Deductions</p>
-${showLate && slip.late_deduction > 0 ? `<div class="row"><span>Late Deduction</span><span>–${fmt(slip.late_deduction)}</span></div>` : ''}
+${showLate && slip.late_deduction > 0 ? `<div class="row"><span>Late Deduction${lateDayCount > 0 ? ` (${lateDayCount} day${lateDayCount !== 1 ? 's' : ''})` : ''}</span><span>–${fmt(slip.late_deduction)}</span></div>` : ''}
 ${showSSS ? `<div class="row"><span>SSS</span><span>–${fmt(slip.sss_contribution)}</span></div>` : ''}
 ${showPH ? `<div class="row"><span>PhilHealth</span><span>–${fmt(slip.philhealth_contribution)}</span></div>` : ''}
 ${showPagibig ? `<div class="row"><span>Pag-IBIG</span><span>–${fmt(slip.pagibig_contribution)}</span></div>` : ''}
@@ -522,10 +547,8 @@ ${otherDeductions.map(o => `<div class="row"><span>${o.label}</span><span>–${f
 
 <div class="net"><span>NET PAY</span><span>${fmt(slip.net_pay)}</span></div>
 
-${lateLogs && lateLogs.length > 0 ? `
 <p class="section-title">Late Records</p>
-${lateLogs.map(l => `<div class="late-row"><span>${fmtDate(l.date)}</span><span>${l.minutes} min late</span></div>`).join('')}
-` : ''}
+${lateDayRows || '<p class="no-late">✓ No late occurrences this period</p>'}
 
 ${payslipNotes ? `<div class="notes-box">${payslipNotes}</div>` : ''}
 
@@ -587,32 +610,67 @@ function exportPayslipsCSV(payslips: Payslip[], period: PayrollPeriod) {
 
 function CreatePeriodModal({ onClose, onCreate, templates }: {
   onClose: () => void
-  onCreate: (data: { period_start: string; period_end: string; templateId?: string }) => Promise<void>
+  onCreate: (data: { period_start: string; period_end: string; templateId?: string; employee_ids?: string[] }) => Promise<void>
   templates: PayslipTemplate[]
 }) {
   const tz = 'Asia/Manila'
   const now = new Date()
-  const fmt = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d)
   const tzParts = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
   }).formatToParts(now)
   const get = (t: string) => tzParts.find(p => p.type === t)?.value ?? '01'
   const y = get('year'), m = get('month'), d = parseInt(get('day'))
   const defaultStart = d <= 15 ? `${y}-${m}-01` : `${y}-${m}-16`
-  // Last day of month in shop timezone
   const lastDay = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(
-    new Date(parseInt(y), parseInt(m), 0) // day 0 of next month = last day of current
+    new Date(parseInt(y), parseInt(m), 0)
   )
   const defaultEnd = d <= 15 ? `${y}-${m}-15` : lastDay
 
   const [form, setForm] = useState({ period_start: defaultStart, period_end: defaultEnd })
   const [templateId, setTemplateId] = useState<string>('')
   const [loading, setLoading] = useState(false)
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [empLoading, setEmpLoading] = useState(true)
+  const [selectAll, setSelectAll] = useState(true)
+
+  useEffect(() => {
+    fetch('/api/employees')
+      .then(r => safeJson(r))
+      .then(data => {
+        const emps: Employee[] = (data.employees ?? []).filter((e: any) => e.is_active !== false)
+        setEmployees(emps)
+        setSelectedIds(new Set(emps.map((e: Employee) => e.id)))
+      })
+      .catch(() => {})
+      .finally(() => setEmpLoading(false))
+  }, [])
+
+  const toggleEmployee = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      setSelectAll(next.size === employees.length)
+      return next
+    })
+  }
+
+  const toggleAll = () => {
+    if (selectAll) {
+      setSelectedIds(new Set())
+      setSelectAll(false)
+    } else {
+      setSelectedIds(new Set(employees.map(e => e.id)))
+      setSelectAll(true)
+    }
+  }
 
   const handleSubmit = async () => {
     if (!form.period_start || !form.period_end) return
+    if (selectedIds.size === 0) { toast.error('Select at least one employee'); return }
     setLoading(true)
-    await onCreate({ ...form, templateId: templateId || undefined })
+    const employee_ids = selectedIds.size === employees.length ? undefined : [...selectedIds]
+    await onCreate({ ...form, templateId: templateId || undefined, employee_ids })
     setLoading(false)
   }
 
@@ -620,12 +678,12 @@ function CreatePeriodModal({ onClose, onCreate, templates }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
           <h2 className="font-semibold text-gray-900">Create Payroll Period</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
         </div>
-        <div className="px-6 py-5 space-y-4">
+        <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Period Start</label>
@@ -664,16 +722,54 @@ function CreatePeriodModal({ onClose, onCreate, templates }: {
             )}
           </div>
 
+          {/* Employee selector */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium text-gray-500">Employees to include</label>
+              <button onClick={toggleAll} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium transition-colors">
+                {selectAll ? 'Deselect all' : 'Select all'}
+              </button>
+            </div>
+            {empLoading ? (
+              <div className="flex items-center gap-2 text-xs text-gray-400 py-3">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading employees…
+              </div>
+            ) : employees.length === 0 ? (
+              <p className="text-xs text-gray-400">No active employees found.</p>
+            ) : (
+              <div className="border border-gray-200 rounded-xl divide-y divide-gray-100 max-h-48 overflow-y-auto">
+                {employees.map(emp => (
+                  <label key={emp.id} className="flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(emp.id)}
+                      onChange={() => toggleEmployee(emp.id)}
+                      className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-300"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{emp.name}</p>
+                      <p className="text-xs text-gray-400">{emp.role}{emp.employee_no ? ` · #${emp.employee_no}` : ''}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+            {selectedIds.size > 0 && (
+              <p className="text-xs text-gray-400 mt-1.5">{selectedIds.size} of {employees.length} employee{employees.length !== 1 ? 's' : ''} selected</p>
+            )}
+          </div>
+
           <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-xs text-blue-700 flex gap-2">
             <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-            <span>Draft payslips will be auto-generated from time logs for all active employees in this date range.</span>
+            <span>Draft payslips will be generated from time logs only for the selected employees in this date range.</span>
           </div>
         </div>
-        <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100 flex-shrink-0">
           <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
-          <button onClick={handleSubmit} disabled={loading}
+          <button onClick={handleSubmit} disabled={loading || selectedIds.size === 0}
             className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 transition-colors flex items-center gap-2">
-            {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Generate Payslips
+            {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+            Generate {selectedIds.size > 0 ? `${selectedIds.size} Payslip${selectedIds.size !== 1 ? 's' : ''}` : 'Payslips'}
           </button>
         </div>
       </div>
@@ -740,6 +836,7 @@ function AddTimeLogModal({
 
   const handleSave = async () => {
     if (!employeeId) { toast.error('Please select an employee'); return }
+    if (!shiftId) { toast.error('Please select a shift'); return }
     if (!clockIn) { toast.error('Please set a clock-in time'); return }
 
     const clockInISO  = toUtcIso(date, clockIn, shopTimezone)
@@ -785,13 +882,13 @@ function AddTimeLogModal({
 
           {/* Shift selector */}
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1.5">Shift <span className="text-gray-400 font-normal">(optional — auto-computes late)</span></label>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Shift <span className="text-red-400">*</span></label>
             <select
               value={shiftId}
               onChange={e => handleShiftChange(e.target.value)}
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 bg-white"
             >
-              <option value="">— No shift selected —</option>
+              <option value="">— Select shift —</option>
               {shifts.map(s => (
                 <option key={s.id} value={s.id}>
                   {s.name} ({s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)})
@@ -856,7 +953,7 @@ function AddTimeLogModal({
           <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
             Cancel
           </button>
-          <button onClick={handleSave} disabled={saving || !employeeId || !clockIn}
+          <button onClick={handleSave} disabled={saving || !employeeId || !shiftId || !clockIn}
             className="flex items-center gap-1.5 px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors">
             {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
             Save Log
@@ -1480,9 +1577,9 @@ const PAYROLL_SETTINGS_KEY = 'payroll_settings'
 function loadPayrollSettings(): PayrollSettings {
   try {
     const raw = localStorage.getItem(PAYROLL_SETTINGS_KEY)
-    if (!raw) return { late_deduction_per_minute: 0, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60 }
-    return { late_deduction_per_minute: 0, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60, ...JSON.parse(raw) }
-  } catch { return { late_deduction_per_minute: 0, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60 } }
+    if (!raw) return { late_deduction_per_minute: 0, late_deduction_flat_amount: 100, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60 }
+    return { late_deduction_per_minute: 0, late_deduction_flat_amount: 100, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60, ...JSON.parse(raw) }
+  } catch { return { late_deduction_per_minute: 0, late_deduction_flat_amount: 100, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60 } }
 }
 
 function savePayrollSettings(s: PayrollSettings) {
@@ -1522,7 +1619,7 @@ function SettingsField({
 
 function SettingsTab() {
   const [settings, setSettings] = useState<PayrollSettings>({
-    late_deduction_per_minute: 0, late_deduction_type: 'per_minute', sss_rate: 0, philhealth_rate: 0,
+    late_deduction_per_minute: 0, late_deduction_type: 'per_minute', late_deduction_flat_amount: 100, sss_rate: 0, philhealth_rate: 0,
     pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, payslip_notes: '',
     break_mode: 'auto', break_duration_minutes: 60, kiosk_mode: 'show_all',
   })
@@ -1632,17 +1729,17 @@ function SettingsTab() {
       <div className="bg-white rounded-2xl border border-gray-200 px-5 mb-4">
         <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 pt-4 pb-2">Deductions</p>
         {/* Late Deduction — toggle flat vs per-minute */}
-        <div className="flex items-start justify-between py-4 border-b border-gray-100">
-          <div className="flex-1">
-            <p className="text-sm font-medium text-gray-800">Late Deduction</p>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {settings.late_deduction_type === 'flat'
-                ? 'Fixed amount deducted once per late occurrence'
-                : 'Amount deducted per minute of tardiness'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 ml-4">
-            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+        <div className="py-4 border-b border-gray-100">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-800">Late Deduction</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {settings.late_deduction_type === 'flat'
+                  ? `₱${settings.late_deduction_flat_amount ?? 100} deducted per late day (multiplied by number of late occurrences)`
+                  : 'Amount deducted per minute of tardiness'}
+              </p>
+            </div>
+            <div className="flex items-center gap-1 ml-4 bg-gray-100 rounded-lg p-1">
               <button
                 onClick={() => setSettings(s => ({ ...s, late_deduction_type: 'per_minute' }))}
                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
@@ -1661,20 +1758,33 @@ function SettingsTab() {
                     : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
-                Flat Fee
+                Flat / Day
               </button>
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="number" step="0.01" min="0"
-                value={settings.late_deduction_per_minute ?? 0}
-                onChange={e => setSettings(s => ({ ...s, late_deduction_per_minute: parseFloat(e.target.value) || 0 }))}
-                className="w-28 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 text-right"
-              />
-              <span className="text-xs text-gray-400 w-12">
-                {settings.late_deduction_type === 'flat' ? '₱ flat' : '₱ / min'}
-              </span>
-            </div>
+          </div>
+          {/* Amount input — changes label based on mode */}
+          <div className="flex items-center justify-end gap-2 mt-3">
+            {settings.late_deduction_type === 'flat' ? (
+              <>
+                <span className="text-xs text-gray-400">₱ per late day</span>
+                <input
+                  type="number" step="1" min="0"
+                  value={settings.late_deduction_flat_amount ?? 100}
+                  onChange={e => setSettings(s => ({ ...s, late_deduction_flat_amount: parseFloat(e.target.value) || 0 }))}
+                  className="w-28 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 text-right"
+                />
+              </>
+            ) : (
+              <>
+                <span className="text-xs text-gray-400">₱ / min</span>
+                <input
+                  type="number" step="0.01" min="0"
+                  value={settings.late_deduction_per_minute ?? 0}
+                  onChange={e => setSettings(s => ({ ...s, late_deduction_per_minute: parseFloat(e.target.value) || 0 }))}
+                  className="w-28 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 text-right"
+                />
+              </>
+            )}
           </div>
         </div>
         <SettingsField label="SSS Contribution" field="sss_rate" unit="% of basic" description="Employee share, semi-monthly"  settings={settings} setSettings={setSettings} />
@@ -1942,11 +2052,11 @@ export default function PayrollPage() {
     else setPayslips([])
   }, [selectedPeriod, fetchPayslips])
 
-  const handleCreatePeriod = async (formData: { period_start: string; period_end: string; templateId?: string }) => {
+  const handleCreatePeriod = async (formData: { period_start: string; period_end: string; templateId?: string; employee_ids?: string[] }) => {
     try {
       const res = await fetch('/api/payroll', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'create_period', period_start: formData.period_start, period_end: formData.period_end }),
+        body: JSON.stringify({ action: 'create_period', period_start: formData.period_start, period_end: formData.period_end, employee_ids: formData.employee_ids }),
       })
       const data = await safeJson(res)
       if (data.error) throw new Error(data.error)
@@ -2186,17 +2296,27 @@ export default function PayrollPage() {
                       {payslips.map(slip => (
                         <PayslipRow key={slip.id} slip={slip} onUpdate={handleUpdatePayslip}
                           onPrint={async (s) => {
-                            // Fetch late time logs for this employee within the period
+                            // Fetch all time logs for this employee within the period
                             let lateLogs: { date: string; minutes: number }[] = []
+                            let allLogs: { date: string; shift_name?: string; clock_in: string; clock_out: string | null; total_hours: number | null; late_minutes: number | null }[] = []
                             try {
                               const res = await fetch(`/api/time-logs?employee_id=${s.employee_id}&date_from=${selectedPeriod.period_start}&date_to=${selectedPeriod.period_end}`)
                               const data = await safeJson(res)
-                              lateLogs = (data.logs ?? [])
+                              const logs = data.logs ?? []
+                              lateLogs = logs
                                 .filter((l: any) => l.late_minutes && l.late_minutes > 0)
                                 .map((l: any) => ({
                                   date: l.date ?? l.clock_in?.split('T')[0],
                                   minutes: l.late_minutes,
                                 }))
+                              allLogs = logs.map((l: any) => ({
+                                date: l.date ?? l.clock_in?.split('T')[0],
+                                shift_name: l.shift_schedules?.name ?? l.shift_name ?? null,
+                                clock_in: l.clock_in,
+                                clock_out: l.clock_out,
+                                total_hours: l.total_hours,
+                                late_minutes: l.late_minutes,
+                              }))
                             } catch {}
                             // Load payslip notes from settings
                             let notes: string | undefined
@@ -2207,7 +2327,7 @@ export default function PayrollPage() {
                             } catch {
                               notes = loadPayrollSettings().payslip_notes
                             }
-                            printPayslip(s, selectedPeriod, getTemplateForPeriod(selectedPeriod.id), lateLogs, notes, shopTimezone)
+                            printPayslip(s, selectedPeriod, getTemplateForPeriod(selectedPeriod.id), lateLogs, notes, shopTimezone, allLogs)
                           }}
                           onVoid={handleVoidPayslip} />
                       ))}
