@@ -48,6 +48,7 @@ interface Payslip {
   tax_withheld: number
   net_pay: number
   status: 'draft' | 'finalized'
+  other_deductions: { id: string; label: string; amount: number }[]
   // Attendance snapshot — frozen at generation time
   total_hours: number
   overtime_hours: number
@@ -221,9 +222,8 @@ function buildPrintHTML(
       overtime_hours: slip.overtime_hours ?? 0,
       late_minutes:   slip.late_minutes   ?? 0,
     }
-    const otherDeductionsPrint = typeof window !== 'undefined'
-      ? (JSON.parse(localStorage.getItem('payroll_other_deductions') ?? '[]') as {id:string;label:string;amount:number}[]).filter(o => o.label.trim() && o.amount > 0)
-      : []
+    // other_deductions is stored on the payslip row itself (written at generation time from payroll_settings)
+    const otherDeductionsPrint = (slip.other_deductions ?? []).filter(o => o.label?.trim() && o.amount > 0)
     const otherTotalPrint = otherDeductionsPrint.reduce((s, o) => s + o.amount, 0)
     const gross = slip.basic_pay + slip.overtime_pay + slip.allowance
     const deductions = slip.late_deduction + slip.sss_contribution + slip.philhealth_contribution + slip.pagibig_contribution + slip.tax_withheld + otherTotalPrint
@@ -401,9 +401,8 @@ function PayslipCard({
   onPrint: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const otherDeductions = typeof window !== 'undefined'
-    ? (JSON.parse(localStorage.getItem('payroll_other_deductions') ?? '[]') as {id:string;label:string;amount:number}[]).filter(o => o.label.trim() && o.amount > 0)
-    : []
+  // other_deductions is stored on the payslip row itself (written at generation time from payroll_settings)
+  const otherDeductions = (slip.other_deductions ?? []).filter(o => o.label?.trim() && o.amount > 0)
   const otherTotal = otherDeductions.reduce((s, o) => s + o.amount, 0)
   const gross = slip.basic_pay + slip.overtime_pay + slip.allowance
   const deductions = slip.late_deduction + slip.sss_contribution + slip.philhealth_contribution + slip.pagibig_contribution + slip.tax_withheld + otherTotal

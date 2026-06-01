@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'sonner'
 import { Search, Pencil, X, AlertTriangle, Clock } from 'lucide-react'
-import { format, parseISO } from 'date-fns'
+// date-fns removed — all date/time formatting uses Intl with shop timezone
 
 interface TimeLog {
   id: string
@@ -15,6 +15,8 @@ interface TimeLog {
   overtime_hours: number
   late_minutes: number
   is_late: boolean
+  break_minutes: number
+  log_type: string
   notes: string | null
   employees: { id: string; name: string; role: string; employee_no: string | null }
   shift_schedules: { id: string; name: string; start_time: string; end_time: string } | null
@@ -28,27 +30,42 @@ interface Employee {
 
 const inputCls = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900'
 
-function fmtDateTime(iso: string) {
-  try { return format(parseISO(iso), 'MMM d, yyyy h:mm a') } catch { return iso }
+function fmtTime(iso: string, tz: string) {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true,
+    }).format(new Date(iso))
+  } catch { return iso }
 }
-function fmtTime(iso: string) {
-  try { return format(parseISO(iso), 'h:mm a') } catch { return iso }
+
+function fmtBreak(minutes: number) {
+  if (!minutes || minutes <= 0) return null
+  if (minutes < 60) return `${minutes}m`
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return m > 0 ? `${h}h ${m}m` : `${h}h`
 }
 
 export default function AttendancePage() {
   const [logs, setLogs]           = useState<TimeLog[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [loading, setLoading]     = useState(true)
+  const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
   const [search, setSearch]       = useState('')
   const [filterEmp, setFilterEmp] = useState('')
   const [dateFrom, setDateFrom]   = useState(() => {
-    const d = new Date(); d.setDate(1)
-    return d.toISOString().split('T')[0]
+    // Use Intl with UTC as a safe initial — will be recalculated once shopTimezone loads
+    const now = new Date()
+    const fmt = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(d)
+    const firstOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+    return fmt(firstOfMonth)
   })
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0])
-  const [editing, setEditing]     = useState<TimeLog | null>(null)
+  const [dateTo, setDateTo] = useState(() =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format(new Date())
+  )
+  const [editing, setEditing]       = useState<TimeLog | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [adjForm, setAdjForm]     = useState({
+  const [adjForm, setAdjForm]       = useState({
     clock_in: '', clock_out: '', late_minutes: 0, is_late: false, overtime_hours: 0, notes: ''
   })
 
@@ -60,7 +77,7 @@ export default function AttendancePage() {
       const res = await fetch(`/api/time-logs?${params}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
-      setLogs(data.logs ?? [])
+      setLogs((data.logs ?? []).filter((l: TimeLog) => l.log_type === 'work'))
     } catch (err: any) {
       toast.error(err.message)
     } finally {
@@ -74,17 +91,75 @@ export default function AttendancePage() {
     if (res.ok) setEmployees(data.employees ?? [])
   }, [])
 
-  useEffect(() => { fetchLogs(); fetchEmployees() }, [fetchLogs, fetchEmployees])
+  // Fetch shop timezone on mount, then recalculate the default date range in that timezone
+  useEffect(() => {
+    fetch('/api/shop-settings')
+      .then(r => r.json())
+      .then(data => {
+        const tz = data?.timezone || 'Asia/Manila'
+        setShopTimezone(tz)
+        const now = new Date()
+        const fmt = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d)
+        const todayStr = fmt(now)
+        // First of the current month in shop timezone
+        const parts = new Intl.DateTimeFormat('en-CA', {
+          timeZone: tz, year: 'numeric', month: '2-digit',
+        }).formatToParts(now)
+        const y = parts.find(p => p.type === 'year')?.value ?? String(now.getFullYear())
+        const m = parts.find(p => p.type === 'month')?.value ?? '01'
+        setDateFrom(`${y}-${m}-01`)
+        setDateTo(todayStr)
+      })
+      .catch(() => {
+        // fallback: keep defaults already set
+      })
+  }, [])
 
+
+
+  useEffect(() => { fetchLogs(); fetchEmployees() }, [fetchLogs, fetchEmployees])
   const filtered = logs.filter(l =>
     l.employees?.name?.toLowerCase().includes(search.toLowerCase())
   )
 
+  // Format an ISO string into "yyyy-MM-ddTHH:mm" in the shop's timezone
+  // so datetime-local inputs pre-fill with the correct local time
+  function toLocalInput(iso: string, tz: string): string {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      }).formatToParts(new Date(iso))
+      const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+      const hh = get('hour') === '24' ? '00' : get('hour') // midnight edge case
+      return `${get('year')}-${get('month')}-${get('day')}T${hh}:${get('minute')}`
+    } catch { return '' }
+  }
+
+  // Convert a datetime-local string (no tz info) entered in shop timezone → UTC ISO
+  function fromLocalInput(localStr: string, tz: string): string {
+    // localStr is "yyyy-MM-ddTHH:mm". We need to find what UTC moment that is in `tz`.
+    // Strategy: parse as if UTC, measure the offset at that moment, then shift.
+    const naiveMs = new Date(localStr + 'Z').getTime()
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    })
+    const parts = formatter.formatToParts(new Date(naiveMs))
+    const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+    const localIso = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`
+    const localMs = new Date(localIso + 'Z').getTime()
+    return new Date(naiveMs - (localMs - naiveMs)).toISOString()
+  }
+
   const openEdit = (log: TimeLog) => {
     setEditing(log)
     setAdjForm({
-      clock_in:       log.clock_in ? format(parseISO(log.clock_in), "yyyy-MM-dd'T'HH:mm") : '',
-      clock_out:      log.clock_out ? format(parseISO(log.clock_out), "yyyy-MM-dd'T'HH:mm") : '',
+      clock_in:       log.clock_in  ? toLocalInput(log.clock_in,  shopTimezone) : '',
+      clock_out:      log.clock_out ? toLocalInput(log.clock_out, shopTimezone) : '',
       late_minutes:   log.late_minutes ?? 0,
       is_late:        log.is_late ?? false,
       overtime_hours: log.overtime_hours ?? 0,
@@ -102,8 +177,8 @@ export default function AttendancePage() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           id: editing.id,
-          clock_in:       adjForm.clock_in ? new Date(adjForm.clock_in).toISOString() : undefined,
-          clock_out:      adjForm.clock_out ? new Date(adjForm.clock_out).toISOString() : null,
+          clock_in:       adjForm.clock_in  ? fromLocalInput(adjForm.clock_in,  shopTimezone) : undefined,
+          clock_out:      adjForm.clock_out ? fromLocalInput(adjForm.clock_out, shopTimezone) : null,
           late_minutes:   adjForm.late_minutes,
           is_late:        adjForm.is_late,
           overtime_hours: adjForm.overtime_hours,
@@ -122,13 +197,12 @@ export default function AttendancePage() {
     }
   }
 
-  // Summary stats
-  const totalHours   = filtered.reduce((s, l) => s + (l.total_hours ?? 0), 0)
-  const lateCount    = filtered.filter(l => l.is_late).length
-  const openCount    = filtered.filter(l => !l.clock_out).length
+  const totalHours = filtered.reduce((s, l) => s + (l.total_hours ?? 0), 0)
+  const lateCount  = filtered.filter(l => l.is_late).length
+  const openCount  = filtered.filter(l => !l.clock_out).length
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="flex flex-col h-screen p-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Attendance</h1>
@@ -145,7 +219,7 @@ export default function AttendancePage() {
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-3 gap-4 mb-6 flex-shrink-0">
         {[
           { label: 'Total Hours', value: totalHours.toFixed(1) + 'h' },
           { label: 'Late Entries', value: lateCount, warn: lateCount > 0 },
@@ -159,7 +233,7 @@ export default function AttendancePage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-3 mb-4">
+      <div className="flex flex-wrap gap-3 mb-4 flex-shrink-0">
         <div className="relative flex-1 min-w-48">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900" />
@@ -172,64 +246,92 @@ export default function AttendancePage() {
         <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900" />
       </div>
 
-      {/* Table */}
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      {/* Table — scrollable body, frozen header */}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden flex flex-col flex-1 min-h-0">
         {loading ? (
           <div className="text-center text-gray-400 text-sm py-12">Loading attendance...</div>
         ) : filtered.length === 0 ? (
           <div className="text-center text-gray-400 text-sm py-12">No time logs found for the selected period.</div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Employee</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Date</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Shift</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Clock In</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Clock Out</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Hours</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Approved By</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Adjust</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filtered.map(log => (
-                <tr key={log.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-gray-900">{log.employees?.name}</div>
-                    {log.employees?.employee_no && <div className="text-xs text-gray-400">{log.employees.employee_no}</div>}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{log.date}</td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">{log.shift_schedules?.name ?? <span className="text-gray-300">—</span>}</td>
-                  <td className="px-4 py-3 text-gray-600">{fmtTime(log.clock_in)}</td>
-                  <td className="px-4 py-3 text-gray-600">{log.clock_out ? fmtTime(log.clock_out) : <span className="text-amber-500 text-xs font-medium">Active</span>}</td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {log.total_hours != null ? `${log.total_hours.toFixed(2)}h` : '—'}
-                    {log.overtime_hours > 0 && <span className="ml-1 text-xs text-blue-500">+{log.overtime_hours}h OT</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    {log.is_late ? (
-                      <span className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full w-fit">
-                        <AlertTriangle className="w-3 h-3" />
-                        Late {log.late_minutes}m
-                      </span>
-                    ) : (
-                      <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">On time</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
-                    {log.approver?.name ?? <span className="text-gray-300">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <button onClick={() => openEdit(log)} className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700">
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                  </td>
+          <div className="overflow-auto flex-1">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
+                <tr>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Employee</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Date</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Shift</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Clock In</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Clock Out</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Break</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Hours</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Approved By</th>
+                  <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Adjust</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filtered.map(log => {
+                  const breakFmt = fmtBreak(log.break_minutes)
+                  return (
+                    <tr key={log.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-gray-900">{log.employees?.name}</div>
+                        {log.employees?.employee_no && <div className="text-xs text-gray-400">{log.employees.employee_no}</div>}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">{log.date}</td>
+                      <td className="px-4 py-3 text-gray-500 text-xs">{log.shift_schedules?.name ?? <span className="text-gray-300">—</span>}</td>
+                      <td className="px-4 py-3 text-gray-600">{fmtTime(log.clock_in, shopTimezone)}</td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {log.clock_out ? fmtTime(log.clock_out, shopTimezone) : <span className="text-amber-500 text-xs font-medium">Active</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {breakFmt ? (
+                          <span className="text-xs text-purple-600 bg-purple-50 px-2 py-0.5 rounded-full">
+                            {breakFmt}
+                          </span>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {log.total_hours != null ? (
+                          <div>
+                            <span>{log.total_hours.toFixed(2)}h</span>
+                            {log.break_minutes > 0 && (
+                              <div className="text-xs text-gray-400">
+                                gross {((log.total_hours) + log.break_minutes / 60).toFixed(2)}h
+                              </div>
+                            )}
+                            {log.overtime_hours > 0 && (
+                              <span className="ml-1 text-xs text-blue-500">+{log.overtime_hours}h OT</span>
+                            )}
+                          </div>
+                        ) : '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        {log.is_late ? (
+                          <span className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full w-fit">
+                            <AlertTriangle className="w-3 h-3" />
+                            Late {log.late_minutes}m
+                          </span>
+                        ) : (
+                          <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">On time</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 text-xs">
+                        {log.approver?.name ?? <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button onClick={() => openEdit(log)} className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

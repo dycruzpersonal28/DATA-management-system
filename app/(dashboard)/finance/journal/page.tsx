@@ -48,8 +48,14 @@ function categoriesFor(type: EntryType) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-function toDateStr(d: Date) { return d.toISOString().split('T')[0] }
-function today() { return toDateStr(new Date()) }
+function toDateStrTZ(d: Date, tz: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
+}
 
 function fmt(n: number) {
   return `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -174,10 +180,12 @@ function SummaryStrip({ entries }: { entries: JournalEntry[] }) {
 function ExportModal({
   initialFrom,
   initialTo,
+  timezone,
   onClose,
 }: {
   initialFrom: string
   initialTo: string
+  timezone: string
   onClose: () => void
 }) {
   const [exportFrom, setExportFrom]   = useState(initialFrom)
@@ -191,25 +199,29 @@ function ExportModal({
   // Quick range presets
   function applyPreset(preset: string) {
     const now = new Date()
-    const y = now.getFullYear()
-    const m = now.getMonth()
+    const todayStr = toDateStrTZ(now, timezone)
+    const [y, m] = todayStr.split('-').map(Number) // y = year, m = month 1-indexed
     if (preset === 'this_month') {
-      setExportFrom(toDateStr(new Date(y, m, 1)))
-      setExportTo(toDateStr(new Date(y, m + 1, 0)))
+      setExportFrom(`${y}-${String(m).padStart(2, '0')}-01`)
+      // last day of m: Date.UTC(y, m, 0) = day 0 of month m+1 (0-indexed) = last day of m
+      setExportTo(toDateStrTZ(new Date(Date.UTC(y, m, 0, 12)), timezone))
     } else if (preset === 'last_month') {
-      setExportFrom(toDateStr(new Date(y, m - 1, 1)))
-      setExportTo(toDateStr(new Date(y, m, 0)))
+      const prevM = m === 1 ? 12 : m - 1
+      const prevY = m === 1 ? y - 1 : y
+      const mm = String(prevM).padStart(2, '0')
+      setExportFrom(`${prevY}-${mm}-01`)
+      setExportTo(toDateStrTZ(new Date(Date.UTC(prevY, prevM, 0, 12)), timezone))
     } else if (preset === 'this_year') {
       setExportFrom(`${y}-01-01`)
       setExportTo(`${y}-12-31`)
     } else if (preset === 'last_30') {
-      const from = new Date(); from.setDate(from.getDate() - 30)
-      setExportFrom(toDateStr(from))
-      setExportTo(toDateStr(now))
+      const d = new Date(now); d.setDate(d.getDate() - 30)
+      setExportFrom(toDateStrTZ(d, timezone))
+      setExportTo(todayStr)
     } else if (preset === 'last_90') {
-      const from = new Date(); from.setDate(from.getDate() - 90)
-      setExportFrom(toDateStr(from))
-      setExportTo(toDateStr(now))
+      const d = new Date(now); d.setDate(d.getDate() - 90)
+      setExportFrom(toDateStrTZ(d, timezone))
+      setExportTo(todayStr)
     }
     setPreview(null)
   }
@@ -618,14 +630,14 @@ function EntryRow({ entry, onDelete }: { entry: JournalEntry; onDelete: (entry: 
 }
 
 // ── Add entry modal ───────────────────────────────────────────────────────────
-function AddEntryModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function AddEntryModal({ onClose, onSaved, timezone }: { onClose: () => void; onSaved: () => void; timezone: string }) {
   const [type, setType]           = useState<EntryType>('expense')
   const [category, setCategory]   = useState('')
   const [customCat, setCustomCat] = useState('')
   const [amount, setAmount]       = useState('')
   const [description, setDesc]    = useState('')
   const [referenceNo, setRef]     = useState('')
-  const [date, setDate]           = useState(today())
+  const [date, setDate]           = useState(() => toDateStrTZ(new Date(), timezone))
   const [isRecurring, setRecur]   = useState(false)
   const [recurDay, setRecurDay]   = useState('')
   const [saving, setSaving]       = useState(false)
@@ -861,13 +873,32 @@ export default function JournalPage() {
   const [deleteTarget, setDeleteTarget] = useState<JournalEntry | null>(null)
   const [deleting, setDeleting]         = useState(false)
   const [showExport, setShowExport]     = useState(false)
-  const [dateFrom, setFrom]     = useState(() => {
-    const d = new Date(); d.setDate(1)
-    return toDateStr(d) // default: start of current month
-  })
-  const [dateTo, setTo]         = useState(today)
+  const [timezone, setTimezone]     = useState('UTC')
+  const [dateFrom, setFrom]         = useState('')
+  const [dateTo, setTo]             = useState('')
+
+  // Fetch shop timezone and initialise date range
+  useEffect(() => {
+    fetch('/api/shop')
+      .then(r => r.json())
+      .then(d => {
+        const tz = d?.shop?.timezone || 'UTC'
+        setTimezone(tz)
+        const todayStr = toDateStrTZ(new Date(), tz)
+        const [y, m] = todayStr.split('-').map(Number)
+        setFrom(`${y}-${String(m).padStart(2, '0')}-01`) // first of current month
+        setTo(todayStr)
+      })
+      .catch(() => {
+        const todayStr = toDateStrTZ(new Date(), 'UTC')
+        const [y, m] = todayStr.split('-').map(Number)
+        setFrom(`${y}-${String(m).padStart(2, '0')}-01`)
+        setTo(todayStr)
+      })
+  }, [])
 
   const load = useCallback(async () => {
+    if (!dateFrom || !dateTo) return
     setLoading(true)
     setError('')
     try {
@@ -1032,6 +1063,7 @@ export default function JournalPage() {
         <ExportModal
           initialFrom={dateFrom}
           initialTo={dateTo}
+          timezone={timezone}
           onClose={() => setShowExport(false)}
         />
       )}
@@ -1041,6 +1073,7 @@ export default function JournalPage() {
         <AddEntryModal
           onClose={() => setModal(false)}
           onSaved={load}
+          timezone={timezone}
         />
       )}
 

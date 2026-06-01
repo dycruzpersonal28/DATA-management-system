@@ -4,6 +4,11 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
 
+// ─── Helper: current date in shop's timezone ─────────────────────────────────
+function getShopDate(timezone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
+}
+
 // ─── GET /api/payroll ─────────────────────────────────────────────────────────
 // Fetch all payroll periods (with payslip counts) OR payslips for a specific period
 //
@@ -148,6 +153,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: periodError.message }, { status: 500 })
     }
 
+    // ── Fix A: fetch payroll_settings — use saved rates, fall back to defaults ──
+    const { data: savedSettings } = await admin
+      .from('payroll_settings')
+      .select('*')
+      .eq('shop_id', shop_id)
+      .single()
+
+    const settings = savedSettings ?? {
+      late_deduction_type: 'per_minute' as 'flat' | 'per_minute',
+      late_deduction_per_minute: 0,
+      sss_rate: 0,
+      philhealth_rate: 0,
+      pagibig_flat: 0,
+      overtime_multiplier: 1,
+      tax_rate: 0,
+      other_deductions: [] as { label: string; amount: number }[],
+    }
+
     // Fetch all active employees for this shop
     const { data: employees, error: empError } = await admin
       .from('employees')
@@ -163,11 +186,12 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // Fetch time_logs in range for each employee
+    // Fetch time_logs in range for each employee — work logs only, completed shifts
     const { data: timeLogs, error: tlError } = await admin
       .from('time_logs')
-      .select('employee_id, total_hours, overtime_hours, late_minutes')
+      .select('employee_id, shift_schedule_id, total_hours, overtime_hours, late_minutes, break_minutes')
       .eq('shop_id', shop_id)
+      .eq('log_type', 'work')
       .gte('date', period_start)
       .lte('date', period_end)
       .not('clock_out', 'is', null)  // only completed shifts
@@ -181,6 +205,7 @@ export async function POST(req: NextRequest) {
       total_hours: number
       overtime_hours: number
       late_minutes: number
+      break_minutes: number
     }> = {}
 
     for (const log of timeLogs ?? []) {
@@ -189,11 +214,13 @@ export async function POST(req: NextRequest) {
           total_hours: 0,
           overtime_hours: 0,
           late_minutes: 0,
+          break_minutes: 0,
         }
       }
       logsByEmployee[log.employee_id].total_hours += log.total_hours ?? 0
       logsByEmployee[log.employee_id].overtime_hours += log.overtime_hours ?? 0
       logsByEmployee[log.employee_id].late_minutes += log.late_minutes ?? 0
+      logsByEmployee[log.employee_id].break_minutes += log.break_minutes ?? 0
     }
 
     // Build payslips
@@ -202,24 +229,38 @@ export async function POST(req: NextRequest) {
         total_hours: 0,
         overtime_hours: 0,
         late_minutes: 0,
+        break_minutes: 0,
       }
 
       const hourlyRate = emp.hourly_rate ?? 0
       const allowance = emp.allowance ?? 0
 
-      const basic_pay = logs.total_hours * hourlyRate
-      const overtime_pay = logs.overtime_hours * (hourlyRate * 1.25)
-      const late_deduction = (logs.late_minutes / 60) * hourlyRate
+      // Subtract break time — cap at 90% of worked time to avoid zeroing pay on short shifts
+      const breakHours = logs.break_minutes / 60
+      const billableHours = Math.max(logs.total_hours * 0.1, logs.total_hours - breakHours)
+      const basic_pay = billableHours * hourlyRate
+      const overtime_pay = logs.overtime_hours * (hourlyRate * (settings.overtime_multiplier || 1))
+      // Late deduction: flat fee once per late occurrence, or per-minute rate
+      const lateType = (settings as any).late_deduction_type ?? 'per_minute'
+      const lateRate = settings.late_deduction_per_minute ?? 0
+      const late_deduction = lateType === 'flat'
+        ? (logs.late_minutes > 0 ? lateRate : 0)
+        : logs.late_minutes * lateRate
 
       // Philippine statutory deductions — only applied if govt_deductions_enabled is true
       const govtEnabled = emp.govt_deductions_enabled === true
       const monthly_basic = basic_pay * 2  // rough monthly estimate
-      const sss_contribution        = govtEnabled ? Math.min(monthly_basic * 0.045, 900) / 2 : 0
-      const philhealth_contribution = govtEnabled ? (monthly_basic * 0.025) / 2 : 0
-      const pagibig_contribution    = govtEnabled ? 100 / 2 : 0  // ₱100/month flat → ₱50 semi-monthly
+      // Fix A: use saved rates instead of hardcoded 0.045 / 0.025 / 100
+      const sss_contribution        = govtEnabled ? Math.min(monthly_basic * (settings.sss_rate / 100), 900) / 2 : 0
+      const philhealth_contribution = govtEnabled ? (monthly_basic * (settings.philhealth_rate / 100)) / 2 : 0
+      const pagibig_contribution    = govtEnabled ? (settings.pagibig_flat / 2) : 0
+
+      // Fix B: sum other_deductions from settings and apply to net_pay
+      const otherDeductions: { label: string; amount: number }[] = settings.other_deductions ?? []
+      const other_deductions_total = otherDeductions.reduce((sum, d) => sum + (d.amount ?? 0), 0)
 
       const gross_pay = basic_pay + overtime_pay + allowance
-      const total_deductions = late_deduction + sss_contribution + philhealth_contribution + pagibig_contribution
+      const total_deductions = late_deduction + sss_contribution + philhealth_contribution + pagibig_contribution + other_deductions_total
       const net_pay = gross_pay - total_deductions
 
       // Only insert columns that exist in the payslips table.
@@ -239,8 +280,9 @@ export async function POST(req: NextRequest) {
         tax_withheld: 0,
         net_pay: parseFloat(net_pay.toFixed(2)),
         status: 'draft',
-        other_deductions: [],
-        total_hours:    parseFloat(logs.total_hours.toFixed(2)),
+        // Fix B: carry other_deductions from settings into each payslip
+        other_deductions: otherDeductions,
+        total_hours:    parseFloat(billableHours.toFixed(2)),  // net of break
         overtime_hours: parseFloat(logs.overtime_hours.toFixed(2)),
         late_minutes:   logs.late_minutes,
       }
@@ -277,6 +319,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'period_id required' }, { status: 400 })
     }
 
+    // Fetch shop timezone for fallback date calculation
+    const { data: shopRow } = await admin
+      .from('shops')
+      .select('timezone')
+      .eq('id', shop_id)
+      .single()
+    const shopTimezone = shopRow?.timezone ?? 'Asia/Manila'
+
     // Finalize all draft payslips in this period
     const { error: slipError } = await admin
       .from('payslips')
@@ -310,7 +360,7 @@ export async function POST(req: NextRequest) {
       .eq('shop_id', shop_id)
 
     if (finalizedSlips && finalizedSlips.length > 0) {
-      const entryDate = period.period_end ?? new Date().toISOString().split('T')[0]
+      const entryDate = period.period_end ?? getShopDate(shopTimezone)
 
       const ledgerEntries = finalizedSlips
         .filter(slip => slip.net_pay > 0)

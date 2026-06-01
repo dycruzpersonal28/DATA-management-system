@@ -5,6 +5,7 @@ type Params = {
   from: string
   to: string
   groupBy: 'day' | 'week' | 'month'
+  timezone: string
 }
 
 type SummaryData = {
@@ -31,9 +32,20 @@ type TopItem = {
   numOrders: number
 }
 
+// ─── Timezone-aware date helpers ──────────────────────────────────────────────
+function toDateStrTz(d: Date, tz: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d)
+}
+
+// Parse a YYYY-MM-DD string as a local date (avoids UTC off-by-one)
+function parseDateLocal(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
 // ─── Helper: format date label for chart ───────────────────────────────────────
 function formatDateLabel(dateStr: string, groupBy: 'day' | 'week' | 'month') {
-  const d = new Date(dateStr)
+  const d = parseDateLocal(dateStr)
   if (groupBy === 'month') return d.toLocaleString('default', { month: 'short', year: '2-digit' })
   if (groupBy === 'week') return `W${getWeekNumber(d)}`
   return d.toLocaleString('default', { month: 'short', day: 'numeric' })
@@ -45,21 +57,23 @@ function getWeekNumber(d: Date) {
 }
 
 // ─── Fetch all report data ──────────────────────────────────────────────────────
-async function fetchReportsData({ from, to, groupBy }: Params) {
+async function fetchReportsData({ from, to, groupBy, timezone }: Params) {
   const supabase = createClient()
 
-  // 1. Get the shop_id for the current user
+  // 1. Get the shop_id and timezone for the current user
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
 
   const { data: shop } = await supabase
     .from('shops')
-    .select('id')
+    .select('id, timezone')
     .eq('owner_id', user.id)
     .single()
   if (!shop) throw new Error('No shop found')
 
   const shopId = shop.id
+  // Use passed-in timezone; fall back to shop row value, then Asia/Manila
+  const tz = timezone || shop.timezone || 'Asia/Manila'
 
   // 2. Fetch completed receipts in date range
   const { data: receipts, error: receiptError } = await supabase
@@ -94,21 +108,28 @@ async function fetchReportsData({ from, to, groupBy }: Params) {
     avgSale,
   }
 
-  // 4. Group by day/week/month for chart
+  // 4. Group by day/week/month for chart — all bucketing in shop timezone
   const grouped: Record<string, { grossSales: number; netSales: number }> = {}
   for (const r of receiptsData) {
     const d = new Date(r.created_at)
+    // Get the date string in shop timezone (YYYY-MM-DD)
+    const localDateStr = toDateStrTz(d, tz)
+    const [ly, lm, ld] = localDateStr.split('-').map(Number)
+
     let key: string
     if (groupBy === 'month') {
-      key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+      // First day of that month in shop tz
+      key = `${ly}-${String(lm).padStart(2, '0')}-01`
     } else if (groupBy === 'week') {
-      // Group by start of ISO week
-      const day = d.getDay()
-      const diff = d.getDate() - day + (day === 0 ? -6 : 1)
-      const monday = new Date(d.setDate(diff))
-      key = monday.toISOString().split('T')[0]
+      // Start of ISO week (Monday) for the local date
+      const localDay = new Date(ly, lm - 1, ld)
+      const dow = localDay.getDay() // 0=Sun
+      const diff = dow === 0 ? -6 : 1 - dow
+      const monday = new Date(ly, lm - 1, ld + diff)
+      key = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`
     } else {
-      key = r.created_at.split('T')[0]
+      // Daily — use local date in shop tz
+      key = localDateStr
     }
 
     if (!grouped[key]) grouped[key] = { grossSales: 0, netSales: 0 }
@@ -161,7 +182,7 @@ async function fetchReportsData({ from, to, groupBy }: Params) {
 // ─── Hook ───────────────────────────────────────────────────────────────────────
 export function useReportsData(params: Params) {
   const query = useQuery({
-    queryKey: ['reports', params.from, params.to, params.groupBy],
+    queryKey: ['reports', params.from, params.to, params.groupBy, params.timezone],
     queryFn: () => fetchReportsData(params),
     staleTime: 1000 * 60 * 5, // 5 min cache
   })

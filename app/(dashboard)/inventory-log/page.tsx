@@ -8,7 +8,7 @@ import {
   AlertTriangle, RefreshCcw, ShoppingCart, Wrench, Trash2, RotateCcw,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { format, parseISO, subDays, startOfMonth } from 'date-fns'
+// date-fns removed — all date/time formatting uses Intl with shop timezone
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,18 +45,20 @@ const sourceConfig: Record<LogSource, { label: string; icon: React.ElementType; 
   void:       { label: 'Void',       icon: RotateCcw,    badgeClass: 'bg-purple-50 text-purple-700' },
 }
 
-function todayStr() {
-  return format(new Date(), 'yyyy-MM-dd')
+function todayStr(tz = 'Asia/Manila') {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())
 }
 
 // ── CSV Export ────────────────────────────────────────────────────────────────
 
-function exportCSV(logs: UnifiedLog[], dateFrom: string, dateTo: string) {
+function exportCSV(logs: UnifiedLog[], dateFrom: string, dateTo: string, tz = 'Asia/Manila') {
+  const fmtDate = (iso: string) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(iso))
+  const fmtTime = (iso: string) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(iso))
   const rows: (string | number)[][] = [
     ['Date', 'Time', 'Item', 'Type', 'Receipt #', 'Change', 'Note'],
     ...logs.map(l => [
-      format(parseISO(l.created_at), 'dd/MM/yyyy'),
-      format(parseISO(l.created_at), 'HH:mm:ss'),
+      fmtDate(l.created_at),
+      fmtTime(l.created_at),
       l.item_name,
       sourceConfig[l.source].label,
       l.receipt_number ?? '—',
@@ -160,13 +162,20 @@ export default function InventoryLogPage() {
   const [loading, setLoading]       = useState(true)
   const [search, setSearch]         = useState('')
   const [typeFilter, setTypeFilter] = useState<string>('')
+  const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
   // null = no date filter (show all)
   const [dateFrom, setDateFrom]     = useState<string>('')
   const [dateTo, setDateTo]         = useState<string>('')
 
-  const tz = typeof window !== 'undefined'
-    ? Intl.DateTimeFormat().resolvedOptions().timeZone
-    : 'UTC'
+  // Fetch shop timezone on mount
+  useEffect(() => {
+    fetch('/api/shop-settings')
+      .then(r => r.json())
+      .then(data => { if (data?.timezone) setShopTimezone(data.timezone) })
+      .catch(() => {})
+  }, [])
+
+  const tz = shopTimezone
 
   const loadAll = useCallback(async () => {
     setLoading(true)
@@ -210,19 +219,26 @@ export default function InventoryLogPage() {
 
   function setPreset(preset: string) {
     const now = new Date()
-    const t = format(now, 'yyyy-MM-dd')
+    const fmt = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d)
+    const t = fmt(now)
     if (preset === 'all') {
-      // Clear both dates → load everything
       setDateFrom(''); setDateTo('')
     } else if (preset === 'today') {
       setDateFrom(t); setDateTo(t)
     } else if (preset === 'yesterday') {
-      const y = format(subDays(now, 1), 'yyyy-MM-dd')
+      // Subtract 1 day in ms then format in shop tz
+      const y = fmt(new Date(now.getTime() - 86400000))
       setDateFrom(y); setDateTo(y)
     } else if (preset === 'week') {
-      setDateFrom(format(subDays(now, 6), 'yyyy-MM-dd')); setDateTo(t)
+      setDateFrom(fmt(new Date(now.getTime() - 6 * 86400000))); setDateTo(t)
     } else if (preset === 'month') {
-      setDateFrom(format(startOfMonth(now), 'yyyy-MM-dd')); setDateTo(t)
+      // First day of current month in shop timezone
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz, year: 'numeric', month: '2-digit',
+      }).formatToParts(now)
+      const y2 = parts.find(p => p.type === 'year')?.value ?? String(now.getFullYear())
+      const m  = parts.find(p => p.type === 'month')?.value ?? '01'
+      setDateFrom(`${y2}-${m}-01`); setDateTo(t)
     }
   }
 
@@ -242,7 +258,7 @@ export default function InventoryLogPage() {
         <Button
           size="sm"
           variant="outline"
-          onClick={() => exportCSV(filtered, dateFrom, dateTo)}
+          onClick={() => exportCSV(filtered, dateFrom, dateTo, tz)}
           disabled={loading || filtered.length === 0}
         >
           <Download className="w-4 h-4 mr-1.5" />
@@ -262,8 +278,8 @@ export default function InventoryLogPage() {
           ].map(p => {
             const active =
               p.key === 'all'       ? isAllTime :
-              p.key === 'today'     ? (dateFrom === todayStr() && dateTo === todayStr()) :
-              p.key === 'yesterday' ? (dateFrom === format(subDays(new Date(), 1), 'yyyy-MM-dd') && dateTo === dateFrom) :
+              p.key === 'today'     ? (dateFrom === todayStr(tz) && dateTo === todayStr(tz)) :
+              p.key === 'yesterday' ? (dateFrom === new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(Date.now() - 86400000)) && dateTo === dateFrom) :
               false
             return (
               <button
@@ -295,7 +311,7 @@ export default function InventoryLogPage() {
             <Input
               type="date"
               value={dateTo}
-              max={todayStr()}
+              max={todayStr(tz)}
               onChange={e => setDateTo(e.target.value)}
               className="w-40 text-sm"
             />
@@ -374,10 +390,10 @@ export default function InventoryLogPage() {
                       {/* Date */}
                       <td className="px-4 py-3 whitespace-nowrap">
                         <p className="text-sm text-gray-700">
-                          {format(parseISO(log.created_at), 'dd MMM yyyy')}
+                          {new Intl.DateTimeFormat('en-GB', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(log.created_at))}
                         </p>
                         <p className="text-xs text-gray-400">
-                          {format(parseISO(log.created_at), 'HH:mm')}
+                          {new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(log.created_at))}
                         </p>
                       </td>
 

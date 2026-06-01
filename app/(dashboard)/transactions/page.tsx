@@ -212,10 +212,14 @@ function VoidTypeModal({ onConfirm, onClose }: {
 }
 
 // ── Helper: build unique ref number per date ───────────────────────────────────
-function buildRefNumber(date: Date, sequence: number): string {
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  const y = String(date.getFullYear())
+function buildRefNumber(date: Date, sequence: number, tz: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date)
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+  const m = get('month')
+  const d = get('day')
+  const y = get('year')
   return `${m}${d}${y}-${String(sequence).padStart(5, '0')}`
 }
 
@@ -231,6 +235,7 @@ export default function TransactionsPage() {
   const [receiptItems, setReceiptItems]     = useState<Record<string, any[]>>({})
   const [loading, setLoading]               = useState(true)
   const [currencySymbol, setCurrencySymbol] = useState('₱')
+  const [shopTimezone, setShopTimezone]     = useState('Asia/Manila')
 
   // Filters
   const [dateFrom, setDateFrom]     = useState('')
@@ -266,16 +271,17 @@ export default function TransactionsPage() {
       })
 
     // Simpler: just fetch it directly (works because RLS scopes to the user's shop)
-    supabase.from('shops').select('currency_symbol').maybeSingle().then(({ data }) => {
+    supabase.from('shops').select('currency_symbol, timezone').maybeSingle().then(({ data }) => {
       if (data?.currency_symbol) setCurrencySymbol(data.currency_symbol)
+      if (data?.timezone) setShopTimezone(data.timezone)
     })
   }, [])
 
   const loadData = useCallback(async () => {
     setLoading(true)
 
-    // Build timezone-aware UTC bounds so Dubai midnight → correct UTC range
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    // Build timezone-aware UTC bounds using the shop's assigned timezone
+    const tz = shopTimezone
 
     function toUtcBound(dateStr: string, endOfDay: boolean): string {
       const time = endOfDay ? 'T23:59:59' : 'T00:00:00'
@@ -333,28 +339,35 @@ export default function TransactionsPage() {
     setReceiptItems(byReceipt)
 
     setLoading(false)
-  }, [dateFrom, dateTo])
+  }, [dateFrom, dateTo, shopTimezone])
 
   useEffect(() => { loadData() }, [loadData])
 
   // ── Preset date ranges ───────────────────────────────────────────────────────
   function setPreset(preset: string) {
     const now = new Date()
-    const todayStr = now.toISOString().split('T')[0]
+    // Use the shop's timezone so "today" means today on the shop floor, not UTC
+    const fmt = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: shopTimezone }).format(d)
+    const todayStr = fmt(now)
     if (preset === 'all') {
       setDateFrom(''); setDateTo('')
     } else if (preset === 'today') {
       setDateFrom(todayStr); setDateTo(todayStr)
     } else if (preset === 'yesterday') {
       const y = new Date(now); y.setDate(y.getDate() - 1)
-      const yStr = y.toISOString().split('T')[0]
+      const yStr = fmt(y)
       setDateFrom(yStr); setDateTo(yStr)
     } else if (preset === 'week') {
       const w = new Date(now); w.setDate(w.getDate() - 6)
-      setDateFrom(w.toISOString().split('T')[0]); setDateTo(todayStr)
+      setDateFrom(fmt(w)); setDateTo(todayStr)
     } else if (preset === 'month') {
-      const m = new Date(now.getFullYear(), now.getMonth(), 1)
-      setDateFrom(m.toISOString().split('T')[0]); setDateTo(todayStr)
+      // First day of the current month in shop timezone
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: shopTimezone, year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(now)
+      const get = (t: string) => parts.find(p => p.type === t)?.value ?? '01'
+      const firstOfMonth = `${get('year')}-${get('month')}-01`
+      setDateFrom(firstOfMonth); setDateTo(todayStr)
     }
   }
 
@@ -362,7 +375,7 @@ export default function TransactionsPage() {
   const sortedReceipts = [...receipts].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
   const receiptRefMap: Record<string, string> = {}
   sortedReceipts.forEach((r, idx) => {
-    receiptRefMap[r.id] = buildRefNumber(new Date(r.created_at), idx + 1)
+    receiptRefMap[r.id] = buildRefNumber(new Date(r.created_at), idx + 1, shopTimezone)
   })
 
   const allTransactions = [
@@ -372,7 +385,7 @@ export default function TransactionsPage() {
       _time: new Date(r.created_at),
       _ref: receiptRefMap[r.id] || r.receipt_number || '—',
       _staff: r.app_users?.name || r.shifts?.app_users?.name || '—',
-      _shift_date: r.shifts?.clock_in ? new Date(r.shifts.clock_in).toLocaleDateString() : '—',
+      _shift_date: r.shifts?.clock_in ? new Intl.DateTimeFormat('en-CA', { timeZone: shopTimezone }).format(new Date(r.shifts.clock_in)) : '—',
       _payment: r.payment_types?.name || 'Cash',
       _amount: Number(r.total ?? 0),
     })),
@@ -382,7 +395,7 @@ export default function TransactionsPage() {
       _time: new Date(m.created_at),
       _ref: '—',
       _staff: m.shifts?.app_users?.name || '—',
-      _shift_date: m.shifts?.clock_in ? new Date(m.shifts.clock_in).toLocaleDateString() : '—',
+      _shift_date: m.shifts?.clock_in ? new Intl.DateTimeFormat('en-CA', { timeZone: shopTimezone }).format(new Date(m.shifts.clock_in)) : '—',
       _payment: m.type === 'cash_in' ? 'Cash In' : 'Cash Out',
       _amount: Number(m.amount ?? 0),
     })),
@@ -478,7 +491,11 @@ export default function TransactionsPage() {
     const lines = [
       `*** REPRINT ***`,
       `Ref: ${receipt._ref}`,
-      new Date(receipt.created_at).toLocaleString(),
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: shopTimezone,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      }).format(new Date(receipt.created_at)),
       line,
       ...items.map((i: any) => row(`${i.quantity}x ${i.item_name}`, `${currencySymbol}${Number(i.line_total).toFixed(2)}`)),
       line,
@@ -499,8 +516,8 @@ export default function TransactionsPage() {
       ['Ref #', 'Date', 'Time', 'Type', 'Staff', 'Shift Date', 'Items / Note', 'Payment', 'Amount', 'Status'],
       ...filtered.map(tx => [
         tx._ref,
-        tx._time.toLocaleDateString(),
-        tx._time.toLocaleTimeString(),
+        new Intl.DateTimeFormat('en-CA', { timeZone: shopTimezone }).format(tx._time),
+        new Intl.DateTimeFormat('en-US', { timeZone: shopTimezone, hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(tx._time),
         tx._type,
         tx._staff,
         tx._shift_date,
@@ -763,8 +780,8 @@ export default function TransactionsPage() {
                       >
                         {/* Time */}
                         <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">
-                          <p>{tx._time.toLocaleDateString()}</p>
-                          <p className="text-gray-400">{tx._time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                          <p>{new Intl.DateTimeFormat('en-CA', { timeZone: shopTimezone }).format(tx._time)}</p>
+                          <p className="text-gray-400">{new Intl.DateTimeFormat('en-US', { timeZone: shopTimezone, hour: '2-digit', minute: '2-digit' }).format(tx._time)}</p>
                         </td>
 
                         {/* Ref # */}

@@ -39,22 +39,34 @@ type DailyRow = {
 type Preset = 'today' | '7d' | '30d' | 'mtd' | 'custom'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function toDateStr(d: Date) { return d.toISOString().split('T')[0] }
+function toDateStrTZ(d: Date, tz: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
+}
 
-function presetRange(p: Preset): { from: string; to: string } {
+function presetRange(p: Preset, tz: string): { from: string; to: string } {
   const now = new Date()
-  const today = toDateStr(now)
+  const today = toDateStrTZ(now, tz)
   if (p === 'today') return { from: today, to: today }
   if (p === '7d') {
     const d = new Date(now); d.setDate(d.getDate() - 6)
-    return { from: toDateStr(d), to: today }
+    return { from: toDateStrTZ(d, tz), to: today }
   }
   if (p === '30d') {
     const d = new Date(now); d.setDate(d.getDate() - 29)
-    return { from: toDateStr(d), to: today }
+    return { from: toDateStrTZ(d, tz), to: today }
   }
   if (p === 'mtd') {
-    return { from: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`, to: today }
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, year: 'numeric', month: '2-digit',
+    }).formatToParts(now)
+    const year  = parts.find(x => x.type === 'year')?.value
+    const month = parts.find(x => x.type === 'month')?.value
+    return { from: `${year}-${month}-01`, to: today }
   }
   return { from: today, to: today }
 }
@@ -63,8 +75,9 @@ function fmt(n: number | undefined | null, sym = '₱') {
   return `${sym}${(n ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-function shortDate(d: string) {
-  return new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })
+function shortDate(d: string, tz: string) {
+  // Use noon UTC so the date is unambiguous when converted to any timezone
+  return new Date(d + 'T12:00:00Z').toLocaleDateString('en-PH', { timeZone: tz, month: 'short', day: 'numeric' })
 }
 
 // ── Stat card ─────────────────────────────────────────────────────────────────
@@ -102,11 +115,11 @@ function StatCard({
 }
 
 // ── Custom tooltip ────────────────────────────────────────────────────────────
-function ChartTooltip({ active, payload, label, sym }: any) {
+function ChartTooltip({ active, payload, label, sym, tz }: any) {
   if (!active || !payload?.length) return null
   return (
     <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-3 py-2 text-xs space-y-1 min-w-[140px]">
-      <p className="font-semibold text-gray-700 mb-1">{shortDate(label)}</p>
+      <p className="font-semibold text-gray-700 mb-1">{shortDate(label, tz)}</p>
       {payload.map((p: any) => (
         <div key={p.name} className="flex justify-between gap-4">
           <span style={{ color: p.color }}>{p.name}</span>
@@ -127,17 +140,12 @@ export default function FinancePage() {
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
   const [sym, setSym]           = useState('₱')
+  const [timezone, setTimezone] = useState('UTC')
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
   const [autoCogsEnabled, setAutoCogsEnabled] = useState<boolean>(true)
   const [cogsToggleLoading, setCogsToggleLoading] = useState(false)
   const [cleanupLoading, setCleanupLoading] = useState(false)
   const [shopId, setShopId] = useState<string>('')
-
-  useEffect(() => {
-    const r = presetRange('7d')
-    setFrom(r.from)
-    setTo(r.to)
-  }, [])
 
   useEffect(() => {
     fetch('/api/shop')
@@ -146,8 +154,18 @@ export default function FinancePage() {
         if (d?.shop?.currency_symbol) setSym(d.shop.currency_symbol)
         if (d?.shop?.id) setShopId(d.shop.id)
         if (d?.shop) setAutoCogsEnabled(d.shop.feature_auto_cogs !== false)
+        const tz = d?.shop?.timezone || 'UTC'
+        setTimezone(tz)
+        const r = presetRange('7d', tz)
+        setFrom(r.from)
+        setTo(r.to)
       })
-      .catch(() => {})
+      .catch(() => {
+        // Fallback: initialise dates in UTC
+        const r = presetRange('7d', 'UTC')
+        setFrom(r.from)
+        setTo(r.to)
+      })
   }, [])
 
   async function cleanupOrphanedEntries() {
@@ -213,7 +231,7 @@ export default function FinancePage() {
   function applyPreset(p: Preset) {
     setPreset(p)
     if (p !== 'custom') {
-      const r = presetRange(p)
+      const r = presetRange(p, timezone)
       setFrom(r.from)
       setTo(r.to)
     }
@@ -397,9 +415,9 @@ export default function FinancePage() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                  <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <XAxis dataKey="date" tickFormatter={d => shortDate(d, timezone)} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={v => `${sym}${v.toLocaleString()}`} width={70} />
-                  <Tooltip content={<ChartTooltip sym={sym} />} />
+                  <Tooltip content={<ChartTooltip sym={sym} tz={timezone} />} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                   <Area type="monotone" dataKey="revenue" name="Revenue"    stroke="#6366f1" strokeWidth={2} fill="url(#revenue)" />
                   <Area type="monotone" dataKey="net"     name="Net Profit" stroke="#10b981" strokeWidth={2} fill="url(#net)" />
@@ -414,9 +432,9 @@ export default function FinancePage() {
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={daily} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                  <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <XAxis dataKey="date" tickFormatter={d => shortDate(d, timezone)} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={v => `${sym}${v.toLocaleString()}`} width={70} />
-                  <Tooltip content={<ChartTooltip sym={sym} />} />
+                  <Tooltip content={<ChartTooltip sym={sym} tz={timezone} />} />
                   <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                   <Bar dataKey="cogs"     name="COGS"             stackId="a" fill="#f97316" radius={[0,0,0,0]} />
                   <Bar dataKey="payroll"  name="Payroll"          stackId="a" fill="#ec4899" radius={[0,0,0,0]} />

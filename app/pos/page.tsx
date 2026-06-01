@@ -291,12 +291,14 @@ function DiningOptionModal({ options, onSelect, onSkip }: { options: any[]; onSe
 function OpenTicketsModal({
   tickets,
   currencySymbol,
+  shopTimezone,
   onLoad,
   onDelete,
   onClose,
 }: {
   tickets: any[]
   currencySymbol: string
+  shopTimezone: string
   onLoad: (ticket: any) => void
   onDelete: (id: string) => void
   onClose: () => void
@@ -331,7 +333,7 @@ function OpenTicketsModal({
                       )}
                     </div>
                     <p className="text-xs text-gray-400">{t.item_count} item{t.item_count !== 1 ? 's' : ''} · {currencySymbol}{Number(t.total).toFixed(2)}</p>
-                    <p className="text-xs text-gray-300 mt-0.5">{new Date(t.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                    <p className="text-xs text-gray-300 mt-0.5">{new Intl.DateTimeFormat('en-US', { timeZone: shopTimezone, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(t.created_at))}</p>
                   </div>
                   <div className="flex gap-1.5 flex-shrink-0">
                     <button onClick={() => onLoad(t)} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition-colors">
@@ -461,6 +463,7 @@ export default function POSPage() {
   const [userName, setUserName] = useState('')
   const [now, setNow] = useState<Date | null>(null)
   const [shopId, setShopId] = useState('')
+  const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
 
   // Feature flags
   const [featureShifts, setFeatureShifts] = useState(false)
@@ -500,8 +503,8 @@ export default function POSPage() {
     return () => clearInterval(timer)
   }, [])
 
-  const formattedTime = now ? now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''
-  const formattedDate = now ? now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : ''
+  const formattedTime = now ? new Intl.DateTimeFormat('en-US', { timeZone: shopTimezone, hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(now) : ''
+  const formattedDate = now ? new Intl.DateTimeFormat('en-US', { timeZone: shopTimezone, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).format(now) : ''
 
   useEffect(() => {
     async function load() {
@@ -528,6 +531,7 @@ export default function POSPage() {
       const { data: shop } = await supabase.from('shops').select('*').eq('id', shopId).single()
       if (!shop) return
       setShopId(shop.id)
+      if (shop.timezone) setShopTimezone(shop.timezone)
 
       setFeatureShifts(shop.feature_shifts === true)
       setFeatureDiningOptions(shop.feature_dining_options === true)
@@ -893,6 +897,7 @@ export default function POSPage() {
         <OpenTicketsModal
           tickets={openTickets}
           currencySymbol={currencySymbol}
+          shopTimezone={shopTimezone}
           onLoad={handleLoadTicket}
           onDelete={handleDeleteTicket}
           onClose={() => setShowTicketsModal(false)}

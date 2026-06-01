@@ -216,11 +216,153 @@ function VoidTypeModal({ onConfirm, onClose }: {
   )
 }
 
+// ── Receipt Modal ─────────────────────────────────────────────────────────────
+function ReceiptModal({
+  tx, items, currencySymbol, shopTimezone, onClose,
+}: {
+  tx: any
+  items: any[]
+  currencySymbol: string
+  shopTimezone: string
+  onClose: () => void
+}) {
+  const isVoided = tx._type === 'refund'
+  const subtotal = items.reduce((s: number, i: any) => s + Number(i.line_total), 0)
+  const discount = Number(tx.discount_amount ?? 0)
+  const tax      = Number(tx.tax_amount ?? 0)
+  const total    = Number(tx.total ?? 0)
+
+  function handlePrint() {
+    const line = '--------------------------------'
+    const row  = (l: string, r: string) => l + ' '.repeat(Math.max(1, 32 - l.length - r.length)) + r
+    const lines = [
+      isVoided ? '*** VOIDED RECEIPT ***' : '*** RECEIPT ***',
+      `Ref: ${tx._ref}`,
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: shopTimezone, month: 'short', day: 'numeric',
+        year: 'numeric', hour: '2-digit', minute: '2-digit',
+      }).format(tx._time),
+      line,
+      ...items.map((i: any) => row(`${i.quantity}x ${i.item_name}`, `${currencySymbol}${Number(i.line_total).toFixed(2)}`)),
+      line,
+      ...(discount > 0 ? [row('Subtotal', `${currencySymbol}${subtotal.toFixed(2)}`), row('Discount', `-${currencySymbol}${discount.toFixed(2)}`)] : []),
+      ...(tax > 0      ? [row('Tax',      `${currencySymbol}${tax.toFixed(2)}`)] : []),
+      row('TOTAL', `${currencySymbol}${total.toFixed(2)}`),
+      row('Payment', tx.payment_types?.name || 'Cash'),
+      ...(tx.note ? ['', `Note: ${tx.note}`] : []),
+      '',
+    ]
+    const win = window.open('', '_blank', 'width=400,height=600')
+    if (!win) return
+    win.document.write(`<html><head><style>body{font-family:'Courier New',monospace;font-size:12px;white-space:pre;margin:16px}@media print{@page{margin:0}body{margin:8mm}}</style></head><body>${lines.join('\n').replace(/</g, '&lt;')}</body></html>`)
+    win.document.close(); win.focus(); win.print()
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden" style={{ maxHeight: '85vh' }}>
+
+        {/* Header */}
+        <div className={`px-5 py-4 flex items-center justify-between flex-shrink-0 ${isVoided ? 'bg-red-50 border-b border-red-100' : 'bg-indigo-50 border-b border-indigo-100'}`}>
+          <div>
+            <p className={`text-xs font-semibold uppercase tracking-wider ${isVoided ? 'text-red-500' : 'text-indigo-500'}`}>
+              {isVoided ? 'Voided Receipt' : 'Receipt'}
+            </p>
+            <p className="text-sm font-bold text-gray-900 mt-0.5">{tx._ref}</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {new Intl.DateTimeFormat('en-US', {
+                timeZone: shopTimezone, month: 'short', day: 'numeric',
+                year: 'numeric', hour: '2-digit', minute: '2-digit',
+              }).format(tx._time)}
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-white/60 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Items */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-1.5">
+          {items.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-4">No items</p>
+          ) : (
+            items.map((item: any, i: number) => (
+              <div key={i} className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs text-gray-400 flex-shrink-0">{item.quantity}×</span>
+                  <span className="text-sm text-gray-800 truncate">{item.item_name}</span>
+                </div>
+                <span className="text-sm font-medium text-gray-900 flex-shrink-0 tabular-nums">
+                  {currencySymbol}{Number(item.line_total).toFixed(2)}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Totals */}
+        <div className="px-5 pb-4 pt-3 border-t border-gray-100 flex-shrink-0 space-y-1.5">
+          {discount > 0 && (
+            <>
+              <div className="flex justify-between text-xs text-gray-500">
+                <span>Subtotal</span><span className="tabular-nums">{currencySymbol}{subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-xs text-purple-600">
+                <span>Discount</span><span className="tabular-nums">−{currencySymbol}{discount.toFixed(2)}</span>
+              </div>
+            </>
+          )}
+          {tax > 0 && (
+            <div className="flex justify-between text-xs text-gray-500">
+              <span>Tax</span><span className="tabular-nums">{currencySymbol}{tax.toFixed(2)}</span>
+            </div>
+          )}
+          <div className="flex justify-between text-sm font-bold text-gray-900 pt-1 border-t border-gray-100">
+            <span>Total</span>
+            <span className={`tabular-nums ${isVoided ? 'line-through text-gray-400' : ''}`}>
+              {currencySymbol}{total.toFixed(2)}
+            </span>
+          </div>
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>Payment</span><span>{tx.payment_types?.name || 'Cash'}</span>
+          </div>
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>Staff</span><span>{tx._staff}</span>
+          </div>
+          {tx.note && (
+            <div className="bg-amber-50 rounded-lg px-3 py-2 text-xs text-amber-700 mt-1">
+              📝 {tx.note}
+            </div>
+          )}
+          {isVoided && tx.void_note && (
+            <div className="bg-red-50 rounded-lg px-3 py-2 text-xs text-red-600 mt-1">
+              ⚠️ {tx.void_note}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 pb-5 pt-1 flex gap-2 flex-shrink-0">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
+            Close
+          </button>
+          <button onClick={handlePrint} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-1.5">
+            <Printer className="w-4 h-4" /> Print
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Helper: generate ref number from date + per-shift sequence ────────────────
-function buildRefNumber(date: Date, sequence: number): string {
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  const y = String(date.getFullYear())
+function buildRefNumber(date: Date, sequence: number, tz = 'Asia/Manila'): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date)
+  const y = parts.find(p => p.type === 'year')?.value ?? ''
+  const m = parts.find(p => p.type === 'month')?.value ?? ''
+  const d = parts.find(p => p.type === 'day')?.value ?? ''
   return `${m}${d}${y}-${String(sequence).padStart(5, '0')}`
 }
 
@@ -237,11 +379,13 @@ function ShiftReportContent() {
   const [receipts, setReceipts] = useState<any[]>([])
   const [cashMovements, setCashMovements] = useState<any[]>([])
   const [receiptItems, setReceiptItems] = useState<Record<string, any[]>>({})
+  const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
 
   const [pinAction, setPinAction] = useState<{ type: 'void' | 'edit' | 'reprint'; tx: any } | null>(null)
   const [showPin, setShowPin] = useState(false)
   const [editReceipt, setEditReceipt] = useState<any | null>(null)
   const [voidPending, setVoidPending] = useState<{ tx: any; managerId: string; managerName: string } | null>(null)
+  const [viewReceipt, setViewReceipt] = useState<any | null>(null)
 
   const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316']
 
@@ -250,7 +394,7 @@ function ShiftReportContent() {
     setLoading(true)
 
     const [shiftRes, receiptsRes, movementsRes] = await Promise.all([
-      supabase.from('shifts').select('*, app_users(id, name, role)').eq('id', shiftId).single(),
+      supabase.from('shifts').select('*, app_users(id, name, role), shops(timezone)').eq('id', shiftId).single(),
       supabase.from('receipts')
         .select('*, app_users:employee_id(name), payment_types(name)')
         .eq('shift_id', shiftId)
@@ -260,6 +404,7 @@ function ShiftReportContent() {
 
     const shiftData = shiftRes.data
     setShift(shiftData)
+    if (shiftData?.shops?.timezone) setShopTimezone(shiftData.shops.timezone)
     const rxs = receiptsRes.data || []
     setReceipts(rxs)
     setCashMovements(movementsRes.data || [])
@@ -305,7 +450,7 @@ function ShiftReportContent() {
   const sortedReceipts = [...receipts].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
   const receiptRefMap: Record<string, string> = {}
   sortedReceipts.forEach((r, idx) => {
-    receiptRefMap[r.id] = buildRefNumber(new Date(r.created_at), idx + 1)
+    receiptRefMap[r.id] = buildRefNumber(new Date(r.created_at), idx + 1, shopTimezone)
   })
 
   const allTransactions = [
@@ -323,7 +468,7 @@ function ShiftReportContent() {
       _ref: '—',
       _staff: shift?.app_users?.name || '—',
     })),
-  ].sort((a, b) => a._time.getTime() - b._time.getTime())
+  ].sort((a, b) => b._time.getTime() - a._time.getTime())
 
   // ── Action handlers ───────────────────────────────────────────────────────
   function requestAction(type: 'void' | 'edit' | 'reprint', tx: any) {
@@ -373,7 +518,7 @@ function ShiftReportContent() {
     const lines = [
       `*** REPRINT ***`,
       `Ref: ${receipt._ref}`,
-      new Date(receipt.created_at).toLocaleString(),
+      new Intl.DateTimeFormat('en-US', { timeZone: shopTimezone, month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(receipt.created_at)),
       line,
       ...items.map((i: any) => row(`${i.quantity}x ${i.item_name}`, `${currencySymbol}${Number(i.line_total).toFixed(2)}`)),
       line,
@@ -414,6 +559,15 @@ function ShiftReportContent() {
           onSaved={loadData}
         />
       )}
+      {viewReceipt && (
+        <ReceiptModal
+          tx={viewReceipt}
+          items={receiptItems[viewReceipt.id] || []}
+          currencySymbol={currencySymbol}
+          shopTimezone={shopTimezone}
+          onClose={() => setViewReceipt(null)}
+        />
+      )}
 
       <div className="min-h-screen bg-gray-50 flex flex-col">
 
@@ -429,7 +583,7 @@ function ShiftReportContent() {
             <div className="min-w-0">
               <h2 className="text-sm font-semibold text-gray-900">Shift Sales Report</h2>
               <p className="text-xs text-gray-400 truncate">
-                {shift ? `${shift.app_users?.name || 'Unknown'} · ${new Date(shift.clock_in).toLocaleString()}` : 'Loading…'}
+                {shift ? `${shift.app_users?.name || 'Unknown'} · ${new Intl.DateTimeFormat('en-US', { timeZone: shopTimezone, month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(shift.clock_in))}` : 'Loading…'}
               </p>
             </div>
           </div>
@@ -537,10 +691,14 @@ function ShiftReportContent() {
                         return (
                           <tr key={`${tx._type}-${tx.id}`} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                             <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
-                              {tx._time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {new Intl.DateTimeFormat('en-US', { timeZone: shopTimezone, hour: '2-digit', minute: '2-digit' }).format(tx._time)}
                             </td>
                             <td className="px-3 py-2 font-mono text-gray-700 whitespace-nowrap">
-                              {tx._ref}
+                              {(isSale || isRefund) ? (
+                                <button onClick={() => setViewReceipt(tx)} className="hover:text-indigo-600 hover:underline transition-colors text-left">
+                                  {tx._ref}
+                                </button>
+                              ) : tx._ref}
                             </td>
                             <td className="px-3 py-2 whitespace-nowrap">
                               {isSale && (
@@ -587,6 +745,10 @@ function ShiftReportContent() {
                               <div className="flex items-center justify-center gap-0.5">
                                 {isSale && (
                                   <>
+                                    <button onClick={() => setViewReceipt(tx)} title="View receipt"
+                                      className="p-1.5 rounded-lg text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors">
+                                      <Receipt className="w-3.5 h-3.5" />
+                                    </button>
                                     <button onClick={() => requestAction('reprint', tx)} title="Reprint (manager PIN)"
                                       className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
                                       <Printer className="w-3.5 h-3.5" />
@@ -602,10 +764,16 @@ function ShiftReportContent() {
                                   </>
                                 )}
                                 {isRefund && (
-                                  <button onClick={() => requestAction('reprint', tx)} title="Reprint void receipt (manager PIN)"
-                                    className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
-                                    <Printer className="w-3.5 h-3.5" />
-                                  </button>
+                                  <>
+                                    <button onClick={() => setViewReceipt(tx)} title="View receipt"
+                                      className="p-1.5 rounded-lg text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors">
+                                      <Receipt className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button onClick={() => requestAction('reprint', tx)} title="Reprint void receipt (manager PIN)"
+                                      className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
+                                      <Printer className="w-3.5 h-3.5" />
+                                    </button>
+                                  </>
                                 )}
                                 {(isCashIn || isCashOut) && (
                                   <span className="text-gray-300 text-xs px-2">—</span>

@@ -253,7 +253,7 @@ export default function StoreSettingsPage({
               <option key={tz.value} value={tz.value}>{tz.label}</option>
             ))}
           </select>
-          <p className="text-xs text-gray-400 mt-2">Used for date grouping in reports and financial summaries.</p>
+          <p className="text-xs text-gray-400 mt-2">Used for clock-in/out date calculations, late &amp; overtime tracking, and report grouping. All employees use this timezone regardless of their device location.</p>
         </div>
 
       </div>

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+// ─── Helper: current date in shop's timezone ─────────────────────────────────
+function getShopDate(timezone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
+}
+
 export async function POST(req: NextRequest) {
   console.log('🔴 [RECEIPTS ROUTE] HIT — debug version active')
   const supabase = createAdminClient()
@@ -18,6 +23,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // ── 0. Fetch shop timezone ─────────────────────────────────────────────────
+    const { data: shopRow } = await supabase
+      .from('shops')
+      .select('timezone')
+      .eq('id', shop_id)
+      .single()
+    const entryDate = getShopDate(shopRow?.timezone ?? 'Asia/Manila')
+
     // ── 1. Insert receipt ──────────────────────────────────────────────────────
     const { data: receipt, error: receiptError } = await supabase
       .from('receipts')
@@ -45,7 +58,6 @@ export async function POST(req: NextRequest) {
     await supabase.from('receipt_items').insert(receiptItems)
 
     // ── 3. Stock deduction + COGS per item ────────────────────────────────────
-    const entryDate = new Date().toISOString().split('T')[0]
     const financialEntries: any[] = []
     const stockMovements: any[] = []
 

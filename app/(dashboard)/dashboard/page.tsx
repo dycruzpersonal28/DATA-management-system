@@ -73,13 +73,32 @@ type ChartPoint = { label: string; sales: number; txCount: number }
 function fmt(n: number) {
   return `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
+// Returns YYYY-MM-DD in the given IANA timezone (or UTC if not supplied)
+function toDateStrTz(d: Date, tz?: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'UTC' }).format(d)
+}
+// Legacy helper — kept for non-timezone-sensitive uses
 function toDateStr(d: Date) { return d.toISOString().split('T')[0] }
-function today() { return toDateStr(new Date()) }
-function startOfMonth() {
-  const d = new Date(); d.setDate(1); return toDateStr(d)
+function todayTz(tz?: string) { return toDateStrTz(new Date(), tz) }
+function startOfMonthTz(tz?: string): string {
+  const now = new Date()
+  // Get current year/month in shop timezone
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now)
+  const y = parts.find(p => p.type === 'year')!.value
+  const m = parts.find(p => p.type === 'month')!.value
+  return `${y}-${m}-01`
 }
 function fmtDateTime(s: string) {
   return new Date(s).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+// Generates the same per-shift reference number format used in the shift report page
+function buildRefNumber(date: Date, sequence: number): string {
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  const y = String(date.getFullYear())
+  return `${m}${d}${y}-${String(sequence).padStart(5, '0')}`
 }
 function canSeeCogs(role: UserRole) {
   const r = role?.toLowerCase()
@@ -553,8 +572,9 @@ function VoidModal({ receipt, onConfirm, onCancel, voiding }: {
 export default function DashboardPage() {
   const supabase = createClient()
 
-  const [dateFrom, setDateFrom] = useState(startOfMonth)
-  const [dateTo, setDateTo] = useState(today)
+  const [shopTimezone, setShopTimezone] = useState<string>('Asia/Manila')
+  const [dateFrom, setDateFrom] = useState(() => startOfMonthTz('Asia/Manila'))
+  const [dateTo, setDateTo] = useState(() => todayTz('Asia/Manila'))
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -604,26 +624,48 @@ export default function DashboardPage() {
     fetchRole()
   }, [])
 
-  // Quick presets
+  // Quick presets — all dates resolved in shop timezone
   function applyPreset(preset: string) {
-    const now = new Date()
-    const y = now.getFullYear()
-    const m = now.getMonth()
-    if (preset === 'today') { setDateFrom(today()); setDateTo(today()) }
-    else if (preset === 'this_month') { setDateFrom(toDateStr(new Date(y, m, 1))); setDateTo(today()) }
-    else if (preset === 'last_month') { setDateFrom(toDateStr(new Date(y, m - 1, 1))); setDateTo(toDateStr(new Date(y, m, 0))) }
-    else if (preset === 'last_7') { const d = new Date(); d.setDate(d.getDate() - 7); setDateFrom(toDateStr(d)); setDateTo(today()) }
-    else if (preset === 'last_30') { const d = new Date(); d.setDate(d.getDate() - 30); setDateFrom(toDateStr(d)); setDateTo(today()) }
+    const tz = shopTimezone
+    const todayStr = todayTz(tz)
+    if (preset === 'today') {
+      setDateFrom(todayStr); setDateTo(todayStr)
+    } else if (preset === 'this_month') {
+      setDateFrom(startOfMonthTz(tz)); setDateTo(todayStr)
+    } else if (preset === 'last_month') {
+      // First day of previous month in shop tz
+      const now = new Date()
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz, year: 'numeric', month: '2-digit',
+      }).formatToParts(now)
+      const y = parseInt(parts.find(p => p.type === 'year')!.value)
+      const m = parseInt(parts.find(p => p.type === 'month')!.value)
+      const prevMonth = m === 1 ? 12 : m - 1
+      const prevYear  = m === 1 ? y - 1 : y
+      const mm = String(prevMonth).padStart(2, '0')
+      // Last day of previous month
+      const lastDay = new Date(Date.UTC(prevYear, prevMonth, 0))
+      setDateFrom(`${prevYear}-${mm}-01`)
+      setDateTo(toDateStrTz(lastDay, tz))
+    } else if (preset === 'last_7') {
+      const d = new Date(); d.setDate(d.getDate() - 7)
+      setDateFrom(toDateStrTz(d, tz)); setDateTo(todayStr)
+    } else if (preset === 'last_30') {
+      const d = new Date(); d.setDate(d.getDate() - 30)
+      setDateFrom(toDateStrTz(d, tz)); setDateTo(todayStr)
+    }
   }
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      // ── Shop currency ──────────────────────────────────────────────────────
-      const { data: shop } = await supabase.from('shops').select('id, currency_symbol').single()
+      // ── Shop settings (currency + timezone) ──────────────────────────────
+      const { data: shop } = await supabase.from('shops').select('id, currency_symbol, timezone').single()
       if (shop?.currency_symbol) setCurrencySymbol(shop.currency_symbol)
       const shopId = shop?.id
+      const tz = shop?.timezone || 'Asia/Manila'
+      setShopTimezone(tz)
 
       // ── Date window (inclusive) ────────────────────────────────────────────
       const fromTs = `${dateFrom}T00:00:00`
@@ -642,7 +684,7 @@ export default function DashboardPage() {
             modifiers, addons, note, variant_id, item_id
           )
         `)
-        .eq('status', 'completed')
+        .in('status', ['completed', 'voided'])
         .gte('created_at', fromTs)
         .lte('created_at', toTs)
         .order('created_at', { ascending: false })
@@ -735,11 +777,30 @@ export default function DashboardPage() {
         })),
       }))
 
-      setReceipts(rows)
+      // ── Compute per-shift reference numbers (matches shift report page logic) ─
+      const byShift: Record<string, ReceiptRow[]> = {}
+      for (const row of rows) {
+        const key = row.shift_id || '__no_shift__'
+        if (!byShift[key]) byShift[key] = []
+        byShift[key].push(row)
+      }
+      const refMap: Record<string, string> = {}
+      for (const shiftRows of Object.values(byShift)) {
+        const sorted = [...shiftRows].sort(
+          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        )
+        sorted.forEach((r, idx) => {
+          refMap[r.id] = buildRefNumber(new Date(r.created_at), idx + 1)
+        })
+      }
+      const rowsWithRefs = rows.map(r => ({ ...r, transaction_number: refMap[r.id] || null }))
 
-      // ── Payment breakdown ─────────────────────────────────────────────────
+      setReceipts(rowsWithRefs)
+
+      // ── Payment breakdown — completed only ────────────────────────────────
+      const completedRows = rows.filter(r => r.status === 'completed')
       const payMap: Record<string, { amount: number; count: number }> = {}
-      for (const r of rows) {
+      for (const r of completedRows) {
         const pn = r.payment_name
         if (!payMap[pn]) payMap[pn] = { amount: 0, count: 0 }
         payMap[pn].amount += r.total
@@ -748,10 +809,10 @@ export default function DashboardPage() {
       const paymentBreakdown = Object.entries(payMap).map(([name, v]) => ({ name, ...v }))
         .sort((a, b) => b.amount - a.amount)
 
-      // ── Totals ────────────────────────────────────────────────────────────
-      const grossSales = rows.reduce((s, r) => s + r.subtotal, 0)
-      const discounts = rows.reduce((s, r) => s + r.discount_amount, 0)
-      const taxes = rows.reduce((s, r) => s + r.tax_amount, 0)
+      // ── Totals — completed only (voided rows stay visible but don't count) ─
+      const grossSales = completedRows.reduce((s, r) => s + r.subtotal, 0)
+      const discounts = completedRows.reduce((s, r) => s + r.discount_amount, 0)
+      const taxes = completedRows.reduce((s, r) => s + r.tax_amount, 0)
       const cashoutTotal = (rawCashMovements || [])
         .filter((m: any) => m.type === 'cash_out')
         .reduce((s: number, m: any) => s + Number(m.amount), 0)
@@ -780,7 +841,7 @@ export default function DashboardPage() {
         }))
 
       // ── Discount breakdown ─────────────────────────────────────────────────
-      const discountBreakdown = rows
+      const discountBreakdown = completedRows
         .filter(r => r.discount_amount > 0)
         .map(r => ({ receipt_number: r.receipt_number, amount: r.discount_amount, date: r.created_at }))
 
@@ -789,9 +850,9 @@ export default function DashboardPage() {
         netSales, paymentBreakdown, cashoutBreakdown, discountBreakdown,
       })
 
-      // ── Top selling items ─────────────────────────────────────────────────
+      // ── Top selling items — completed only ───────────────────────────────
       const itemAgg: Record<string, TopItem> = {}
-      for (const r of rows) {
+      for (const r of completedRows) {
         for (const item of r.items) {
           const k = item.item_name
           if (!itemAgg[k]) itemAgg[k] = { name: k, qty: 0, revenue: 0 }
@@ -807,7 +868,7 @@ export default function DashboardPage() {
         (new Date(dateTo).getTime() - new Date(dateFrom).getTime()) / (1000 * 60 * 60 * 24)
       ) + 1
       const buckets: Record<string, { sales: number; txCount: number }> = {}
-      for (const r of [...rows].reverse()) {
+      for (const r of [...completedRows].reverse()) {
         const d = new Date(r.created_at)
         let key: string
         if (diffDays <= 1) {
@@ -1135,10 +1196,10 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="overflow-x-auto" style={{ maxHeight: '600px', overflowY: 'auto' }}>
-                <table className="w-full text-sm min-w-[900px]">
+                <table className="w-full text-sm min-w-[1050px]">
                   <thead className="sticky top-0 z-10 bg-gray-50">
                     <tr className="border-b border-gray-200">
-                      {['Receipt #', 'Time', 'Cashier', 'Shift', 'Items', 'Payment', 'Amount', 'Actions'].map(h => (
+                      {['Receipt #', 'Ref #', 'Time', 'Cashier', 'Shift', 'Items', 'Payment', 'Amount', 'Actions'].map(h => (
                         <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
                           {h}
                         </th>
@@ -1147,9 +1208,20 @@ export default function DashboardPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {receipts.map(r => (
-                      <tr key={r.id} className="hover:bg-gray-50/80 transition-colors group">
+                      <tr key={r.id} className={`hover:bg-gray-50/80 transition-colors group ${r.status === 'voided' ? 'opacity-60 bg-red-50/40' : ''}`}>
                         <td className="px-4 py-3">
-                          <span className="text-sm font-semibold text-indigo-600">{r.receipt_number}</span>
+                          <div className="flex flex-col gap-0.5">
+                            <span className={`text-sm font-semibold ${r.status === 'voided' ? 'text-gray-400 line-through' : 'text-indigo-600'}`}>{r.receipt_number}</span>
+                            {r.status === 'voided' && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-600 w-fit">VOIDED</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {r.transaction_number
+                            ? <span className="text-xs font-mono font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">{r.transaction_number}</span>
+                            : <span className="text-xs text-gray-300">—</span>
+                          }
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
                           {new Date(r.created_at).toLocaleString('en-PH', {
@@ -1217,10 +1289,12 @@ export default function DashboardPage() {
                               className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
                               <Printer className="w-3.5 h-3.5" />
                             </button>
-                            <button onClick={() => setVoidTarget(r)} title="Void"
-                              className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {r.status !== 'voided' && (
+                              <button onClick={() => setVoidTarget(r)} title="Void"
+                                className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

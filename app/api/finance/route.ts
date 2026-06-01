@@ -4,6 +4,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+// ─── Helper: current date in shop's timezone ─────────────────────────────────
+function getShopDate(timezone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
+}
+
 // GET /api/finance?from=YYYY-MM-DD&to=YYYY-MM-DD
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
@@ -34,10 +39,11 @@ export async function GET(req: NextRequest) {
   // ── Fetch shop settings (COGS toggle) ─────────────────────────────────────
   const { data: shopRow } = await admin
     .from('shops')
-    .select('feature_auto_cogs')
+    .select('feature_auto_cogs, timezone')
     .eq('id', shop_id)
     .single()
   const autoCogsEnabled = shopRow?.feature_auto_cogs !== false
+  const shopTimezone    = shopRow?.timezone ?? 'Asia/Manila'
 
   // ── Fetch all financial entries in range ───────────────────────────────────
   const { data: entries, error } = await admin
@@ -133,20 +139,15 @@ export async function GET(req: NextRequest) {
   }))
 
   // ── Real-time labor accrual (clocked-in employees today) ──────────────────
-  const today = new Date().toISOString().split('T')[0]
+  const today = getShopDate(shopTimezone)
   let laborToday = 0
 
   if (to >= today) {
-    // Use PHT (UTC+8) day boundaries to match kiosk clock-in timestamps
-    const todayStartPHT = `${today}T00:00:00+08:00`
-    const todayEndPHT   = `${today}T23:59:59+08:00`
-
     const { data: activeLogs } = await admin
       .from('time_logs')
       .select('employee_id, clock_in, clock_out, total_hours')
       .eq('shop_id', shop_id)
-      .gte('clock_in', todayStartPHT)
-      .lte('clock_in', todayEndPHT)
+      .eq('date', today)
       .order('clock_in', { ascending: false })
 
     // Fetch employee rates separately to avoid FK join ambiguity

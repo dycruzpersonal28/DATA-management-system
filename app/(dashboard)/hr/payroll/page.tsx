@@ -69,11 +69,24 @@ interface TimeLog {
 
 interface PayrollSettings {
   late_deduction_per_minute: number
+  late_deduction_type?: 'flat' | 'per_minute'
+  shop_timezone?: string
   sss_rate: number
   philhealth_rate: number
   pagibig_flat: number
   overtime_multiplier: number
   tax_rate: number
+  payslip_notes?: string
+  break_mode?: 'auto' | 'manual'
+  break_duration_minutes?: number
+  kiosk_mode?: 'show_all' | 'pin_first'
+}
+
+interface ShiftSchedule {
+  id: string
+  name: string
+  start_time: string   // e.g. "08:00"
+  end_time: string     // e.g. "17:00"
 }
 
 // ─── Other Deductions ─────────────────────────────────────────────────────────
@@ -194,8 +207,8 @@ const fmtDate = (d: string) => {
   return `${MONTHS[month - 1]} ${day}, ${year}`
 }
 
-const fmtTime = (iso: string) =>
-  new Date(iso).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })
+const fmtTime = (iso: string, tz = 'Asia/Manila') =>
+  new Date(iso).toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' })
 
 // ─── Badge ────────────────────────────────────────────────────────────────────
 
@@ -434,9 +447,9 @@ function PayslipRow({ slip, onUpdate, onPrint, onVoid }: {
 
 // ─── Print Payslip ────────────────────────────────────────────────────────────
 
-function printPayslip(slip: Payslip, period: PayrollPeriod, tpl: PayslipTemplate | null = null) {
-  // ── Other (free-form) deductions ──
-  const otherDeductions = loadOtherDeductions().filter(o => o.label.trim() && o.amount > 0)
+function printPayslip(slip: Payslip, period: PayrollPeriod, tpl: PayslipTemplate | null = null, lateLogs?: { date: string; minutes: number }[], payslipNotes?: string, shopTimezone = 'Asia/Manila') {
+  // ── Other (free-form) deductions — use values stored ON the payslip ──
+  const otherDeductions = (slip.other_deductions ?? []).filter(o => o.label.trim() && o.amount > 0)
 
   // ── Resolve template settings (fall back to "show everything") ──
   const color        = tpl?.primaryColor   ?? '#111111'
@@ -475,6 +488,8 @@ function printPayslip(slip: Payslip, period: PayrollPeriod, tpl: PayslipTemplate
   .employee{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #e0e0e0}
   .employee p{margin:2px 0}
   .footer{margin-top:32px;font-size:10px;color:#aaa}
+  .notes-box{margin-top:16px;padding:10px 12px;background:#f9f9f9;border:1px solid #e0e0e0;border-radius:6px;font-size:11px;color:#444;white-space:pre-wrap}
+  .late-row{display:flex;justify-content:space-between;padding:3px 0;font-size:11px;color:#666;border-bottom:1px solid #f5f5f5}
   @media print{body{padding:16px}}
 </style>
 </head><body>
@@ -506,9 +521,17 @@ ${otherDeductions.map(o => `<div class="row"><span>${o.label}</span><span>–${f
 <div class="row total"><span>Total Deductions</span><span>–${fmt(deductions)}</span></div>
 
 <div class="net"><span>NET PAY</span><span>${fmt(slip.net_pay)}</span></div>
+
+${lateLogs && lateLogs.length > 0 ? `
+<p class="section-title">Late Records</p>
+${lateLogs.map(l => `<div class="late-row"><span>${fmtDate(l.date)}</span><span>${l.minutes} min late</span></div>`).join('')}
+` : ''}
+
+${payslipNotes ? `<div class="notes-box">${payslipNotes}</div>` : ''}
+
 <p class="footer">
   ${footerNote ? `${footerNote}<br/>` : ''}
-  Generated ${new Date().toLocaleString('en-PH')}
+  Generated ${new Date().toLocaleString('en-US', { timeZone: shopTimezone })}
 </p>
 </body></html>`
 
@@ -567,14 +590,20 @@ function CreatePeriodModal({ onClose, onCreate, templates }: {
   onCreate: (data: { period_start: string; period_end: string; templateId?: string }) => Promise<void>
   templates: PayslipTemplate[]
 }) {
-  const today = new Date()
-  const day = today.getDate()
-  const defaultStart = day <= 15
-    ? `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-01`
-    : `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-16`
-  const defaultEnd = day <= 15
-    ? `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-15`
-    : new Date(today.getFullYear(), today.getMonth()+1, 0).toISOString().split('T')[0]
+  const tz = 'Asia/Manila'
+  const now = new Date()
+  const fmt = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d)
+  const tzParts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now)
+  const get = (t: string) => tzParts.find(p => p.type === t)?.value ?? '01'
+  const y = get('year'), m = get('month'), d = parseInt(get('day'))
+  const defaultStart = d <= 15 ? `${y}-${m}-01` : `${y}-${m}-16`
+  // Last day of month in shop timezone
+  const lastDay = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(
+    new Date(parseInt(y), parseInt(m), 0) // day 0 of next month = last day of current
+  )
+  const defaultEnd = d <= 15 ? `${y}-${m}-15` : lastDay
 
   const [form, setForm] = useState({ period_start: defaultStart, period_end: defaultEnd })
   const [templateId, setTemplateId] = useState<string>('')
@@ -657,33 +686,71 @@ function CreatePeriodModal({ onClose, onCreate, templates }: {
 function AddTimeLogModal({
   date,
   employees,
+  shifts,
+  shopTimezone,
   onClose,
   onSave,
 }: {
   date: string
   employees: Employee[]
+  shifts: ShiftSchedule[]
+  shopTimezone: string
   onClose: () => void
-  onSave: (log: { employee_id: string; clock_in: string; clock_out: string }) => Promise<void>
+  onSave: (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string }) => Promise<void>
 }) {
   const [employeeId, setEmployeeId] = useState('')
+  const [shiftId, setShiftId] = useState('')
   const [clockIn, setClockIn] = useState('08:00')
   const [clockOut, setClockOut] = useState('17:00')
   const [saving, setSaving] = useState(false)
+
+  // When a shift is selected, pre-fill clock-in with shift start time
+  const handleShiftChange = (id: string) => {
+    setShiftId(id)
+    const shift = shifts.find(s => s.id === id)
+    if (shift) {
+      setClockIn(shift.start_time.slice(0, 5))
+      setClockOut(shift.end_time.slice(0, 5))
+    }
+  }
+
+  // Compute late minutes based on selected shift
+  const lateMinutes = (() => {
+    const shift = shifts.find(s => s.id === shiftId)
+    if (!shift || !clockIn) return 0
+    const [sh, sm] = shift.start_time.split(':').map(Number)
+    const [ch, cm] = clockIn.split(':').map(Number)
+    const diff = (ch * 60 + cm) - (sh * 60 + sm)
+    return diff > 0 ? diff : 0
+  })()
+
+  // Convert a "yyyy-MM-dd" + "HH:mm" pair in the shop's timezone to a UTC ISO string
+  function toUtcIso(dateStr: string, timeStr: string, tz: string): string {
+    const naiveMs = new Date(`${dateStr}T${timeStr}:00Z`).getTime()
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    })
+    const parts = formatter.formatToParts(new Date(naiveMs))
+    const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+    const localIso = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`
+    const localMs = new Date(localIso + 'Z').getTime()
+    return new Date(naiveMs - (localMs - naiveMs)).toISOString()
+  }
 
   const handleSave = async () => {
     if (!employeeId) { toast.error('Please select an employee'); return }
     if (!clockIn) { toast.error('Please set a clock-in time'); return }
 
-    // Build ISO strings for the selected date
-    const clockInISO = `${date}T${clockIn}:00`
-    const clockOutISO = clockOut ? `${date}T${clockOut}:00` : ''
+    const clockInISO  = toUtcIso(date, clockIn, shopTimezone)
+    const clockOutISO = clockOut ? toUtcIso(date, clockOut, shopTimezone) : ''
 
     setSaving(true)
-    await onSave({ employee_id: employeeId, clock_in: clockInISO, clock_out: clockOutISO })
+    await onSave({ employee_id: employeeId, clock_in: clockInISO, clock_out: clockOutISO, shift_schedule_id: shiftId || undefined })
     setSaving(false)
   }
 
-  const displayDate = new Date(date + 'T12:00:00').toLocaleDateString('en-PH', {
+  const displayDate = new Date(date + 'T12:00:00').toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   })
 
@@ -716,6 +783,23 @@ function AddTimeLogModal({
             </select>
           </div>
 
+          {/* Shift selector */}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Shift <span className="text-gray-400 font-normal">(optional — auto-computes late)</span></label>
+            <select
+              value={shiftId}
+              onChange={e => handleShiftChange(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 bg-white"
+            >
+              <option value="">— No shift selected —</option>
+              {shifts.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)})
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Time inputs */}
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -738,6 +822,7 @@ function AddTimeLogModal({
             </div>
           </div>
 
+          {/* Hours summary */}
           {clockIn && clockOut && clockOut > clockIn && (
             <div className="bg-indigo-50 border border-indigo-100 rounded-lg px-4 py-2.5 text-xs text-indigo-700 flex items-center gap-2">
               <Clock className="w-3.5 h-3.5 flex-shrink-0" />
@@ -749,6 +834,20 @@ function AddTimeLogModal({
                 const rem = mins % 60
                 return `${hours}h ${rem > 0 ? `${rem}m` : ''} total`
               })()}
+            </div>
+          )}
+
+          {/* Late preview */}
+          {shiftId && lateMinutes > 0 && (
+            <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-2.5 text-xs text-red-700 flex items-center gap-2">
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              <span><strong>{lateMinutes} minutes late</strong> based on selected shift start time</span>
+            </div>
+          )}
+          {shiftId && lateMinutes === 0 && clockIn && (
+            <div className="bg-emerald-50 border border-emerald-100 rounded-lg px-4 py-2.5 text-xs text-emerald-700 flex items-center gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+              On time — no late deduction
             </div>
           )}
         </div>
@@ -774,6 +873,8 @@ function DayLogsModal({
   date,
   logs,
   employees,
+  shifts,
+  shopTimezone,
   onClose,
   onAddLog,
   onRefresh,
@@ -781,17 +882,19 @@ function DayLogsModal({
   date: string
   logs: TimeLog[]
   employees: Employee[]
+  shifts: ShiftSchedule[]
+  shopTimezone: string
   onClose: () => void
-  onAddLog: (log: { employee_id: string; clock_in: string; clock_out: string }) => Promise<void>
+  onAddLog: (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string }) => Promise<void>
   onRefresh: () => void
 }) {
   const [showAddModal, setShowAddModal] = useState(false)
 
-  const displayDate = new Date(date + 'T12:00:00').toLocaleDateString('en-PH', {
+  const displayDate = new Date(date + 'T12:00:00').toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   })
 
-  const handleSave = async (log: { employee_id: string; clock_in: string; clock_out: string }) => {
+  const handleSave = async (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string }) => {
     await onAddLog(log)
     setShowAddModal(false)
     onRefresh()
@@ -842,11 +945,11 @@ function DayLogsModal({
                   <div className="grid grid-cols-3 gap-3 mt-3">
                     <div>
                       <p className="text-xs text-gray-400">Clock In</p>
-                      <p className="text-sm font-medium text-gray-700">{fmtTime(log.clock_in)}</p>
+                      <p className="text-sm font-medium text-gray-700">{fmtTime(log.clock_in, shopTimezone)}</p>
                     </div>
                     <div>
                       <p className="text-xs text-gray-400">Clock Out</p>
-                      <p className="text-sm font-medium text-gray-700">{log.clock_out ? fmtTime(log.clock_out) : '—'}</p>
+                      <p className="text-sm font-medium text-gray-700">{log.clock_out ? fmtTime(log.clock_out, shopTimezone) : '—'}</p>
                     </div>
                     <div>
                       <p className="text-xs text-gray-400">Total Hours</p>
@@ -882,6 +985,8 @@ function DayLogsModal({
         <AddTimeLogModal
           date={date}
           employees={employees}
+          shifts={shifts}
+          shopTimezone={shopTimezone}
           onClose={() => setShowAddModal(false)}
           onSave={handleSave}
         />
@@ -894,12 +999,22 @@ function DayLogsModal({
 
 function AttendanceTab() {
   const today = new Date()
+  const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth())
   const [logsByDate, setLogsByDate] = useState<Record<string, TimeLog[]>>({})
   const [loading, setLoading] = useState(false)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
+  const [shifts, setShifts] = useState<ShiftSchedule[]>([])
+
+  // Fetch shop timezone once
+  useEffect(() => {
+    fetch('/api/shop-settings')
+      .then(r => r.json())
+      .then(data => { if (data?.timezone) setShopTimezone(data.timezone) })
+      .catch(() => {})
+  }, [])
 
   // Fetch employees once for the Add Log modal
   useEffect(() => {
@@ -907,6 +1022,17 @@ function AttendanceTab() {
       .then(r => safeJson(r))
       .then(data => {
         if (data.employees) setEmployees(data.employees)
+      })
+      .catch(() => {})
+  }, [])
+
+  // Fetch shifts once for the shift selector
+  useEffect(() => {
+    fetch('/api/shifts')
+      .then(r => safeJson(r))
+      .then(data => {
+        if (Array.isArray(data.shifts)) setShifts(data.shifts)
+        else if (Array.isArray(data)) setShifts(data)
       })
       .catch(() => {})
   }, [])
@@ -944,7 +1070,7 @@ function AttendanceTab() {
 
   useEffect(() => { fetchMonthLogs() }, [fetchMonthLogs])
 
-  const handleAddLog = async (log: { employee_id: string; clock_in: string; clock_out: string }) => {
+  const handleAddLog = async (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string }) => {
     try {
       const body: Record<string, any> = {
         action: 'manual',
@@ -953,6 +1079,9 @@ function AttendanceTab() {
       }
       if (log.clock_out) {
         body.clock_out = log.clock_out
+      }
+      if (log.shift_schedule_id) {
+        body.shift_schedule_id = log.shift_schedule_id
       }
 
       const res = await fetch('/api/time-logs', {
@@ -972,7 +1101,7 @@ function AttendanceTab() {
 
   const firstDay = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const todayStr = today.toISOString().split('T')[0]
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: shopTimezone }).format(today)
 
   const prevMonth = () => { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) }
   const nextMonth = () => { if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1) }
@@ -1056,6 +1185,8 @@ function AttendanceTab() {
           date={selectedDate}
           logs={logsByDate[selectedDate] || []}
           employees={employees}
+          shifts={shifts}
+          shopTimezone={shopTimezone}
           onClose={() => setSelectedDate(null)}
           onAddLog={handleAddLog}
           onRefresh={fetchMonthLogs}
@@ -1349,33 +1480,114 @@ const PAYROLL_SETTINGS_KEY = 'payroll_settings'
 function loadPayrollSettings(): PayrollSettings {
   try {
     const raw = localStorage.getItem(PAYROLL_SETTINGS_KEY)
-    if (!raw) return { late_deduction_per_minute: 0, sss_rate: 4.5, philhealth_rate: 2.5, pagibig_flat: 100, overtime_multiplier: 1.25, tax_rate: 0 }
-    return { late_deduction_per_minute: 0, sss_rate: 4.5, philhealth_rate: 2.5, pagibig_flat: 100, overtime_multiplier: 1.25, tax_rate: 0, ...JSON.parse(raw) }
-  } catch { return { late_deduction_per_minute: 0, sss_rate: 4.5, philhealth_rate: 2.5, pagibig_flat: 100, overtime_multiplier: 1.25, tax_rate: 0 } }
+    if (!raw) return { late_deduction_per_minute: 0, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60 }
+    return { late_deduction_per_minute: 0, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60, ...JSON.parse(raw) }
+  } catch { return { late_deduction_per_minute: 0, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60 } }
 }
 
 function savePayrollSettings(s: PayrollSettings) {
   try { localStorage.setItem(PAYROLL_SETTINGS_KEY, JSON.stringify(s)) } catch {}
 }
 
-function SettingsTab() {
-  const [settings, setSettings] = useState<PayrollSettings>(() =>
-    typeof window !== 'undefined' ? loadPayrollSettings() : { late_deduction_per_minute: 0, sss_rate: 4.5, philhealth_rate: 2.5, pagibig_flat: 100, overtime_multiplier: 1.25, tax_rate: 0 }
+// ─── Settings Field ───────────────────────────────────────────────────────────
+// Defined outside SettingsTab so React doesn't remount it on every keystroke.
+function SettingsField({
+  label, field, unit, description, settings, setSettings,
+}: {
+  label: string
+  field: keyof PayrollSettings
+  unit: string
+  description?: string
+  settings: PayrollSettings
+  setSettings: React.Dispatch<React.SetStateAction<PayrollSettings>>
+}) {
+  return (
+    <div className="flex items-center justify-between py-4 border-b border-gray-100 last:border-0">
+      <div className="flex-1">
+        <p className="text-sm font-medium text-gray-800">{label}</p>
+        {description && <p className="text-xs text-gray-400 mt-0.5">{description}</p>}
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="number" step="0.01" min="0"
+          value={(settings[field] as number) ?? 0}
+          onChange={e => setSettings(s => ({ ...s, [field]: parseFloat(e.target.value) || 0 }))}
+          className="w-28 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 text-right"
+        />
+        <span className="text-xs text-gray-400 w-12">{unit}</span>
+      </div>
+    </div>
   )
+}
+
+function SettingsTab() {
+  const [settings, setSettings] = useState<PayrollSettings>({
+    late_deduction_per_minute: 0, late_deduction_type: 'per_minute', sss_rate: 0, philhealth_rate: 0,
+    pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, payslip_notes: '',
+    break_mode: 'auto', break_duration_minutes: 60, kiosk_mode: 'show_all',
+  })
   const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
 
   // ── Other deductions (free-form, stored in localStorage) ──
   const [others, setOthers] = useState<OtherDeduction[]>(() =>
     typeof window !== 'undefined' ? loadOtherDeductions() : []
   )
 
-  const handleSave = () => {
+  // Load settings from API on mount
+  useEffect(() => {
+    fetch('/api/payroll/settings')
+      .then(r => safeJson(r))
+      .then(data => {
+        if (data?.settings && !data.error) {
+          // API returns { settings: { ...fields, other_deductions: [...] } }
+          const { other_deductions, ...rest } = data.settings
+          setSettings(prev => ({ ...prev, ...rest }))
+          if (data.shop_timezone) setShopTimezone(data.shop_timezone)
+          // Populate other deductions from DB, fall back to localStorage
+          if (Array.isArray(other_deductions) && other_deductions.length > 0) {
+            setOthers(other_deductions)
+          } else {
+            setOthers(loadOtherDeductions())
+          }
+        } else {
+          // Fall back to localStorage
+          setSettings(loadPayrollSettings())
+          setOthers(loadOtherDeductions())
+        }
+      })
+      .catch(() => {
+        setSettings(loadPayrollSettings())
+        setOthers(loadOtherDeductions())
+      })
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = async () => {
     setSaving(true)
-    savePayrollSettings(settings)
-    setTimeout(() => {
-      setSaving(false)
+    // Also save other_deductions alongside settings
+    const payload = { ...settings, other_deductions: others }
+    try {
+      const res = await fetch('/api/payroll/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await safeJson(res)
+      if (data.error) throw new Error(data.error)
+      // Keep localStorage in sync as fallback
+      savePayrollSettings(settings)
+      saveOtherDeductions(others)
       toast.success('Payroll settings saved')
-    }, 300)
+    } catch (e: any) {
+      // Fallback: save to localStorage only
+      savePayrollSettings(settings)
+      saveOtherDeductions(others)
+      toast.success('Settings saved locally')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const addOther = () => {
@@ -1396,23 +1608,13 @@ function SettingsTab() {
     saveOtherDeductions(next)
   }
 
-  const Field = ({ label, field, unit, description }: { label: string; field: keyof PayrollSettings; unit: string; description?: string }) => (
-    <div className="flex items-center justify-between py-4 border-b border-gray-100 last:border-0">
-      <div className="flex-1">
-        <p className="text-sm font-medium text-gray-800">{label}</p>
-        {description && <p className="text-xs text-gray-400 mt-0.5">{description}</p>}
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center h-40 text-gray-400">
+        <RefreshCw className="w-4 h-4 animate-spin mr-2" /> Loading settings…
       </div>
-      <div className="flex items-center gap-2">
-        <input
-          type="number" step="0.01" min="0"
-          value={settings[field]}
-          onChange={e => setSettings(s => ({ ...s, [field]: parseFloat(e.target.value) || 0 }))}
-          className="w-28 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 text-right"
-        />
-        <span className="text-xs text-gray-400 w-12">{unit}</span>
-      </div>
-    </div>
-  )
+    )
+  }
 
   return (
     <div className="p-6 max-w-2xl">
@@ -1429,22 +1631,183 @@ function SettingsTab() {
 
       <div className="bg-white rounded-2xl border border-gray-200 px-5 mb-4">
         <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 pt-4 pb-2">Deductions</p>
-        <Field label="Late Deduction" field="late_deduction_per_minute" unit="₱ / min" description="Amount deducted per minute of tardiness" />
-        <Field label="SSS Contribution" field="sss_rate" unit="% of basic" description="Employee share, semi-monthly" />
-        <Field label="PhilHealth Contribution" field="philhealth_rate" unit="% of basic" description="Employee share, semi-monthly" />
-        <Field label="Pag-IBIG Contribution" field="pagibig_flat" unit="₱ / month" description="Flat monthly amount (split semi-monthly)" />
-        <Field label="Withholding Tax" field="tax_rate" unit="% of gross" description="Set to 0 to skip; override per payslip if needed" />
+        {/* Late Deduction — toggle flat vs per-minute */}
+        <div className="flex items-start justify-between py-4 border-b border-gray-100">
+          <div className="flex-1">
+            <p className="text-sm font-medium text-gray-800">Late Deduction</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {settings.late_deduction_type === 'flat'
+                ? 'Fixed amount deducted once per late occurrence'
+                : 'Amount deducted per minute of tardiness'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 ml-4">
+            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => setSettings(s => ({ ...s, late_deduction_type: 'per_minute' }))}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  settings.late_deduction_type !== 'flat'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Per Min
+              </button>
+              <button
+                onClick={() => setSettings(s => ({ ...s, late_deduction_type: 'flat' }))}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  settings.late_deduction_type === 'flat'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Flat Fee
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" step="0.01" min="0"
+                value={settings.late_deduction_per_minute ?? 0}
+                onChange={e => setSettings(s => ({ ...s, late_deduction_per_minute: parseFloat(e.target.value) || 0 }))}
+                className="w-28 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 text-right"
+              />
+              <span className="text-xs text-gray-400 w-12">
+                {settings.late_deduction_type === 'flat' ? '₱ flat' : '₱ / min'}
+              </span>
+            </div>
+          </div>
+        </div>
+        <SettingsField label="SSS Contribution" field="sss_rate" unit="% of basic" description="Employee share, semi-monthly"  settings={settings} setSettings={setSettings} />
+        <SettingsField label="PhilHealth Contribution" field="philhealth_rate" unit="% of basic" description="Employee share, semi-monthly"  settings={settings} setSettings={setSettings} />
+        <SettingsField label="Pag-IBIG Contribution" field="pagibig_flat" unit="₱ / month" description="Flat monthly amount (split semi-monthly)" settings={settings} setSettings={setSettings} />
+        <SettingsField label="Withholding Tax" field="tax_rate" unit="% of gross" description="Set to 0 to skip; override per payslip if needed"  settings={settings} setSettings={setSettings} />
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 px-5 mb-4">
         <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 pt-4 pb-2">Earnings</p>
-        <Field label="Overtime Multiplier" field="overtime_multiplier" unit="× rate" description="e.g. 1.25 = 125% of hourly rate for OT hours" />
+        <SettingsField label="Overtime Multiplier" field="overtime_multiplier" unit="× rate" description="e.g. 1.25 = 125% of hourly rate for OT hours"  settings={settings} setSettings={setSettings} />
+      </div>
+
+      {/* ── Break Settings ──────────────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200 px-5 mb-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 pt-4 pb-2">Break Time</p>
+
+        {/* Toggle: auto vs manual */}
+        <div className="flex items-center justify-between py-4 border-b border-gray-100">
+          <div className="flex-1">
+            <p className="text-sm font-medium text-gray-800">Break Mode</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {settings.break_mode === 'manual'
+                ? 'Employees clock break in/out at the kiosk — actual duration is deducted'
+                : 'A flat duration is automatically deducted from every shift at clock-out'}
+            </p>
+          </div>
+          <div className="flex items-center gap-1 ml-4 bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => setSettings(s => ({ ...s, break_mode: 'auto' }))}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                settings.break_mode !== 'manual'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Auto
+            </button>
+            <button
+              onClick={() => setSettings(s => ({ ...s, break_mode: 'manual' }))}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                settings.break_mode === 'manual'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Manual
+            </button>
+          </div>
+        </div>
+
+        {/* Duration input — only shown in auto mode */}
+        {settings.break_mode !== 'manual' && (
+          <div className="flex items-center justify-between py-4">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-800">Break Duration</p>
+              <p className="text-xs text-gray-400 mt-0.5">Minutes automatically deducted from total hours at clock-out</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" step="1" min="0"
+                value={settings.break_duration_minutes ?? 60}
+                onChange={e => setSettings(s => ({ ...s, break_duration_minutes: parseInt(e.target.value) || 0 }))}
+                className="w-28 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 text-right"
+              />
+              <span className="text-xs text-gray-400 w-12">minutes</span>
+            </div>
+          </div>
+        )}
+
+        {settings.break_mode === 'manual' && (
+          <p className="text-xs text-gray-400 py-4">
+            The kiosk will show <span className="font-medium text-gray-600">Take a Break</span> and <span className="font-medium text-gray-600">Back to Work</span> buttons. Total break time is computed from those logs and deducted at clock-out.
+          </p>
+        )}
+      </div>
+
+      {/* ── Kiosk Mode ──────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200 px-5 mb-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 pt-4 pb-2">Kiosk Mode</p>
+
+        <div className="flex items-center justify-between py-4 border-b border-gray-100">
+          <div className="flex-1">
+            <p className="text-sm font-medium text-gray-800">Employee Selection</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {settings.kiosk_mode === 'pin_first'
+                ? 'Employees enter their PIN first — their card appears after verification'
+                : 'All employee cards are shown upfront — employee taps their card then enters PIN'}
+            </p>
+          </div>
+          <div className="flex items-center gap-1 ml-4 bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => setSettings(s => ({ ...s, kiosk_mode: 'show_all' }))}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                settings.kiosk_mode !== 'pin_first'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Show All
+            </button>
+            <button
+              onClick={() => setSettings(s => ({ ...s, kiosk_mode: 'pin_first' }))}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                settings.kiosk_mode === 'pin_first'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              PIN First
+            </button>
+          </div>
+        </div>
+
+        {settings.kiosk_mode === 'pin_first' && (
+          <p className="text-xs text-gray-400 py-4">
+            The kiosk will show a blank PIN pad. After a valid PIN is entered, the employee's card appears with their current status and available actions.
+          </p>
+        )}
+        {settings.kiosk_mode !== 'pin_first' && (
+          <p className="text-xs text-gray-400 py-4">
+            All employee cards are visible on the kiosk. Employees tap their card, then confirm with their PIN.
+          </p>
+        )}
       </div>
 
       {/* ── Others: free-form extra deductions ─────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200 px-5 mb-4">
         <div className="flex items-center justify-between pt-4 pb-2">
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Others</p>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Additional Deductions</p>
+            <p className="text-xs text-gray-400 mt-0.5">Applied to every payslip when generated</p>
+          </div>
           <button
             onClick={addOther}
             className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
@@ -1463,7 +1826,6 @@ function SettingsTab() {
           <div className="space-y-2 pb-4">
             {others.map(o => (
               <div key={o.id} className="flex items-center gap-2">
-                {/* Editable label */}
                 <input
                   type="text"
                   value={o.label}
@@ -1471,7 +1833,6 @@ function SettingsTab() {
                   placeholder="Deduction name…"
                   className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
                 />
-                {/* Amount */}
                 <div className="flex items-center gap-1">
                   <span className="text-xs text-gray-400">₱</span>
                   <input
@@ -1483,7 +1844,6 @@ function SettingsTab() {
                     className="w-28 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 text-right"
                   />
                 </div>
-                {/* Remove */}
                 <button
                   onClick={() => removeOther(o.id)}
                   className="p-1.5 text-gray-300 hover:text-red-500 transition-colors rounded-lg hover:bg-red-50"
@@ -1500,9 +1860,24 @@ function SettingsTab() {
         )}
       </div>
 
+      {/* ── Payslip Notes ───────────────────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200 px-5 mb-4">
+        <div className="pt-4 pb-4">
+          <div className="mb-2">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Payslip Notes</p>
+            <p className="text-xs text-gray-400 mt-0.5">Appears as a note box at the bottom of every printed payslip</p>
+          </div>
+          <textarea
+            value={settings.payslip_notes ?? ''}
+            onChange={e => setSettings(s => ({ ...s, payslip_notes: e.target.value }))}
+            placeholder="e.g. This is a system-generated payslip. For concerns, contact HR."
+            rows={3}
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none"
+          />
+        </div>
+      </div>
+
       <p className="text-xs text-gray-400 mt-4">These are defaults only. You can still override individual payslip amounts after generating.</p>
-
-
     </div>
   )
 }
@@ -1523,6 +1898,14 @@ export default function PayrollPage() {
   const [finalizing, setFinalizing] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [templates, setTemplates] = useState<PayslipTemplate[]>([])
+  const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
+
+  useEffect(() => {
+    fetch('/api/shop-settings')
+      .then(r => r.json())
+      .then(data => { if (data?.timezone) setShopTimezone(data.timezone) })
+      .catch(() => {})
+  }, [])
 
   const fetchPeriods = useCallback(async () => {
     setLoadingPeriods(true)
@@ -1802,7 +2185,30 @@ export default function PayrollPage() {
                       )}
                       {payslips.map(slip => (
                         <PayslipRow key={slip.id} slip={slip} onUpdate={handleUpdatePayslip}
-                          onPrint={s => printPayslip(s, selectedPeriod, getTemplateForPeriod(selectedPeriod.id))}
+                          onPrint={async (s) => {
+                            // Fetch late time logs for this employee within the period
+                            let lateLogs: { date: string; minutes: number }[] = []
+                            try {
+                              const res = await fetch(`/api/time-logs?employee_id=${s.employee_id}&date_from=${selectedPeriod.period_start}&date_to=${selectedPeriod.period_end}`)
+                              const data = await safeJson(res)
+                              lateLogs = (data.logs ?? [])
+                                .filter((l: any) => l.late_minutes && l.late_minutes > 0)
+                                .map((l: any) => ({
+                                  date: l.date ?? l.clock_in?.split('T')[0],
+                                  minutes: l.late_minutes,
+                                }))
+                            } catch {}
+                            // Load payslip notes from settings
+                            let notes: string | undefined
+                            try {
+                              const res = await fetch('/api/payroll/settings')
+                              const data = await safeJson(res)
+                              notes = data?.settings?.payslip_notes || loadPayrollSettings().payslip_notes
+                            } catch {
+                              notes = loadPayrollSettings().payslip_notes
+                            }
+                            printPayslip(s, selectedPeriod, getTemplateForPeriod(selectedPeriod.id), lateLogs, notes, shopTimezone)
+                          }}
                           onVoid={handleVoidPayslip} />
                       ))}
                     </div>

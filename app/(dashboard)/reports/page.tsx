@@ -1,15 +1,14 @@
 'use client'
 
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useShop } from '@/lib/hooks/useShop'
-import { DateRangeFilter } from '@/components/reports/DateRangeFilter'
 import {
   TrendingUp, DollarSign, ArrowDownCircle, ArrowUpCircle,
   Receipt, Ban, ShoppingBag, BarChart2, RefreshCw,
   Clock, LogIn, LogOut, User, Calendar, Package,
   ChevronDown, CheckCircle2, Banknote, Smartphone,
-  CreditCard, Search, X,
+  CreditCard, Search, X, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -64,40 +63,44 @@ type ShiftDetail = {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Presets
+// Timezone-aware date helpers
 // ─────────────────────────────────────────────────────────────────────────────
-const PRESETS: DateRange[] = [
-  {
-    label: 'Today',
-    from: new Date().toISOString().split('T')[0],
-    to: new Date().toISOString().split('T')[0],
-  },
-  {
-    label: 'Last 7 days',
-    from: new Date(Date.now() - 6 * 86400000).toISOString().split('T')[0],
-    to: new Date().toISOString().split('T')[0],
-  },
-  {
-    label: 'Last 30 days',
-    from: new Date(Date.now() - 29 * 86400000).toISOString().split('T')[0],
-    to: new Date().toISOString().split('T')[0],
-  },
-  {
-    label: 'This month',
-    from: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .split('T')[0],
-    to: new Date().toISOString().split('T')[0],
-  },
-]
+function toDateStrTz(d: Date, tz: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d)
+}
+function todayTz(tz: string): string { return toDateStrTz(new Date(), tz) }
+function startOfMonthTz(tz: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date())
+  const y = parts.find(p => p.type === 'year')!.value
+  const m = parts.find(p => p.type === 'month')!.value
+  return `${y}-${m}-01`
+}
+function nDaysAgoTz(n: number, tz: string): string {
+  const d = new Date(Date.now() - n * 86400000)
+  return toDateStrTz(d, tz)
+}
+function buildPresets(tz: string): DateRange[] {
+  const today = todayTz(tz)
+  return [
+    { label: 'Today',       from: today,               to: today },
+    { label: 'Last 7 days', from: nDaysAgoTz(6, tz),   to: today },
+    { label: 'Last 30 days',from: nDaysAgoTz(29, tz),  to: today },
+    { label: 'This month',  from: startOfMonthTz(tz),  to: today },
+  ]
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-function buildRefNumber(date: Date, sequence: number): string {
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  const y = String(date.getFullYear())
+function buildRefNumber(date: Date, sequence: number, tz = 'Asia/Manila'): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date)
+  const y = parts.find(p => p.type === 'year')?.value ?? ''
+  const m = parts.find(p => p.type === 'month')?.value ?? ''
+  const d = parts.find(p => p.type === 'day')?.value ?? ''
   return `${m}${d}${y}-${String(sequence).padStart(5, '0')}`
 }
 
@@ -114,11 +117,128 @@ function duration(clockIn: string, clockOut: string | null): string {
   return `${h}h ${m}m`
 }
 
-function fmtTime(s: string) {
-  return new Date(s).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })
+function fmtTime(s: string, tz = 'Asia/Manila') {
+  return new Intl.DateTimeFormat('en-PH', { timeZone: tz, hour: '2-digit', minute: '2-digit' }).format(new Date(s))
 }
-function fmtDate(s: string) {
-  return new Date(s).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+function fmtDate(s: string, tz = 'Asia/Manila') {
+  return new Intl.DateTimeFormat('en-PH', { timeZone: tz, month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(s))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inline Date Range Picker
+// ─────────────────────────────────────────────────────────────────────────────
+function DateRangePicker({
+  value, onChange, timezone,
+}: {
+  value: DateRange
+  onChange: (r: DateRange) => void
+  timezone: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [from, setFrom] = useState(value.from)
+  const [to, setTo]     = useState(value.to)
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Close on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  // Sync local state when parent changes (e.g. preset click)
+  useEffect(() => { setFrom(value.from); setTo(value.to) }, [value.from, value.to])
+
+  function applyCustom() {
+    if (!from || !to) return
+    const f = from <= to ? from : to
+    const t = from <= to ? to   : from
+    onChange({ from: f, to: t, label: `${f} → ${t}` })
+    setOpen(false)
+  }
+
+  function applyPreset(p: DateRange) {
+    setFrom(p.from); setTo(p.to)
+    onChange(p)
+    setOpen(false)
+  }
+
+  const presets = buildPresets(timezone)
+  const isPreset = presets.some(p => p.from === value.from && p.to === value.to)
+  const label = isPreset
+    ? presets.find(p => p.from === value.from && p.to === value.to)!.label
+    : `${value.from} → ${value.to}`
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-sm"
+      >
+        <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" />
+        <span className="max-w-[200px] truncate">{label}</span>
+        <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 z-50 bg-white rounded-2xl border border-gray-200 shadow-xl p-4 w-72">
+          {/* Presets */}
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Quick select</p>
+          <div className="grid grid-cols-2 gap-1.5 mb-4">
+            {presets.map(p => (
+              <button
+                key={p.label}
+                onClick={() => applyPreset(p)}
+                className={`px-3 py-2 rounded-xl text-xs font-medium transition-colors text-left ${
+                  value.from === p.from && value.to === p.to
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Custom range */}
+          <div className="border-t border-gray-100 pt-3">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Custom range</p>
+            <div className="space-y-2">
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">From</label>
+                <input
+                  type="date"
+                  value={from}
+                  max={todayTz(timezone)}
+                  onChange={e => setFrom(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">To</label>
+                <input
+                  type="date"
+                  value={to}
+                  max={todayTz(timezone)}
+                  onChange={e => setTo(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm text-gray-700 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 transition-colors"
+                />
+              </div>
+              <button
+                onClick={applyCustom}
+                disabled={!from || !to}
+                className="w-full py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors mt-1"
+              >
+                Apply Range
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,9 +313,9 @@ function MiniBar({ pct, color }: { pct: number; color: string }) {
 // Shift Detail Panel
 // ─────────────────────────────────────────────────────────────────────────────
 function ShiftDetailPanel({
-  shift, detail, loadingDetail, currencySymbol,
+  shift, detail, loadingDetail, currencySymbol, shopTimezone,
 }: {
-  shift: ShiftCard; detail: ShiftDetail | null; loadingDetail: boolean; currencySymbol: string
+  shift: ShiftCard; detail: ShiftDetail | null; loadingDetail: boolean; currencySymbol: string; shopTimezone: string
 }) {
   const sym = currencySymbol || '₱'
 
@@ -228,8 +348,8 @@ function ShiftDetailPanel({
               <LogIn className="w-4 h-4 text-emerald-600" />
             </div>
             <span className="text-emerald-700 font-semibold">Open</span>
-            <span className="text-gray-500">{fmtTime(shift.clock_in)}</span>
-            <span className="text-gray-400">{fmtDate(shift.clock_in)}</span>
+            <span className="text-gray-500">{fmtTime(shift.clock_in, shopTimezone)}</span>
+            <span className="text-gray-400">{fmtDate(shift.clock_in, shopTimezone)}</span>
           </div>
           <div className="flex-1 h-px bg-gray-300 mx-2 mt-[-24px] relative">
             <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 -translate-y-full flex flex-col items-center">
@@ -244,8 +364,8 @@ function ShiftDetailPanel({
             <span className={`font-semibold ${shift.status === 'open' ? 'text-amber-600' : 'text-gray-600'}`}>
               {shift.status === 'open' ? 'Active' : 'Closed'}
             </span>
-            <span className="text-gray-500">{shift.clock_out ? fmtTime(shift.clock_out) : '—'}</span>
-            <span className="text-gray-400">{shift.clock_out ? fmtDate(shift.clock_out) : 'Still open'}</span>
+            <span className="text-gray-500">{shift.clock_out ? fmtTime(shift.clock_out, shopTimezone) : '—'}</span>
+            <span className="text-gray-400">{shift.clock_out ? fmtDate(shift.clock_out, shopTimezone) : 'Still open'}</span>
           </div>
         </div>
       </div>
@@ -315,7 +435,7 @@ function ShiftDetailPanel({
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-gray-700 truncate">{m.note || (m.type === 'cash_in' ? 'Cash in' : 'Cash out')}</p>
-                      <p className="text-[10px] text-gray-400">{fmtTime(m.created_at)}</p>
+                      <p className="text-[10px] text-gray-400">{fmtTime(m.created_at, shopTimezone)}</p>
                     </div>
                     <span className={`text-sm font-bold flex-shrink-0 ${m.type === 'cash_in' ? 'text-blue-700' : 'text-red-600'}`}>
                       {m.type === 'cash_in' ? '+' : '−'}{fmt(m.amount, sym)}
@@ -405,10 +525,10 @@ function ShiftDetailPanel({
 // Shift Grid Card
 // ─────────────────────────────────────────────────────────────────────────────
 function ShiftGridCard({
-  shift, isSelected, onSelect, detail, loadingDetail, currencySymbol,
+  shift, isSelected, onSelect, detail, loadingDetail, currencySymbol, shopTimezone,
 }: {
   shift: ShiftCard; isSelected: boolean; onSelect: (id: string) => void
-  detail: ShiftDetail | null; loadingDetail: boolean; currencySymbol: string
+  detail: ShiftDetail | null; loadingDetail: boolean; currencySymbol: string; shopTimezone: string
 }) {
   const sym = currencySymbol || '₱'
   const isOpen = shift.status === 'open'
@@ -437,10 +557,10 @@ function ShiftGridCard({
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-          <div className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5 text-gray-400" />{fmtDate(shift.clock_in)}</div>
+          <div className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5 text-gray-400" />{fmtDate(shift.clock_in, shopTimezone)}</div>
           <span className="text-gray-300">·</span>
-          <div className="flex items-center gap-1"><LogIn className="w-3.5 h-3.5 text-emerald-500" />{fmtTime(shift.clock_in)}</div>
-          {shift.clock_out && <><span className="text-gray-300">→</span><div className="flex items-center gap-1"><LogOut className="w-3.5 h-3.5 text-gray-400" />{fmtTime(shift.clock_out)}</div></>}
+          <div className="flex items-center gap-1"><LogIn className="w-3.5 h-3.5 text-emerald-500" />{fmtTime(shift.clock_in, shopTimezone)}</div>
+          {shift.clock_out && <><span className="text-gray-300">→</span><div className="flex items-center gap-1"><LogOut className="w-3.5 h-3.5 text-gray-400" />{fmtTime(shift.clock_out, shopTimezone)}</div></>}
           <span className="text-gray-300">·</span>
           <div className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-gray-400" />{duration(shift.clock_in, shift.clock_out)}</div>
         </div>
@@ -464,7 +584,7 @@ function ShiftGridCard({
       </button>
 
       {isSelected && (
-        <ShiftDetailPanel shift={shift} detail={detail} loadingDetail={loadingDetail} currencySymbol={currencySymbol} />
+        <ShiftDetailPanel shift={shift} detail={detail} loadingDetail={loadingDetail} currencySymbol={currencySymbol} shopTimezone={shopTimezone} />
       )}
     </div>
   )
@@ -473,7 +593,7 @@ function ShiftGridCard({
 // ─────────────────────────────────────────────────────────────────────────────
 // Shift Logs Tab
 // ─────────────────────────────────────────────────────────────────────────────
-function ShiftLogsTab({ currencySymbol }: { currencySymbol: string }) {
+function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string; shopTimezone: string }) {
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -681,6 +801,7 @@ function ShiftLogsTab({ currencySymbol }: { currencySymbol: string }) {
               onSelect={handleSelect} detail={detailCache[shift.id] || null}
               loadingDetail={loadingDetail && selectedId === shift.id}
               currencySymbol={currencySymbol}
+              shopTimezone={shopTimezone}
             />
           ))}
         </div>
@@ -703,9 +824,13 @@ export default function ReportsPage() {
   const supabase = createClient()
   const { currencySymbol } = useShop()
 
+  const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
   const [activeTab, setActiveTab] = useState<'transactions' | 'shifts'>('transactions')
-  const [dateRange, setDateRange] = useState<DateRange>(PRESETS[2])
-  const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month'>('day')
+  const [dateRange, setDateRange] = useState<DateRange>(() => {
+    const tz = 'Asia/Manila' // fallback until timezone loads
+    return { label: 'Last 30 days', from: nDaysAgoTz(29, tz), to: todayTz(tz) }
+  })
+  // groupBy removed — handled internally by the reports display
   const [isLoading, setIsLoading] = useState(true)
 
   const [receipts, setReceipts] = useState<any[]>([])
@@ -714,6 +839,12 @@ export default function ReportsPage() {
 
   const loadData = useCallback(async () => {
     setIsLoading(true)
+
+    // Fetch shop timezone on every load so it stays fresh
+    const { data: shopRow } = await supabase.from('shops').select('timezone').single()
+    const tz = shopRow?.timezone || 'Asia/Manila'
+    setShopTimezone(tz)
+
     const fromTs = `${dateRange.from}T00:00:00`
     const toTs   = `${dateRange.to}T23:59:59`
 
@@ -756,11 +887,11 @@ export default function ReportsPage() {
   const allTransactions = useMemo<UnifiedTx[]>(() => {
     const sorted = [...receipts].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
     const refMap: Record<string, string> = {}
-    sorted.forEach((r, idx) => { refMap[r.id] = buildRefNumber(new Date(r.created_at), idx + 1) })
+    sorted.forEach((r, idx) => { refMap[r.id] = buildRefNumber(new Date(r.created_at), idx + 1, shopTimezone) })
     return [
       ...receipts.map(r => ({ ...r, _type: (r.status === 'voided' ? 'refund' : 'sale') as UnifiedTx['_type'], _time: new Date(r.created_at), _ref: refMap[r.id] || '—', _staff: r.app_users?.name || r.shifts?.app_users?.name || '—', _items: receiptItems[r.id] || [] })),
       ...cashMovements.map(m => ({ ...m, _type: m.type as UnifiedTx['_type'], _time: new Date(m.created_at), _ref: '—', _staff: m.shifts?.app_users?.name || '—', _items: [] })),
-    ].sort((a, b) => a._time.getTime() - b._time.getTime())
+    ].sort((a, b) => b._time.getTime() - a._time.getTime())
   }, [receipts, cashMovements, receiptItems])
 
   const TABS = [
@@ -778,7 +909,7 @@ export default function ReportsPage() {
             <h1 className="text-xl md:text-2xl font-bold text-gray-900">Reports</h1>
             <p className="text-xs text-gray-500 mt-0.5">
               {activeTab === 'transactions'
-                ? `${dateRange.label} · ${dateRange.from} → ${dateRange.to}`
+                ? `${dateRange.from} → ${dateRange.to}`
                 : 'Shift session history'}
             </p>
           </div>
@@ -787,7 +918,7 @@ export default function ReportsPage() {
               <button onClick={loadData} className="p-2 rounded-xl border border-gray-200 bg-white text-gray-400 hover:bg-gray-50 hover:text-gray-700 transition-colors" title="Refresh">
                 <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
               </button>
-              <DateRangeFilter presets={PRESETS} selected={dateRange} onSelect={setDateRange} groupBy={groupBy} onGroupByChange={setGroupBy} />
+              <DateRangePicker value={dateRange} onChange={setDateRange} timezone={shopTimezone} />
             </div>
           )}
         </div>
@@ -860,8 +991,8 @@ export default function ReportsPage() {
                       return (
                         <tr key={`${tx._type}-${tx.id}`} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
                           <td className="px-3 py-2.5 whitespace-nowrap">
-                            <div className="font-medium text-gray-700">{tx._time.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</div>
-                            <div className="text-gray-400 text-[10px]">{tx._time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                            <div className="font-medium text-gray-700">{new Intl.DateTimeFormat('en-PH', { timeZone: shopTimezone, month: 'short', day: 'numeric', year: 'numeric' }).format(tx._time)}</div>
+                            <div className="text-gray-400 text-[10px]">{new Intl.DateTimeFormat('en-PH', { timeZone: shopTimezone, hour: '2-digit', minute: '2-digit' }).format(tx._time)}</div>
                           </td>
                           <td className="px-3 py-2.5 font-mono text-gray-700 whitespace-nowrap">{tx._ref}</td>
                           <td className="px-3 py-2.5 whitespace-nowrap"><TypeBadge type={tx._type} /></td>
@@ -897,7 +1028,7 @@ export default function ReportsPage() {
           </>
         )}
 
-        {activeTab === 'shifts' && <ShiftLogsTab currencySymbol={currencySymbol} />}
+        {activeTab === 'shifts' && <ShiftLogsTab currencySymbol={currencySymbol} shopTimezone={shopTimezone} />}
 
       </div>
     </div>

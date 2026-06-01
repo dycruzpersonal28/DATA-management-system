@@ -351,7 +351,7 @@ function HistoryModal({ item, onClose }: { item: InventoryItem; onClose: () => v
                   <div key={m.id} className="flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0">
                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${cfg.color}`}>{cfg.label}</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-gray-400">{new Date(m.created_at).toLocaleString()}</p>
+                      <p className="text-xs text-gray-400">{new Date(m.created_at).toLocaleString('en-US', { timeZone: 'Asia/Manila' })}</p>
                       {m.note && <p className="text-xs text-gray-500 truncate">{m.note}</p>}
                     </div>
                     <span className={`text-sm font-semibold ${m.quantity >= 0 ? 'text-green-600' : 'text-red-600'}`}>
