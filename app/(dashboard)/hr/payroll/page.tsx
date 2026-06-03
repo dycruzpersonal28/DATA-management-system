@@ -10,7 +10,7 @@ import {
   Trash2, Printer, RefreshCw, Users, Clock, AlertCircle,
   CheckCircle2, Edit3, X, Check, Settings, CalendarDays,
   Save, ChevronDown, UserPlus, LayoutTemplate, Download,
-  Building2, Palette, Eye, EyeOff, FileDown,
+  Building2, Palette, Eye, EyeOff, FileDown, Pencil,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -64,6 +64,9 @@ interface TimeLog {
   total_hours: number | null
   late_minutes: number | null
   overtime_hours: number | null
+  shift_schedule_id?: string
+  notes?: string
+  advances?: { id: string; label: string; amount: number }[]
   employees?: { name: string; role: string; employee_no: string | null }
 }
 
@@ -92,21 +95,6 @@ interface ShiftSchedule {
 
 // ─── Other Deductions ─────────────────────────────────────────────────────────
 
-interface OtherDeduction {
-  id: string
-  label: string
-  amount: number
-}
-
-const OTHER_DEDUCTIONS_KEY = 'payroll_other_deductions'
-
-function loadOtherDeductions(): OtherDeduction[] {
-  try { return JSON.parse(localStorage.getItem(OTHER_DEDUCTIONS_KEY) ?? '[]') } catch { return [] }
-}
-
-function saveOtherDeductions(items: OtherDeduction[]) {
-  try { localStorage.setItem(OTHER_DEDUCTIONS_KEY, JSON.stringify(items)) } catch {}
-}
 
 // ─── Payslip Template ─────────────────────────────────────────────────────────
 
@@ -193,6 +181,57 @@ async function safeJson(res: Response) {
     // Route returned HTML — likely a missing API route
     console.warn(`API ${res.url} returned non-JSON (status ${res.status}). Response: ${text.slice(0, 120)}`)
     return { error: `API route not found (${res.status}). Check that this route exists on your server.` }
+  }
+}
+
+// ─── Late fee journal entry helpers ──────────────────────────────────────────
+// Posts a journal entry to financial_entries whenever a payslip with a
+// late_deduction > 0 is saved or finalized. Uses reference_type:'payslip' +
+// reference_id so the finance cleanup route can auto-reverse it when the
+// payslip is voided/deleted.
+
+async function postLateFeeJournalEntry({
+  payslipId,
+  employeeName,
+  amount,
+  periodStart,
+  periodEnd,
+}: {
+  payslipId: string
+  employeeName: string
+  amount: number
+  periodStart: string
+  periodEnd: string
+}) {
+  if (amount <= 0) return
+  try {
+    await fetch('/api/finance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'other_income',
+        category: 'other_income',
+        amount,
+        entry_date: periodEnd,
+        description: `Late fee penalty — ${employeeName} (${periodStart} to ${periodEnd})`,
+        notes: 'Late fee penalties',
+        reference_type: 'payslip',
+        reference_id: payslipId,
+      }),
+    })
+  } catch {
+    // Non-critical — payslip save already succeeded; finance entry is best-effort
+    console.warn('Failed to post late fee journal entry')
+  }
+}
+
+async function deleteLateFeeJournalEntry(payslipId: string) {
+  try {
+    await fetch(`/api/finance?reference_type=payslip&reference_id=${payslipId}`, {
+      method: 'DELETE',
+    })
+  } catch {
+    console.warn('Failed to delete late fee journal entry')
   }
 }
 
@@ -285,6 +324,8 @@ function PayslipRow({ slip, onUpdate, onPrint, onVoid }: {
     if (!confirm(`Void payslip for ${slip.employees.name}? This will delete it and remove all related financial entries.`)) return
     setVoiding(true)
     await onVoid(slip.id)
+    // Reverse the late fee journal entry now that the payslip is voided
+    await deleteLateFeeJournalEntry(slip.id)
     setVoiding(false)
   }
 
@@ -428,8 +469,21 @@ function PayslipRow({ slip, onUpdate, onPrint, onVoid }: {
               <span className="text-sm text-gray-500 mr-2">Net Pay</span>
               <span className="text-lg font-bold text-gray-900">{fmt(slip.net_pay)}</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap justify-end">
               {isFinalized && <span className="text-xs text-emerald-600 flex items-center gap-1"><Lock className="w-3 h-3" /> Finalized</span>}
+              {isFinalized && (
+                <button
+                  onClick={async e => {
+                    e.stopPropagation()
+                    if (!confirm('Unlock this payslip for editing? It will be set back to draft status.')) return
+                    setSaving(true)
+                    await onUpdate(slip.id, { status: 'draft' } as any)
+                    setSaving(false)
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-600 border border-amber-200 rounded-lg hover:bg-amber-50 transition-colors">
+                  <Pencil className="w-3.5 h-3.5" /> Unlock & Edit
+                </button>
+              )}
               {isFinalized && onVoid && (
                 <button onClick={handleVoid} disabled={voiding}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors">
@@ -848,13 +902,14 @@ function AddTimeLogModal({
   shifts: ShiftSchedule[]
   shopTimezone: string
   onClose: () => void
-  onSave: (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string }) => Promise<void>
+  onSave: (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string; advances: { id: string; label: string; amount: number }[] }) => Promise<void>
 }) {
   const [employeeId, setEmployeeId] = useState('')
   const [shiftId, setShiftId] = useState('')
   const [clockIn, setClockIn] = useState('08:00')
   const [clockOut, setClockOut] = useState('17:00')
   const [saving, setSaving] = useState(false)
+  const [advances, setAdvances] = useState<{ id: string; label: string; amount: number }[]>([])
 
   // When a shift is selected, pre-fill clock-in with shift start time
   const handleShiftChange = (id: string) => {
@@ -899,7 +954,7 @@ function AddTimeLogModal({
     const clockOutISO = clockOut ? toUtcIso(date, clockOut, shopTimezone) : ''
 
     setSaving(true)
-    await onSave({ employee_id: employeeId, clock_in: clockInISO, clock_out: clockOutISO, shift_schedule_id: shiftId || undefined })
+    await onSave({ employee_id: employeeId, clock_in: clockInISO, clock_out: clockOutISO, shift_schedule_id: shiftId || undefined, advances })
     setSaving(false)
   }
 
@@ -1003,6 +1058,52 @@ function AddTimeLogModal({
               On time — no late deduction
             </div>
           )}
+
+          {/* Advance / extra deductions */}
+          <div className="border-t border-gray-100 pt-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Advance / Deductions</p>
+              <button
+                type="button"
+                onClick={() => setAdvances(a => [...a, { id: crypto.randomUUID(), label: 'Advance', amount: 0 }])}
+                className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                <Plus className="w-3 h-3" /> Add
+              </button>
+            </div>
+            {advances.length === 0 && (
+              <p className="text-xs text-gray-400 italic">No deductions — click Add to record an advance or deduction for this day.</p>
+            )}
+            {advances.map(adv => (
+              <div key={adv.id} className="flex items-center gap-2 mb-2">
+                <input
+                  type="text"
+                  value={adv.label}
+                  onChange={e => setAdvances(a => a.map(x => x.id === adv.id ? { ...x, label: e.target.value } : x))}
+                  placeholder="e.g. Advance salary"
+                  className="flex-1 px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                />
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-gray-400">₱</span>
+                  <input
+                    type="number" step="0.01" min="0"
+                    value={adv.amount || ''}
+                    onChange={e => setAdvances(a => a.map(x => x.id === adv.id ? { ...x, amount: parseFloat(e.target.value) || 0 } : x))}
+                    className="w-24 px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200 text-right"
+                  />
+                </div>
+                <button type="button" onClick={() => setAdvances(a => a.filter(x => x.id !== adv.id))}
+                  className="p-1 text-gray-300 hover:text-red-500 rounded hover:bg-red-50 transition-colors">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+            {advances.length > 0 && (
+              <div className="flex justify-between text-xs font-medium text-gray-700 pt-1 border-t border-gray-100">
+                <span>Total deductions</span>
+                <span className="text-red-600">–₱{advances.reduce((s, a) => s + a.amount, 0).toFixed(2)}</span>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
@@ -1031,6 +1132,7 @@ function DayLogsModal({
   onClose,
   onAddLog,
   onRefresh,
+  onEditLog,
 }: {
   date: string
   logs: TimeLog[]
@@ -1038,8 +1140,9 @@ function DayLogsModal({
   shifts: ShiftSchedule[]
   shopTimezone: string
   onClose: () => void
-  onAddLog: (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string }) => Promise<void>
+  onAddLog: (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string; advances: { id: string; label: string; amount: number }[] }) => Promise<void>
   onRefresh: () => void
+  onEditLog: (log: TimeLog) => void
 }) {
   const [showAddModal, setShowAddModal] = useState(false)
 
@@ -1047,7 +1150,7 @@ function DayLogsModal({
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   })
 
-  const handleSave = async (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string }) => {
+  const handleSave = async (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string; advances: { id: string; label: string; amount: number }[] }) => {
     await onAddLog(log)
     setShowAddModal(false)
     onRefresh()
@@ -1085,15 +1188,22 @@ function DayLogsModal({
               const late = log.late_minutes ? `${log.late_minutes} min late` : null
               const ot = log.overtime_hours && Number(log.overtime_hours) > 0 ? `${Number(log.overtime_hours).toFixed(2)}h OT` : null
               return (
-                <div key={log.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50">
+                <div key={log.id}
+                  onClick={() => onEditLog(log)}
+                  className="border border-gray-100 rounded-xl p-4 bg-gray-50 cursor-pointer hover:border-indigo-200 hover:bg-indigo-50/40 transition-all group">
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="font-medium text-gray-900 text-sm">{log.employees?.name ?? '—'}</p>
                       <p className="text-xs text-gray-500">{log.employees?.role ?? ''}{log.employees?.employee_no ? ` · #${log.employees.employee_no}` : ''}</p>
                     </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${log.clock_out ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {log.clock_out ? 'Completed' : 'Still clocked in'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${log.clock_out ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {log.clock_out ? 'Completed' : 'Still clocked in'}
+                      </span>
+                      <span className="text-xs text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+                        <Pencil className="w-3 h-3" /> Edit
+                      </span>
+                    </div>
                   </div>
                   <div className="grid grid-cols-3 gap-3 mt-3">
                     <div>
@@ -1113,6 +1223,15 @@ function DayLogsModal({
                     <div className="flex gap-2 mt-2">
                       {late && <span className="text-xs px-2 py-0.5 bg-red-50 text-red-600 rounded-full">{late}</span>}
                       {ot && <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full">{ot}</span>}
+                    </div>
+                  )}
+                  {Array.isArray(log.advances) && (log.advances?.length ?? 0) > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {log.advances!.map((a) => (
+                        <span key={a.id} className="text-xs px-2 py-0.5 bg-orange-50 text-orange-600 border border-orange-100 rounded-full">
+                          {a.label}: –₱{Number(a.amount).toFixed(2)}
+                        </span>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -1144,7 +1263,244 @@ function DayLogsModal({
           onSave={handleSave}
         />
       )}
+
     </>
+  )
+}
+
+// ─── Edit Time Log Modal ──────────────────────────────────────────────────────
+
+function EditTimeLogModal({
+  log,
+  shifts,
+  shopTimezone,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  log: TimeLog
+  shifts: ShiftSchedule[]
+  shopTimezone: string
+  onClose: () => void
+  onSave: (updates: { clock_in: string; clock_out: string | null; late_minutes: number; is_late: boolean; notes?: string; advances: { id: string; label: string; amount: number }[] }) => Promise<void>
+  onDelete: (id: string) => Promise<void>
+}) {
+  const toLocalTime = (iso: string) => {
+    try {
+      return new Intl.DateTimeFormat('en-GB', {
+        timeZone: shopTimezone, hour: '2-digit', minute: '2-digit', hour12: false,
+      }).format(new Date(iso))
+    } catch { return '00:00' }
+  }
+
+  const dateStr = log.clock_in.split('T')[0]
+  const existingShiftId = log.shift_schedule_id ?? ''
+  const [shiftId, setShiftId] = useState<string>(existingShiftId)
+  const [clockIn, setClockIn] = useState(toLocalTime(log.clock_in))
+  const [clockOut, setClockOut] = useState(log.clock_out ? toLocalTime(log.clock_out) : '')
+  const [notes, setNotes] = useState(log.notes ?? '')
+  const [advances, setAdvances] = useState<{ id: string; label: string; amount: number }[]>(
+    Array.isArray(log.advances) ? log.advances : []
+  )
+  const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  // Compute late minutes live based on selected shift + clock-in time
+  const { lateMinutes, isLate } = (() => {
+    const shift = shifts.find(s => s.id === shiftId)
+    if (!shift || !clockIn) return { lateMinutes: 0, isLate: false }
+    const [sh, sm] = shift.start_time.split(':').map(Number)
+    const [ch, cm] = clockIn.split(':').map(Number)
+    const diff = (ch * 60 + cm) - (sh * 60 + sm)
+    return { lateMinutes: diff > 0 ? diff : 0, isLate: diff > 0 }
+  })()
+
+  function toUtcIso(dateS: string, timeS: string, tz: string): string {
+    const naiveMs = new Date(`${dateS}T${timeS}:00Z`).getTime()
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    })
+    const parts = formatter.formatToParts(new Date(naiveMs))
+    const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+    const localIso = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`
+    const localMs = new Date(localIso + 'Z').getTime()
+    return new Date(naiveMs - (localMs - naiveMs)).toISOString()
+  }
+
+  const handleSave = async () => {
+    if (!clockIn) { toast.error('Clock-in time is required'); return }
+    setSaving(true)
+    await onSave({
+      clock_in: toUtcIso(dateStr, clockIn, shopTimezone),
+      clock_out: clockOut ? toUtcIso(dateStr, clockOut, shopTimezone) : null,
+      late_minutes: lateMinutes,
+      is_late: isLate,
+      notes,
+      advances,
+    })
+    setSaving(false)
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    await onDelete(log.id)
+    setDeleting(false)
+  }
+
+  const displayDate = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  })
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
+          <div>
+            <h2 className="font-semibold text-gray-900">Edit Time Log</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{log.employees?.name} · {displayDate}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+
+          {/* Shift selector — used to compute late minutes */}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Shift <span className="text-gray-400 font-normal">(for late calculation)</span></label>
+            <select value={shiftId} onChange={e => setShiftId(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+              <option value="">— No shift selected —</option>
+              {shifts.map(s => (
+                <option key={s.id} value={s.id}>{s.name} ({s.start_time.slice(0,5)} – {s.end_time.slice(0,5)})</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Times */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Clock In <span className="text-red-400">*</span></label>
+              <input type="time" value={clockIn} onChange={e => setClockIn(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Clock Out</label>
+              <input type="time" value={clockOut} onChange={e => setClockOut(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            </div>
+          </div>
+
+          {/* Hours & late summary */}
+          <div className="flex gap-2">
+            {clockIn && clockOut && clockOut > clockIn && (
+              <div className="flex-1 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 text-xs text-indigo-700 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 flex-shrink-0" />
+                {(() => {
+                  const [h1, m1] = clockIn.split(':').map(Number)
+                  const [h2, m2] = clockOut.split(':').map(Number)
+                  const mins = (h2 * 60 + m2) - (h1 * 60 + m1)
+                  return `${Math.floor(mins / 60)}h ${mins % 60 > 0 ? `${mins % 60}m` : ''}`
+                })()}
+              </div>
+            )}
+            {shiftId && isLate && (
+              <div className="flex-1 bg-red-50 border border-red-100 rounded-lg px-3 py-2 text-xs text-red-700 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                <strong>{lateMinutes} min late</strong>
+              </div>
+            )}
+            {shiftId && !isLate && clockIn && (
+              <div className="flex-1 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 text-xs text-emerald-700 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" /> On time
+              </div>
+            )}
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Notes <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input type="text" value={notes} onChange={e => setNotes(e.target.value)}
+              placeholder="e.g. Covering for absent staff"
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+          </div>
+
+          {/* Advances / deductions — scoped to THIS employee on THIS day */}
+          <div className="border-t border-gray-100 pt-3">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Advances / Deductions</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">For {log.employees?.name ?? 'this employee'} on this day only</p>
+              </div>
+              <button type="button"
+                onClick={() => setAdvances(a => [...a, { id: crypto.randomUUID(), label: 'Advance', amount: 0 }])}
+                className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                <Plus className="w-3 h-3" /> Add
+              </button>
+            </div>
+            {advances.length === 0 && (
+              <p className="text-xs text-gray-400 italic">No deductions for this employee today.</p>
+            )}
+            {advances.map(adv => (
+              <div key={adv.id} className="flex items-center gap-2 mb-2">
+                <input type="text" value={adv.label}
+                  onChange={e => setAdvances(a => a.map(x => x.id === adv.id ? { ...x, label: e.target.value } : x))}
+                  placeholder="e.g. Advance salary"
+                  className="flex-1 px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-gray-400">₱</span>
+                  <input type="number" step="0.01" min="0" value={adv.amount || ''}
+                    onChange={e => setAdvances(a => a.map(x => x.id === adv.id ? { ...x, amount: parseFloat(e.target.value) || 0 } : x))}
+                    className="w-24 px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200 text-right" />
+                </div>
+                <button type="button" onClick={() => setAdvances(a => a.filter(x => x.id !== adv.id))}
+                  className="p-1 text-gray-300 hover:text-red-500 rounded hover:bg-red-50 transition-colors">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+            {advances.length > 0 && (
+              <div className="flex justify-between text-xs font-medium text-gray-700 pt-1 border-t border-gray-100">
+                <span>Total deductions</span>
+                <span className="text-red-600">–₱{advances.reduce((s, a) => s + a.amount, 0).toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Delete zone */}
+          <div className="border-t border-red-100 pt-3">
+            {!confirmDelete ? (
+              <button type="button" onClick={() => setConfirmDelete(true)}
+                className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 font-medium transition-colors">
+                <Trash2 className="w-3.5 h-3.5" /> Delete this time log
+              </button>
+            ) : (
+              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 flex items-center justify-between gap-3">
+                <p className="text-xs text-red-700 font-medium">Delete this log permanently?</p>
+                <div className="flex gap-2 flex-shrink-0">
+                  <button type="button" onClick={() => setConfirmDelete(false)}
+                    className="px-2.5 py-1 text-xs border border-gray-300 rounded-lg bg-white hover:bg-gray-50">Cancel</button>
+                  <button type="button" onClick={handleDelete} disabled={deleting}
+                    className="flex items-center gap-1 px-2.5 py-1 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50">
+                    {deleting ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Delete
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100 flex-shrink-0">
+          <button onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
+          <button onClick={handleSave} disabled={saving || !clockIn}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+            {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1158,6 +1514,7 @@ function AttendanceTab() {
   const [logsByDate, setLogsByDate] = useState<Record<string, TimeLog[]>>({})
   const [loading, setLoading] = useState(false)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [editingTimeLog, setEditingTimeLog] = useState<TimeLog | null>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
   const [shifts, setShifts] = useState<ShiftSchedule[]>([])
 
@@ -1223,7 +1580,41 @@ function AttendanceTab() {
 
   useEffect(() => { fetchMonthLogs() }, [fetchMonthLogs])
 
-  const handleAddLog = async (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string }) => {
+  const handleTimeLogEdit = async (id: string, updates: { clock_in: string; clock_out: string | null; late_minutes: number; is_late: boolean; notes?: string; advances: { id: string; label: string; amount: number }[] }) => {
+    try {
+      const res = await fetch('/api/time-logs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...updates }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      toast.success('Time log updated')
+      setEditingTimeLog(null)
+      await fetchMonthLogs()
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to update log')
+    }
+  }
+
+  const handleTimeLogDelete = async (id: string) => {
+    try {
+      const res = await fetch('/api/time-logs', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      toast.success('Time log deleted')
+      setEditingTimeLog(null)
+      await fetchMonthLogs()
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to delete log')
+    }
+  }
+
+  const handleAddLog = async (log: { employee_id: string; clock_in: string; clock_out: string; shift_schedule_id?: string; advances?: { id: string; label: string; amount: number }[] }) => {
     try {
       const body: Record<string, any> = {
         action: 'manual',
@@ -1235,6 +1626,9 @@ function AttendanceTab() {
       }
       if (log.shift_schedule_id) {
         body.shift_schedule_id = log.shift_schedule_id
+      }
+      if (log.advances && log.advances.length > 0) {
+        body.advances = log.advances
       }
 
       const res = await fetch('/api/time-logs', {
@@ -1343,6 +1737,18 @@ function AttendanceTab() {
           onClose={() => setSelectedDate(null)}
           onAddLog={handleAddLog}
           onRefresh={fetchMonthLogs}
+          onEditLog={log => setEditingTimeLog(log)}
+        />
+      )}
+
+      {editingTimeLog && (
+        <EditTimeLogModal
+          log={editingTimeLog}
+          shifts={shifts}
+          shopTimezone={shopTimezone}
+          onClose={() => setEditingTimeLog(null)}
+          onSave={(updates) => handleTimeLogEdit(editingTimeLog.id, updates)}
+          onDelete={handleTimeLogDelete}
         />
       )}
     </div>
@@ -1699,10 +2105,6 @@ function SettingsTab() {
   const [loading, setLoading] = useState(true)
   const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
 
-  // ── Other deductions (free-form, stored in localStorage) ──
-  const [others, setOthers] = useState<OtherDeduction[]>(() =>
-    typeof window !== 'undefined' ? loadOtherDeductions() : []
-  )
 
   // Load settings from API on mount
   useEffect(() => {
@@ -1710,37 +2112,27 @@ function SettingsTab() {
       .then(r => safeJson(r))
       .then(data => {
         if (data?.settings && !data.error) {
-          // API returns { settings: { ...fields, other_deductions: [...] } }
-          const { other_deductions, ...rest } = data.settings
+          const rest = data.settings
           // Merge with localStorage fallback so fields missing from the API
           // response (e.g. late_deduction_type if the column was added later)
           // are still populated from the last locally-saved value.
           const localFallback = loadPayrollSettings()
           setSettings(prev => ({ ...prev, ...localFallback, ...rest }))
           if (data.shop_timezone) setShopTimezone(data.shop_timezone)
-          // Populate other deductions from DB, fall back to localStorage
-          if (Array.isArray(other_deductions) && other_deductions.length > 0) {
-            setOthers(other_deductions)
-          } else {
-            setOthers(loadOtherDeductions())
-          }
         } else {
           // Fall back to localStorage
           setSettings(loadPayrollSettings())
-          setOthers(loadOtherDeductions())
         }
       })
       .catch(() => {
         setSettings(loadPayrollSettings())
-        setOthers(loadOtherDeductions())
       })
       .finally(() => setLoading(false))
   }, [])
 
   const handleSave = async () => {
     setSaving(true)
-    // Also save other_deductions alongside settings
-    const payload = { ...settings, other_deductions: others }
+    const payload = { ...settings }
     try {
       const res = await fetch('/api/payroll/settings', {
         method: 'POST',
@@ -1751,35 +2143,16 @@ function SettingsTab() {
       if (data.error) throw new Error(data.error)
       // Keep localStorage in sync as fallback
       savePayrollSettings(settings)
-      saveOtherDeductions(others)
       toast.success('Payroll settings saved')
     } catch (e: any) {
       // Fallback: save to localStorage only
       savePayrollSettings(settings)
-      saveOtherDeductions(others)
       toast.success('Settings saved locally')
     } finally {
       setSaving(false)
     }
   }
 
-  const addOther = () => {
-    const next = [...others, { id: Date.now().toString(), label: '', amount: 0 }]
-    setOthers(next)
-    saveOtherDeductions(next)
-  }
-
-  const updateOther = (id: string, patch: Partial<OtherDeduction>) => {
-    const next = others.map(o => o.id === id ? { ...o, ...patch } : o)
-    setOthers(next)
-    saveOtherDeductions(next)
-  }
-
-  const removeOther = (id: string) => {
-    const next = others.filter(o => o.id !== id)
-    setOthers(next)
-    saveOtherDeductions(next)
-  }
 
   if (loading) {
     return (
@@ -1987,65 +2360,6 @@ function SettingsTab() {
         )}
       </div>
 
-      {/* ── Others: free-form extra deductions ─────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-gray-200 px-5 mb-4">
-        <div className="flex items-center justify-between pt-4 pb-2">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Additional Deductions</p>
-            <p className="text-xs text-gray-400 mt-0.5">Applied to every payslip when generated</p>
-          </div>
-          <button
-            onClick={addOther}
-            className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" /> Add row
-          </button>
-        </div>
-
-        {others.length === 0 ? (
-          <p className="text-xs text-gray-400 pb-4">
-            No extra deductions yet.{' '}
-            <button onClick={addOther} className="underline text-indigo-500 hover:text-indigo-700">Add one</button>
-            {' '}to create a custom deduction that appears on every payslip.
-          </p>
-        ) : (
-          <div className="space-y-2 pb-4">
-            {others.map(o => (
-              <div key={o.id} className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={o.label}
-                  onChange={e => updateOther(o.id, { label: e.target.value })}
-                  placeholder="Deduction name…"
-                  className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                />
-                <div className="flex items-center gap-1">
-                  <span className="text-xs text-gray-400">₱</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={o.amount}
-                    onChange={e => updateOther(o.id, { amount: parseFloat(e.target.value) || 0 })}
-                    className="w-28 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 text-right"
-                  />
-                </div>
-                <button
-                  onClick={() => removeOther(o.id)}
-                  className="p-1.5 text-gray-300 hover:text-red-500 transition-colors rounded-lg hover:bg-red-50"
-                  title="Remove"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
-            <p className="text-xs text-gray-400 pt-1">
-              These amounts are deducted from every employee's net pay when payslips are generated.
-            </p>
-          </div>
-        )}
-      </div>
-
       {/* ── Payslip Notes ───────────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200 px-5 mb-4">
         <div className="pt-4 pb-4">
@@ -2101,6 +2415,7 @@ type AttendanceLog = {
   total_hours: number | null
   late_minutes: number | null
   overtime_hours: number | null
+  advances?: { id: string; label: string; amount: number }[]
 }
 
 function QuickPayslipGenerator() {
@@ -2183,22 +2498,42 @@ function QuickPayslipGenerator() {
       .then(d => {
         if (d.error) { setLogsError(d.error); setLogs([]); return }
         const raw = d.logs ?? []
-        const parsed: AttendanceLog[] = raw.map((l: any) => ({
-          date: l.date ?? l.clock_in?.split('T')[0],
-          shift_name: l.shift_schedules?.name ?? l.shift_name ?? null,
-          clock_in: l.clock_in,
-          clock_out: l.clock_out ?? null,
-          total_hours: l.total_hours != null ? Number(l.total_hours) : null,
-          late_minutes: l.late_minutes != null ? Number(l.late_minutes) : null,
-          overtime_hours: l.overtime_hours != null ? Number(l.overtime_hours) : null,
-        })).sort((a: AttendanceLog, b: AttendanceLog) => a.date.localeCompare(b.date))
+
+        // ── Resolve break deduction once, applied at parse time to every completed log ──
+        // This means ALL consumers (daily card UI, shift breakdown, print, pay calc)
+        // always show/use break-deducted hours — whether the log was created via
+        // clock-in/out or manually added by an admin.
+        // In 'auto' mode: deduct fixed break per completed shift.
+        // In 'manual' mode: breaks are clocked separately, total_hours already excludes them.
+        const s = settings ?? loadPayrollSettings()
+        const breakDeductionHours =
+          s.break_mode !== 'manual' ? (s.break_duration_minutes ?? 0) / 60 : 0
+
+        const parsed: AttendanceLog[] = raw.map((l: any) => {
+          const rawHours = l.total_hours != null ? Number(l.total_hours) : null
+          // Deduct break on every completed log (clock_out present), regardless of
+          // whether it was created via clock-in/out or manually by an admin.
+          const netHours = rawHours != null && l.clock_out
+            ? Math.max(0, rawHours - breakDeductionHours)
+            : rawHours
+          return {
+            date: l.date ?? l.clock_in?.split('T')[0],
+            shift_name: l.shift_schedules?.name ?? l.shift_name ?? null,
+            clock_in: l.clock_in,
+            clock_out: l.clock_out ?? null,
+            total_hours: netHours,
+            late_minutes: l.late_minutes != null ? Number(l.late_minutes) : null,
+            overtime_hours: l.overtime_hours != null ? Number(l.overtime_hours) : null,
+            advances: Array.isArray(l.advances) ? l.advances : [],
+          }
+        }).sort((a: AttendanceLog, b: AttendanceLog) => a.date.localeCompare(b.date))
         setLogs(parsed)
 
         // ── Auto-compute pay from logs + settings ──
-        const s = settings ?? loadPayrollSettings()
         const emp = employees.find(e => e.id === employeeId)
         const rate = emp?.hourly_rate ?? 0
 
+        // total_hours already has break deducted (done at parse time above)
         const totalRegularHours = parsed.reduce((sum, l) => {
           const h = l.total_hours ?? 0
           const ot = l.overtime_hours ?? 0
@@ -2234,6 +2569,30 @@ function QuickPayslipGenerator() {
         setPhilhealth(computedPH)
         setPagibig(computedPagibig)
         setTax(computedTax)
+
+
+        // Seed otherDeductions from per-log advances (manual time log entries)
+        const logAdvances: { id: string; label: string; amount: number }[] = []
+        const seenIds = new Set<string>()
+        for (const log of parsed) {
+          for (const adv of log.advances ?? []) {
+            const key = adv.id ?? `${adv.label}-${adv.amount}`
+            if (!seenIds.has(key)) {
+              seenIds.add(key)
+              logAdvances.push({
+                id: adv.id ?? crypto.randomUUID(),
+                label: adv.label ?? 'Advance',
+                amount: Number(adv.amount ?? 0),
+              })
+            }
+          }
+        }
+
+        // Only seed if no saved payslip has been hydrated yet — avoid overwriting
+        // already-saved deductions when the logs effect races with the draft-load effect.
+        if (!savedPayslipId) {
+          setOtherDeductions([...logAdvances])
+        }
       })
       .catch(() => setLogsError('Failed to load attendance logs'))
       .finally(() => setLogsLoading(false))
@@ -2326,6 +2685,15 @@ function QuickPayslipGenerator() {
         })
         const data = await safeJson(res)
         if (data.error) throw new Error(data.error)
+        // Upsert late fee journal entry (delete old one first, then re-post with latest amount)
+        await deleteLateFeeJournalEntry(savedPayslipId)
+        await postLateFeeJournalEntry({
+          payslipId: savedPayslipId,
+          employeeName: selectedEmployee.name,
+          amount: lateDeduction,
+          periodStart,
+          periodEnd,
+        })
         toast.success('Draft updated')
       } else {
         // First save — create a new period for this single employee
@@ -2361,6 +2729,14 @@ function QuickPayslipGenerator() {
         })
         const patchData = await safeJson(patchRes)
         if (patchData.error) throw new Error(patchData.error)
+        // Post late fee journal entry for the newly created payslip
+        await postLateFeeJournalEntry({
+          payslipId,
+          employeeName: selectedEmployee.name,
+          amount: lateDeduction,
+          periodStart,
+          periodEnd,
+        })
         toast.success('Payslip saved as draft')
       }
     } catch (e: any) {
@@ -2384,11 +2760,70 @@ function QuickPayslipGenerator() {
       const data = await safeJson(res)
       if (data.error) throw new Error(data.error)
       setPayslipStatus('released')
+      // Refresh the journal entry so it reflects the final locked amounts
+      if (savedPayslipId && selectedEmployee) {
+        await deleteLateFeeJournalEntry(savedPayslipId)
+        await postLateFeeJournalEntry({
+          payslipId: savedPayslipId,
+          employeeName: selectedEmployee.name,
+          amount: lateDeduction,
+          periodStart,
+          periodEnd,
+        })
+      }
       toast.success('Payslip finalized and locked')
     } catch (e: any) {
       toast.error(e.message ?? 'Failed to finalize')
     } finally {
       setFinalizing(false)
+    }
+  }
+
+  // ── Unlock (revert finalized → draft) ────────────────────────────────────────
+  const handleUnlockDraft = async () => {
+    if (!savedPayslipId) return
+    if (!confirm('Unlock this payslip for editing? It will be set back to draft status.')) return
+    setSaving(true)
+    try {
+      const res = await fetch('/api/payroll', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_payslip', payslip_id: savedPayslipId, updates: { status: 'draft' } }),
+      })
+      const data = await safeJson(res)
+      if (data.error) throw new Error(data.error)
+      setPayslipStatus('draft')
+      toast.success('Payslip unlocked — you can now edit it')
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to unlock payslip')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // ── Void finalized payslip from the generator panel ──────────────────────────
+  const handleVoidFinalized = async () => {
+    if (!savedPayslipId) return
+    const empName = employees.find(e => e.id === employeeId)?.name ?? 'this employee'
+    if (!confirm(`Void payslip for ${empName}? This will permanently delete it and reverse the late fee journal entry.`)) return
+    setSaving(true)
+    try {
+      const res = await fetch('/api/payroll', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'void_payslip', payslip_id: savedPayslipId }),
+      })
+      const data = await safeJson(res)
+      if (data.error) throw new Error(data.error)
+      // Reverse the late fee journal entry
+      await deleteLateFeeJournalEntry(savedPayslipId)
+      // Reset generator state
+      setSavedPayslipId(null)
+      setSavedPeriodId(null)
+      setPayslipStatus(null)
+      toast.success('Payslip voided and journal entry reversed')
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to void payslip')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -2399,11 +2834,11 @@ function QuickPayslipGenerator() {
   const totalDeductions = lateDeduction + sss + philhealth + pagibig + tax + otherTotal
   const netPay = gross - totalDeductions
 
-  const addDeduction = () => { if (!isFinalized) setOtherDeductions(prev => [...prev, { id: crypto.randomUUID(), label: '', amount: 0 }]) }
+  const addDeduction = () => { setOtherDeductions(prev => [...prev, { id: crypto.randomUUID(), label: '', amount: 0 }]) }
   const updateDeduction = (id: string, patch: Partial<{ label: string; amount: number }>) => {
-    if (!isFinalized) setOtherDeductions(prev => prev.map(o => o.id === id ? { ...o, ...patch } : o))
+    setOtherDeductions(prev => prev.map(o => o.id === id ? { ...o, ...patch } : o))
   }
-  const removeDeduction = (id: string) => { if (!isFinalized) setOtherDeductions(prev => prev.filter(o => o.id !== id)) }
+  const removeDeduction = (id: string) => { setOtherDeductions(prev => prev.filter(o => o.id !== id)) }
 
   const selectedEmployee = employees.find(e => e.id === employeeId)
   const selectedTpl = templates.find(t => t.id === templateId) ?? null
@@ -2466,8 +2901,7 @@ function QuickPayslipGenerator() {
               <div className="flex items-center gap-2 text-xs text-gray-400 py-2"><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
             ) : (
               <select value={employeeId} onChange={e => handleEmployeeChange(e.target.value)}
-                disabled={isFinalized}
-                className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white disabled:opacity-50 disabled:bg-gray-50">
+                className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
                 <option value="">— Select employee —</option>
                 {employees.map(e => <option key={e.id} value={e.id}>{e.name}{e.employee_no ? ` (#${e.employee_no})` : ''}</option>)}
               </select>
@@ -2492,14 +2926,12 @@ function QuickPayslipGenerator() {
               <div>
                 <label className="block text-xs text-gray-500 mb-1">From</label>
                 <input type="date" value={periodStart} onChange={e => { setPeriodStart(e.target.value); resetSaved() }}
-                  disabled={isFinalized}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:opacity-50 disabled:bg-gray-50" />
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300" />
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">To</label>
                 <input type="date" value={periodEnd} onChange={e => { setPeriodEnd(e.target.value); resetSaved() }}
-                  disabled={isFinalized}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:opacity-50 disabled:bg-gray-50" />
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300" />
               </div>
             </div>
           </div>
@@ -2578,9 +3010,16 @@ function QuickPayslipGenerator() {
 
           {/* Finalized lock banner */}
           {isFinalized && (
-            <div className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-700">
-              <Lock className="w-3.5 h-3.5 flex-shrink-0" />
-              This payslip is finalized and locked. No further edits can be made.
+            <div className="flex items-center justify-between gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-700">
+              <div className="flex items-center gap-2">
+                <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+                This payslip is finalized. Unlock to make edits or void it.
+              </div>
+              <button
+                onClick={handleUnlockDraft}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-amber-600 border border-amber-300 bg-white rounded-lg hover:bg-amber-50 transition-colors flex-shrink-0">
+                <Pencil className="w-3 h-3" /> Unlock
+              </button>
             </div>
           )}
 
@@ -2588,12 +3027,12 @@ function QuickPayslipGenerator() {
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">Earnings</label>
-              {!isFinalized && <span className="text-[10px] text-indigo-500 font-medium">Auto-computed · editable</span>}
+              <span className="text-[10px] text-indigo-500 font-medium">Auto-computed · editable</span>
             </div>
             <div className="bg-gray-50 rounded-xl px-4 py-1">
-              <EditField label="Basic Pay" value={basicPay} onChange={setBasicPay} isFinalized={isFinalized} />
-              <EditField label="Overtime Pay" value={overtimePay} onChange={setOvertimePay} isFinalized={isFinalized} />
-              <EditField label="Allowance" value={allowance} onChange={setAllowance} isFinalized={isFinalized} />
+              <EditField label="Basic Pay" value={basicPay} onChange={setBasicPay} isFinalized={false} />
+              <EditField label="Overtime Pay" value={overtimePay} onChange={setOvertimePay} isFinalized={false} />
+              <EditField label="Allowance" value={allowance} onChange={setAllowance} isFinalized={false} />
               <div className="flex items-center justify-between pt-2 pb-1">
                 <span className="text-sm font-semibold text-gray-700">Gross Pay</span>
                 <span className="text-sm font-bold text-gray-900">{fmt(gross)}</span>
@@ -2605,44 +3044,32 @@ function QuickPayslipGenerator() {
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">Deductions</label>
-              {!isFinalized && <span className="text-[10px] text-indigo-500 font-medium">Auto-computed · editable</span>}
+              <span className="text-[10px] text-indigo-500 font-medium">Auto-computed · editable</span>
             </div>
             <div className="bg-gray-50 rounded-xl px-4 py-1">
-              <EditField label="Late Deduction" value={lateDeduction} onChange={setLateDeduction} negative isFinalized={isFinalized} />
-              <EditField label="SSS" value={sss} onChange={setSss} negative isFinalized={isFinalized} />
-              <EditField label="PhilHealth" value={philhealth} onChange={setPhilhealth} negative isFinalized={isFinalized} />
-              <EditField label="Pag-IBIG" value={pagibig} onChange={setPagibig} negative isFinalized={isFinalized} />
-              <EditField label="Withholding Tax" value={tax} onChange={setTax} negative isFinalized={isFinalized} />
+              <EditField label="Late Deduction" value={lateDeduction} onChange={setLateDeduction} negative isFinalized={false} />
+              <EditField label="SSS" value={sss} onChange={setSss} negative isFinalized={false} />
+              <EditField label="PhilHealth" value={philhealth} onChange={setPhilhealth} negative isFinalized={false} />
+              <EditField label="Pag-IBIG" value={pagibig} onChange={setPagibig} negative isFinalized={false} />
+              <EditField label="Withholding Tax" value={tax} onChange={setTax} negative isFinalized={false} />
               {otherDeductions.map(o => (
                 <div key={o.id} className="flex items-center gap-2 py-2 border-b border-gray-100">
                   <span className="text-xs text-red-400">−</span>
-                  {isFinalized ? (
-                    <span className="flex-1 text-xs text-gray-600">{o.label || '—'}</span>
-                  ) : (
-                    <input type="text" value={o.label} onChange={e => updateDeduction(o.id, { label: e.target.value })}
-                      placeholder="Deduction name…"
-                      className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200" />
-                  )}
+                  <input type="text" value={o.label} onChange={e => updateDeduction(o.id, { label: e.target.value })}
+                    placeholder="Deduction name…"
+                    className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200" />
                   <span className="text-xs text-gray-400">₱</span>
-                  {isFinalized ? (
-                    <span className="w-24 text-xs text-right text-gray-800">{fmt(o.amount)}</span>
-                  ) : (
-                    <input type="number" step="0.01" min="0" value={o.amount || 0}
-                      onChange={e => updateDeduction(o.id, { amount: parseFloat(e.target.value) || 0 })}
-                      className="w-24 px-2 py-1 text-xs text-right border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200" />
-                  )}
-                  {!isFinalized && (
-                    <button onClick={() => removeDeduction(o.id)} className="p-1 text-gray-300 hover:text-red-500 rounded hover:bg-red-50 transition-colors">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                  <input type="number" step="0.01" min="0" value={o.amount || 0}
+                    onChange={e => updateDeduction(o.id, { amount: parseFloat(e.target.value) || 0 })}
+                    className="w-24 px-2 py-1 text-xs text-right border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+                  <button onClick={() => removeDeduction(o.id)} className="p-1 text-gray-300 hover:text-red-500 rounded hover:bg-red-50 transition-colors">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               ))}
-              {!isFinalized && (
-                <button onClick={addDeduction} className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium my-2 transition-colors">
-                  <Plus className="w-3.5 h-3.5" /> Add deduction
-                </button>
-              )}
+              <button onClick={addDeduction} className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium my-2 transition-colors">
+                <Plus className="w-3.5 h-3.5" /> Add deduction
+              </button>
               <div className="flex items-center justify-between pt-1 pb-2 border-t border-gray-200">
                 <span className="text-sm font-semibold text-gray-700">Total Deductions</span>
                 <span className="text-sm font-bold text-red-600">−{fmt(totalDeductions)}</span>
@@ -2680,12 +3107,19 @@ function QuickPayslipGenerator() {
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 disabled:opacity-40 transition-colors">
               <Printer className="w-4 h-4" /> Print
             </button>
-            {/* Save Draft — hidden once finalized */}
+            {/* Save Draft — visible when not finalized */}
             {!isFinalized && (
               <button onClick={handleSaveDraft} disabled={!employeeId || logsLoading || saving || finalizing}
                 className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-indigo-300 text-indigo-700 bg-indigo-50 rounded-xl hover:bg-indigo-100 disabled:opacity-40 transition-colors">
                 {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 {savedPayslipId ? 'Update Draft' : 'Save Draft'}
+              </button>
+            )}
+            {/* Void — only shown when finalized and a payslip exists */}
+            {isFinalized && savedPayslipId && (
+              <button onClick={handleVoidFinalized} disabled={saving || finalizing}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-red-300 text-red-600 bg-red-50 rounded-xl hover:bg-red-100 disabled:opacity-40 transition-colors">
+                <Trash2 className="w-4 h-4" /> Void
               </button>
             )}
             {/* Finalize — only shown after saving a draft */}
@@ -2775,13 +3209,13 @@ function QuickPayslipGenerator() {
                   return format === 'payslip1' ? (
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 pb-1 border-b-2" style={{ borderColor: accentColor }}>Earnings</p>
-                      {earningsRows.filter(([,v]) => v > 0).map(([l, v]) => (
-                        <div key={l} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span>{fmt(v)}</span></div>
+                      {earningsRows.filter(([,v]) => v > 0).map(([l, v], i) => (
+                        <div key={l + '-' + i} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span>{fmt(v)}</span></div>
                       ))}
                       <div className="flex justify-between py-1.5 text-xs font-bold border-t border-gray-200 mt-1"><span>Gross Pay</span><span>{fmt(gross)}</span></div>
                       <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mt-3 mb-1 pb-1 border-b-2" style={{ borderColor: accentColor }}>Deductions</p>
-                      {deductionRows.filter(([,v]) => v > 0).map(([l, v]) => (
-                        <div key={l} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span className="text-red-600">−{fmt(v)}</span></div>
+                      {deductionRows.filter(([,v]) => v > 0).map(([l, v], i) => (
+                        <div key={l + '-' + i} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span className="text-red-600">−{fmt(v)}</span></div>
                       ))}
                       <div className="flex justify-between py-1.5 text-xs font-bold border-t border-gray-200 mt-1"><span>Total Deductions</span><span className="text-red-600">−{fmt(totalDeductions)}</span></div>
                     </div>
@@ -2789,15 +3223,15 @@ function QuickPayslipGenerator() {
                     <div className="grid grid-cols-2 gap-x-4">
                       <div>
                         <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 pb-1 border-b-2" style={{ borderColor: accentColor }}>Earnings</p>
-                        {earningsRows.filter(([,v]) => v > 0).map(([l, v]) => (
-                          <div key={l} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span>{fmt(v)}</span></div>
+                        {earningsRows.filter(([,v]) => v > 0).map(([l, v], i) => (
+                          <div key={l + '-' + i} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span>{fmt(v)}</span></div>
                         ))}
                         <div className="flex justify-between py-1.5 text-xs font-bold border-t border-gray-200 mt-1"><span>Gross</span><span>{fmt(gross)}</span></div>
                       </div>
                       <div>
                         <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 pb-1 border-b-2" style={{ borderColor: accentColor }}>Deductions</p>
-                        {deductionRows.filter(([,v]) => v > 0).map(([l, v]) => (
-                          <div key={l} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span className="text-red-500">−{fmt(v)}</span></div>
+                        {deductionRows.filter(([,v]) => v > 0).map(([l, v], i) => (
+                          <div key={l + '-' + i} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span className="text-red-500">−{fmt(v)}</span></div>
                         ))}
                         <div className="flex justify-between py-1.5 text-xs font-bold border-t border-gray-200 mt-1"><span>Total</span><span className="text-red-600">−{fmt(totalDeductions)}</span></div>
                       </div>

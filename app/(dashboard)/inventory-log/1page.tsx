@@ -5,13 +5,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   Download, Search, Package, TrendingUp, TrendingDown,
-  AlertTriangle, RefreshCcw, ShoppingCart, Wrench, Trash2, RotateCcw, Layers,
+  AlertTriangle, RefreshCcw, ShoppingCart, Wrench, Trash2, RotateCcw,
 } from 'lucide-react'
 import { toast } from 'sonner'
+// date-fns removed — all date/time formatting uses Intl with shop timezone
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type LogSource = 'sale' | 'restock' | 'batch_receive' | 'adjustment' | 'loss' | 'void'
+type LogSource = 'sale' | 'restock' | 'adjustment' | 'loss' | 'void'
 
 interface UnifiedLog {
   id: string
@@ -25,14 +26,6 @@ interface UnifiedLog {
   note?: string | null
   created_at: string
   created_by?: string | null
-  // Batch fields
-  batch_id?: string | null
-  batch_no?: string | null
-  expiry_date?: string | null
-  pack_size?: number | null
-  pack_unit?: string | null
-  qty_packs?: number | null
-  qty_base?: number | null
 }
 
 interface SummaryStats {
@@ -46,12 +39,11 @@ interface SummaryStats {
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const sourceConfig: Record<LogSource, { label: string; icon: React.ElementType; badgeClass: string }> = {
-  sale:          { label: 'Sale',          icon: ShoppingCart, badgeClass: 'bg-gray-100 text-gray-700' },
-  restock:       { label: 'Restock',       icon: TrendingUp,   badgeClass: 'bg-emerald-50 text-emerald-700' },
-  batch_receive: { label: 'Batch Receive', icon: Layers,       badgeClass: 'bg-indigo-50 text-indigo-700' },
-  adjustment:    { label: 'Adjustment',    icon: Wrench,       badgeClass: 'bg-blue-50 text-blue-700' },
-  loss:          { label: 'Loss',          icon: Trash2,       badgeClass: 'bg-red-50 text-red-700' },
-  void:          { label: 'Void',          icon: RotateCcw,    badgeClass: 'bg-purple-50 text-purple-700' },
+  sale:       { label: 'Sale',       icon: ShoppingCart, badgeClass: 'bg-gray-100 text-gray-700' },
+  restock:    { label: 'Restock',    icon: TrendingUp,   badgeClass: 'bg-emerald-50 text-emerald-700' },
+  adjustment: { label: 'Adjustment', icon: Wrench,       badgeClass: 'bg-blue-50 text-blue-700' },
+  loss:       { label: 'Loss',       icon: Trash2,       badgeClass: 'bg-red-50 text-red-700' },
+  void:       { label: 'Void',       icon: RotateCcw,    badgeClass: 'bg-purple-50 text-purple-700' },
 }
 
 function todayStr(tz = 'Asia/Manila') {
@@ -64,16 +56,14 @@ function exportCSV(logs: UnifiedLog[], dateFrom: string, dateTo: string, tz = 'A
   const fmtDate = (iso: string) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(iso))
   const fmtTime = (iso: string) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(iso))
   const rows: (string | number)[][] = [
-    ['Date', 'Time', 'Item', 'Type', 'By', 'Receipt #', 'Batch No', 'Expiry', 'Change', 'Before Qty', 'After Qty', 'Note'],
+    ['Date', 'Time', 'Item', 'Type', 'By', 'Receipt #', 'Change', 'Before Qty', 'After Qty', 'Note'],
     ...logs.map(l => [
       fmtDate(l.created_at),
       fmtTime(l.created_at),
       l.item_name,
-      sourceConfig[l.source]?.label ?? l.source,
+      sourceConfig[l.source].label,
       l.created_by ?? '—',
       l.receipt_number ?? '—',
-      l.batch_no ?? '—',
-      l.expiry_date ?? '—',
       l.change_qty > 0 ? `+${l.change_qty}` : l.change_qty,
       l.before_qty != null ? l.before_qty : '—',
       l.after_qty  != null ? l.after_qty  : '—',
@@ -97,15 +87,38 @@ function exportCSV(logs: UnifiedLog[], dateFrom: string, dateTo: string, tz = 'A
 
 function SummaryCards({ stats, loading }: { stats: SummaryStats; loading: boolean }) {
   const cards = [
-    { label: 'Total Stock In',  value: loading ? '—' : `+${stats.totalIn}`,  icon: TrendingUp,  iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600', valueColor: 'text-emerald-600' },
-    { label: 'Total Stock Out', value: loading ? '—' : `\u2212${stats.totalOut}`, icon: TrendingDown, iconBg: 'bg-red-50',     iconColor: 'text-red-500',     valueColor: 'text-red-500' },
+    {
+      label: 'Total Stock In',
+      value: loading ? '—' : `+${stats.totalIn}`,
+      icon: TrendingUp,
+      iconBg: 'bg-emerald-50',
+      iconColor: 'text-emerald-600',
+      valueColor: 'text-emerald-600',
+    },
+    {
+      label: 'Total Stock Out',
+      value: loading ? '—' : `−${stats.totalOut}`,
+      icon: TrendingDown,
+      iconBg: 'bg-red-50',
+      iconColor: 'text-red-500',
+      valueColor: 'text-red-500',
+    },
     {
       label: 'Net Movement',
       value: loading ? '—' : (stats.netMovement >= 0 ? `+${stats.netMovement}` : `${stats.netMovement}`),
-      icon: RefreshCcw, iconBg: 'bg-indigo-50', iconColor: 'text-indigo-600',
+      icon: RefreshCcw,
+      iconBg: 'bg-indigo-50',
+      iconColor: 'text-indigo-600',
       valueColor: stats.netMovement >= 0 ? 'text-indigo-600' : 'text-red-500',
     },
-    { label: 'Items Tracked',   value: loading ? '—' : stats.uniqueItems, icon: Package, iconBg: 'bg-gray-100', iconColor: 'text-gray-600', valueColor: 'text-gray-900' },
+    {
+      label: 'Items Tracked',
+      value: loading ? '—' : stats.uniqueItems,
+      icon: Package,
+      iconBg: 'bg-gray-100',
+      iconColor: 'text-gray-600',
+      valueColor: 'text-gray-900',
+    },
   ]
 
   return (
@@ -154,10 +167,12 @@ export default function InventoryLogPage() {
   const [search, setSearch]         = useState('')
   const [typeFilter, setTypeFilter] = useState<string>('')
   const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
+  // null = no date filter (show all)
   const [dateFrom, setDateFrom]     = useState<string>('')
   const [dateTo, setDateTo]         = useState<string>('')
   const [selectedLog, setSelectedLog] = useState<UnifiedLog | null>(null)
 
+  // Fetch shop timezone on mount
   useEffect(() => {
     fetch('/api/shop-settings')
       .then(r => r.json())
@@ -171,9 +186,10 @@ export default function InventoryLogPage() {
     setLoading(true)
     try {
       const params = new URLSearchParams()
-      if (dateFrom)    params.set('from', dateFrom)
-      if (dateTo)      params.set('to', dateTo)
-      if (typeFilter)  params.set('type', typeFilter)
+      // Only send date params if the user has actually set them
+      if (dateFrom) params.set('from', dateFrom)
+      if (dateTo)   params.set('to', dateTo)
+      if (typeFilter) params.set('type', typeFilter)
       params.set('tz', tz)
 
       const res = await fetch(`/api/inventory/movements?${params}`)
@@ -194,13 +210,13 @@ export default function InventoryLogPage() {
 
   useEffect(() => { loadAll() }, [loadAll])
 
+  // Client-side search filter
   const filtered = useMemo(() =>
     logs.filter(l => {
       if (!search) return true
       return (
         l.item_name.toLowerCase().includes(search.toLowerCase()) ||
-        (l.receipt_number ?? '').toLowerCase().includes(search.toLowerCase()) ||
-        (l.batch_no ?? '').toLowerCase().includes(search.toLowerCase())
+        (l.receipt_number ?? '').toLowerCase().includes(search.toLowerCase())
       )
     }),
     [logs, search]
@@ -215,12 +231,16 @@ export default function InventoryLogPage() {
     } else if (preset === 'today') {
       setDateFrom(t); setDateTo(t)
     } else if (preset === 'yesterday') {
+      // Subtract 1 day in ms then format in shop tz
       const y = fmt(new Date(now.getTime() - 86400000))
       setDateFrom(y); setDateTo(y)
     } else if (preset === 'week') {
       setDateFrom(fmt(new Date(now.getTime() - 6 * 86400000))); setDateTo(t)
     } else if (preset === 'month') {
-      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit' }).formatToParts(now)
+      // First day of current month in shop timezone
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz, year: 'numeric', month: '2-digit',
+      }).formatToParts(now)
       const y2 = parts.find(p => p.type === 'year')?.value ?? String(now.getFullYear())
       const m  = parts.find(p => p.type === 'month')?.value ?? '01'
       setDateFrom(`${y2}-${m}-01`); setDateTo(t)
@@ -271,7 +291,9 @@ export default function InventoryLogPage() {
                 key={p.key}
                 onClick={() => setPreset(p.key)}
                 className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                  active ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  active
+                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                 }`}
               >
                 {p.label}
@@ -282,14 +304,28 @@ export default function InventoryLogPage() {
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <label className="text-xs text-gray-500 w-8">From</label>
-            <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-40 text-sm" />
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              className="w-40 text-sm"
+            />
           </div>
           <div className="flex items-center gap-2">
             <label className="text-xs text-gray-500 w-5">To</label>
-            <Input type="date" value={dateTo} max={todayStr(tz)} onChange={e => setDateTo(e.target.value)} className="w-40 text-sm" />
+            <Input
+              type="date"
+              value={dateTo}
+              max={todayStr(tz)}
+              onChange={e => setDateTo(e.target.value)}
+              className="w-40 text-sm"
+            />
           </div>
           {!isAllTime && (
-            <button onClick={() => setPreset('all')} className="text-xs text-gray-400 hover:text-gray-600 underline transition-colors">
+            <button
+              onClick={() => setPreset('all')}
+              className="text-xs text-gray-400 hover:text-gray-600 underline transition-colors"
+            >
               Clear dates
             </button>
           )}
@@ -304,7 +340,7 @@ export default function InventoryLogPage() {
         <div className="relative flex-1 min-w-[180px] max-w-xs">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
           <Input
-            placeholder="Search item, receipt or batch…"
+            placeholder="Search item or receipt…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="pl-8 text-sm"
@@ -338,7 +374,7 @@ export default function InventoryLogPage() {
           </div>
         ) : (
           <div style={{ maxHeight: '520px', overflowY: 'auto', overflowX: 'auto' }}>
-            <table className="w-full min-w-[820px]">
+            <table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50">
                   {[
@@ -346,7 +382,7 @@ export default function InventoryLogPage() {
                     { label: 'Item',        align: 'text-left' },
                     { label: 'Type',        align: 'text-left' },
                     { label: 'By',          align: 'text-left' },
-                    { label: 'Batch / Ref', align: 'text-left' },
+                    { label: 'Receipt #',   align: 'text-left' },
                     { label: 'Change',      align: 'text-right' },
                     { label: 'Before Qty',  align: 'text-right' },
                     { label: 'After Qty',   align: 'text-right' },
@@ -367,13 +403,13 @@ export default function InventoryLogPage() {
                 {filtered.map(log => {
                   const cfg  = sourceConfig[log.source] ?? sourceConfig['adjustment']
                   const Icon = cfg.icon
-                  const isExpired = log.expiry_date && new Date(log.expiry_date) < new Date()
                   return (
                     <tr
                       key={log.id}
                       className="hover:bg-gray-50 transition-colors cursor-pointer"
                       onClick={() => setSelectedLog(log)}
                     >
+
                       {/* Date — sticky first column */}
                       <td className="sticky left-0 z-10 bg-white px-4 py-3 whitespace-nowrap shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">
                         <p className="text-sm text-gray-700">
@@ -402,23 +438,11 @@ export default function InventoryLogPage() {
                         <span className="text-sm text-gray-600">{log.created_by || '—'}</span>
                       </td>
 
-                      {/* Batch / Ref */}
+                      {/* Receipt */}
                       <td className="px-4 py-3">
-                        {log.batch_no ? (
-                          <div className="space-y-0.5">
-                            <span className="text-sm text-indigo-600 font-medium">{log.batch_no}</span>
-                            {log.expiry_date && (
-                              <p className={`text-xs ${isExpired ? 'text-red-500' : 'text-gray-400'}`}>
-                                Exp {new Date(log.expiry_date).toLocaleDateString('en-GB')}
-                                {isExpired && ' ⚠'}
-                              </p>
-                            )}
-                          </div>
-                        ) : log.receipt_number ? (
-                          <span className="text-sm text-indigo-600 font-medium">{log.receipt_number}</span>
-                        ) : (
-                          <span className="text-xs text-gray-300">—</span>
-                        )}
+                        {log.receipt_number
+                          ? <span className="text-sm text-indigo-600 font-medium">{log.receipt_number}</span>
+                          : <span className="text-xs text-gray-300">—</span>}
                       </td>
 
                       {/* Change */}
@@ -444,6 +468,7 @@ export default function InventoryLogPage() {
                       <td className="px-4 py-3 max-w-[200px]">
                         <span className="text-xs text-gray-400 truncate block">{log.note ?? '—'}</span>
                       </td>
+
                     </tr>
                   )
                 })}
@@ -463,7 +488,6 @@ export default function InventoryLogPage() {
       {selectedLog && (() => {
         const cfg  = sourceConfig[selectedLog.source] ?? sourceConfig['adjustment']
         const Icon = cfg.icon
-        const isExpired = selectedLog.expiry_date && new Date(selectedLog.expiry_date) < new Date()
         return (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -492,54 +516,12 @@ export default function InventoryLogPage() {
                   <span className="text-gray-500">By</span>
                   <span className="font-medium text-gray-900">{selectedLog.created_by || '—'}</span>
                 </div>
-
-                {/* Batch details block */}
-                {selectedLog.batch_id && (
-                  <div className="bg-indigo-50 rounded-xl p-3 space-y-2">
-                    <p className="text-xs font-semibold text-indigo-700 flex items-center gap-1">
-                      <Layers className="w-3 h-3" /> Batch Details
-                    </p>
-                    {selectedLog.batch_no && (
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Batch no.</span>
-                        <span className="font-medium text-gray-900">{selectedLog.batch_no}</span>
-                      </div>
-                    )}
-                    {selectedLog.expiry_date && (
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Expiry</span>
-                        <span className={`font-medium ${isExpired ? 'text-red-600' : 'text-gray-900'}`}>
-                          {new Date(selectedLog.expiry_date).toLocaleDateString('en-GB')}
-                          {isExpired && ' (Expired)'}
-                        </span>
-                      </div>
-                    )}
-                    {selectedLog.qty_packs != null && (
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Packs received</span>
-                        <span className="font-medium text-gray-900">
-                          {selectedLog.qty_packs} {selectedLog.pack_unit || 'pcs'}
-                          {selectedLog.pack_size && selectedLog.pack_size > 1 && ` × ${selectedLog.pack_size}`}
-                        </span>
-                      </div>
-                    )}
-                    {selectedLog.qty_base != null && (
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Total base units</span>
-                        <span className="font-medium text-gray-900">{selectedLog.qty_base}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Receipt ref (for sales) */}
                 {selectedLog.receipt_number && (
                   <div className="flex justify-between">
                     <span className="text-gray-500">Receipt #</span>
                     <span className="text-indigo-600 font-medium">{selectedLog.receipt_number}</span>
                   </div>
                 )}
-
                 <div className="flex justify-between">
                   <span className="text-gray-500">Change</span>
                   <ChangeBadge qty={selectedLog.change_qty} />

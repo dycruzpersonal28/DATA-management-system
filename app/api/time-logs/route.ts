@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
       .select(`
         id, employee_id, shift_schedule_id, clock_in, clock_out,
         date, total_hours, overtime_hours, late_minutes, is_late,
-        log_type, break_minutes,
+        log_type, break_minutes, advances,
         approved_by, notes, created_at,
         employees:employees!time_logs_employee_id_fkey ( id, name, role, employee_no ),
         shift_schedules ( id, name, start_time, end_time ),
@@ -613,22 +613,82 @@ export async function PATCH(req: NextRequest) {
     if (!caller || !['owner', 'manager'].includes(caller.role?.toLowerCase()))
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-    const { id, clock_in, clock_out, late_minutes, is_late, overtime_hours, notes } = await req.json()
+    const { id, clock_in, clock_out, late_minutes, is_late, overtime_hours, notes, advances } = await req.json()
     if (!id) return NextResponse.json({ error: 'Log ID required' }, { status: 400 })
 
     const admin = createAdminClient()
 
+    // Build update payload — only include fields that were sent
+    const updatePayload: Record<string, any> = {}
+    if (clock_in      !== undefined) updatePayload.clock_in       = clock_in
+    if (clock_out     !== undefined) updatePayload.clock_out      = clock_out
+    if (late_minutes  !== undefined) updatePayload.late_minutes   = late_minutes
+    if (is_late       !== undefined) updatePayload.is_late        = is_late
+    if (overtime_hours !== undefined) updatePayload.overtime_hours = overtime_hours
+    if (notes         !== undefined) updatePayload.notes          = notes
+    if (advances      !== undefined) updatePayload.advances       = advances
+
+    // Verify the log belongs to this shop before updating
+    const { data: existing } = await admin
+      .from('time_logs')
+      .select('id, shop_id')
+      .eq('id', id)
+      .single()
+
+    if (!existing) return NextResponse.json({ error: 'Time log not found' }, { status: 404 })
+    if (existing.shop_id !== caller.shop_id)
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
     // total_hours is a generated column — Postgres recomputes automatically
     const { data: log, error } = await admin
       .from('time_logs')
-      .update({ clock_in, clock_out, late_minutes, is_late, overtime_hours, notes })
+      .update(updatePayload)
       .eq('id', id)
-      .eq('shop_id', caller.shop_id)
       .select()
       .single()
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
     return NextResponse.json({ success: true, log })
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
+}
+
+// ─── DELETE: remove a time log ────────────────────────────────────────────────
+export async function DELETE(req: NextRequest) {
+  try {
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { data: caller } = await supabase
+      .from('app_users')
+      .select('role, shop_id')
+      .eq('auth_user_id', user.id)
+      .single()
+    if (!caller || !['owner', 'manager', 'admin'].includes(caller.role?.toLowerCase()))
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+    const { id } = await req.json()
+    if (!id) return NextResponse.json({ error: 'Log ID required' }, { status: 400 })
+
+    const admin = createAdminClient()
+
+    // Also remove any financial_entries tied to this log
+    await admin
+      .from('financial_entries')
+      .delete()
+      .eq('reference_type', 'time_log')
+      .eq('reference_id', id)
+
+    const { error } = await admin
+      .from('time_logs')
+      .delete()
+      .eq('id', id)
+      .eq('shop_id', caller.shop_id)
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    return NextResponse.json({ success: true })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

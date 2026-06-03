@@ -1,12 +1,12 @@
 // app/api/inventory/route.ts
-// GET  /api/inventory          — stock levels for all items
-// POST /api/inventory          — adjust / set stock for one item
+// GET  /api/inventory  -- stock levels for all items
+// POST /api/inventory  -- adjust / set / batch_receive stock for one item
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-// ── GET /api/inventory ────────────────────────────────────────────────────────
+// GET /api/inventory
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const admin    = createAdminClient()
@@ -35,6 +35,7 @@ export async function GET(req: NextRequest) {
     .from('items')
     .select(`
       id, name, sku, category_id, track_stock,
+      stock_unit, consumption_unit, unit_conversion,
       categories!items_category_id_fkey(name, color),
       inventory_levels(id, quantity, low_stock_alert, variant_id)
     `)
@@ -76,27 +77,56 @@ export async function GET(req: NextRequest) {
 
   const { data: categories } = await admin
     .from('categories')
-    .select('id, name, color')
+    .select('id, name, color, show_in_inventory')
     .eq('shop_id', shopId)
     .order('name')
 
+  // Fetch active batches — only for inventory-visible items to avoid query size limits
+  const inventoryCatIds = new Set(
+    (categories || [])
+      .filter((c: any) => c.show_in_inventory)
+      .map((c: any) => c.id)
+  )
+  const inventoryItemIds = (items as any[])
+    .filter((i: any) => inventoryCatIds.has(i.category_id))
+    .map((i: any) => i.id)
+
+  let batchMap: Record<string, any[]> = {}
+  if (inventoryItemIds.length > 0) {
+    const { data: batchData, error: batchError } = await admin
+      .from('stock_batches')
+      .select('id, item_id, batch_no, pack_size, pack_unit, qty_packs, qty_base, qty_remaining, expiry_date, received_at, note')
+      .in('item_id', inventoryItemIds)
+      .gt('qty_remaining', 0)
+      .order('received_at', { ascending: true })
+
+    if (batchError) console.error('[GET /api/inventory] batchError:', batchError.message)
+
+    for (const b of (batchData || [])) {
+      if (!batchMap[b.item_id]) batchMap[b.item_id] = []
+      batchMap[b.item_id].push(b)
+    }
+  }
+
   return NextResponse.json({
     items,
+    batches: batchMap,
     categories: categories || [],
     stats: { totalItems, outOfStock, lowStock },
   })
 }
 
-// ── POST /api/inventory ───────────────────────────────────────────────────────
-// Body:
-// {
-//   item_id:          string
-//   mode:             'adjust' | 'set'
-//   adj_type?:        'restock' | 'adjustment' | 'loss'  (required when mode=adjust)
-//   quantity:         number
-//   low_stock_alert?: number  (only applied when mode=set)
-//   note?:            string
-// }
+// POST /api/inventory
+//
+// mode=adjust:
+//   { item_id, mode:'adjust', adj_type:'restock'|'adjustment'|'loss', quantity, note? }
+//
+// mode=set:
+//   { item_id, mode:'set', quantity, low_stock_alert?, note? }
+//
+// mode=batch_receive:
+//   { item_id, mode:'batch_receive', batch_no?, expiry_date?, pack_size, pack_unit, qty_packs, conversion, note? }
+//   qty_base = qty_packs * pack_size * conversion  (total base units added to stock)
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -107,7 +137,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Fetch app_user row to get name (same pattern as receipts → employee_id → app_users(name))
   const { data: appUser } = await admin
     .from('app_users')
     .select('shop_id, name')
@@ -120,26 +149,105 @@ export async function POST(req: NextRequest) {
   const createdByName: string | null = appUser?.name ?? null
 
   const body = await req.json()
-  const { item_id, mode, adj_type, quantity, low_stock_alert, note } = body
+  const { item_id, mode } = body
 
-  if (!item_id || !mode || quantity == null) {
-    return NextResponse.json({ error: 'item_id, mode, and quantity are required' }, { status: 400 })
+  if (!item_id || !mode) {
+    return NextResponse.json({ error: 'item_id and mode are required' }, { status: 400 })
   }
-  if (mode === 'adjust' && !adj_type) {
-    return NextResponse.json({ error: 'adj_type required for mode=adjust' }, { status: 400 })
-  }
+
+  // Fetch current inventory_levels row (shared by all modes)
+  const { data: inv } = await admin
+    .from('inventory_levels')
+    .select('id, quantity')
+    .eq('item_id', item_id)
+    .eq('shop_id', shopId)
+    .is('variant_id', null)
+    .maybeSingle()
+
+  const beforeQty = inv ? Number(inv.quantity) : 0
 
   try {
-    // Fetch current inventory_levels row
-    const { data: inv } = await admin
-      .from('inventory_levels')
-      .select('id, quantity')
-      .eq('item_id', item_id)
-      .eq('shop_id', shopId)
-      .is('variant_id', null)
-      .maybeSingle()
+    // ── batch_receive ──────────────────────────────────────────────────────
+    if (mode === 'batch_receive') {
+      const {
+        batch_no    = null,
+        expiry_date = null,
+        pack_size   = 1,
+        pack_unit   = 'pcs',
+        qty_packs,
+        conversion  = 1,
+        note        = null,
+      } = body
 
-    const beforeQty = inv ? Number(inv.quantity) : 0
+      if (!qty_packs || Number(qty_packs) <= 0) {
+        return NextResponse.json({ error: 'qty_packs must be > 0' }, { status: 400 })
+      }
+
+      const qtyBase  = Number(qty_packs) * Number(pack_size) * Number(conversion)
+      const newQty   = beforeQty + qtyBase
+
+      // 1. Insert stock_batches row
+      const { data: batch, error: batchErr } = await admin
+        .from('stock_batches')
+        .insert({
+          shop_id:       shopId,
+          item_id,
+          batch_no:      batch_no || null,
+          expiry_date:   expiry_date || null,
+          pack_size:     Number(pack_size),
+          pack_unit:     pack_unit || 'pcs',
+          qty_packs:     Number(qty_packs),
+          conversion:    Number(conversion),
+          qty_base:      qtyBase,
+          qty_remaining: qtyBase,
+          note:          note || null,
+        })
+        .select('id')
+        .single()
+      if (batchErr) throw batchErr
+
+      // 2. Upsert inventory_levels
+      if (inv?.id) {
+        const { error } = await admin
+          .from('inventory_levels')
+          .update({ quantity: newQty, updated_at: new Date().toISOString() })
+          .eq('id', inv.id)
+        if (error) throw error
+      } else {
+        const { error } = await admin
+          .from('inventory_levels')
+          .insert({ shop_id: shopId, item_id, quantity: newQty, low_stock_alert: 0, variant_id: null })
+        if (error) throw error
+      }
+
+      // 3. Write stock_movement tagged with batch_id
+      const { error: mvErr } = await admin
+        .from('stock_movements')
+        .insert({
+          shop_id:    shopId,
+          item_id,
+          type:       'restock',
+          quantity:   qtyBase,
+          before_qty: beforeQty,
+          after_qty:  newQty,
+          batch_id:   batch.id,
+          note:       note || (batch_no ? `Batch ${batch_no}` : 'Stock received'),
+          created_by: createdByName,
+        })
+      if (mvErr) throw mvErr
+
+      return NextResponse.json({ ok: true, newQty, batch_id: batch.id })
+    }
+
+    // ── adjust / set ───────────────────────────────────────────────────────
+    const { adj_type, quantity, low_stock_alert, note } = body
+
+    if (quantity == null) {
+      return NextResponse.json({ error: 'quantity is required' }, { status: 400 })
+    }
+    if (mode === 'adjust' && !adj_type) {
+      return NextResponse.json({ error: 'adj_type required for mode=adjust' }, { status: 400 })
+    }
 
     let newQty: number
     let movementQty: number
@@ -147,46 +255,36 @@ export async function POST(req: NextRequest) {
 
     if (mode === 'set') {
       newQty       = Math.max(0, Number(quantity))
-      movementQty  = newQty - beforeQty   // net delta so log makes sense
+      movementQty  = newQty - beforeQty
       movementType = 'adjustment'
     } else {
-      const delta  = Math.abs(Number(quantity))
+      const delta = Math.abs(Number(quantity))
       if (adj_type === 'loss') {
         newQty      = Math.max(0, beforeQty - delta)
-        movementQty = -(beforeQty - newQty)  // actual deducted (respects floor 0)
+        movementQty = -(beforeQty - newQty)
       } else {
-        // restock | adjustment
         newQty      = beforeQty + delta
         movementQty = delta
       }
       movementType = adj_type
     }
 
-    // Upsert inventory_levels
     if (inv?.id) {
       const updateData: any = { quantity: newQty, updated_at: new Date().toISOString() }
       if (mode === 'set' && low_stock_alert != null) {
         updateData.low_stock_alert = Number(low_stock_alert)
       }
-      const { error } = await admin
-        .from('inventory_levels')
-        .update(updateData)
-        .eq('id', inv.id)
+      const { error } = await admin.from('inventory_levels').update(updateData).eq('id', inv.id)
       if (error) throw error
     } else {
-      const { error } = await admin
-        .from('inventory_levels')
-        .insert({
-          shop_id:         shopId,
-          item_id,
-          quantity:        newQty,
-          low_stock_alert: mode === 'set' ? (Number(low_stock_alert) || 0) : 0,
-          variant_id:      null,
-        })
+      const { error } = await admin.from('inventory_levels').insert({
+        shop_id: shopId, item_id, quantity: newQty,
+        low_stock_alert: mode === 'set' ? (Number(low_stock_alert) || 0) : 0,
+        variant_id: null,
+      })
       if (error) throw error
     }
 
-    // Write stock_movement with before/after snapshot and who made the change
     const { error: mvErr } = await admin
       .from('stock_movements')
       .insert({

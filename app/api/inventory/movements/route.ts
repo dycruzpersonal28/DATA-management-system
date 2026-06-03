@@ -27,16 +27,17 @@ export async function GET(req: NextRequest) {
   const from   = searchParams.get('from')
   const to     = searchParams.get('to')
   const itemId = searchParams.get('item_id')
-  const type   = searchParams.get('type') // sale | restock | adjustment | loss
+  const type   = searchParams.get('type')
 
-  // ── Single query: stock_movements is now the only source of truth ─────────
+  // Join stock_batches to pull batch_no + expiry_date for batch_receive rows
   let query = admin
     .from('stock_movements')
     .select(`
       id, type, quantity, before_qty, after_qty,
       note, created_at, item_id, variant_id,
-      reference_type, reference_id, created_by,
-      items!stock_movements_item_id_fkey(name)
+      reference_type, reference_id, created_by, batch_id,
+      items!stock_movements_item_id_fkey(name),
+      stock_batches(batch_no, expiry_date, pack_size, pack_unit, qty_packs, qty_base, conversion)
     `)
     .eq('shop_id', shop_id)
     .order('created_at', { ascending: false })
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest) {
   const { data: movements, error: movErr } = await query
   if (movErr) return NextResponse.json({ error: movErr.message }, { status: 500 })
 
-  // ── Resolve receipt numbers for sale movements ────────────────────────────
+  // Resolve receipt numbers for sale movements
   const receiptIds = [...new Set(
     (movements || [])
       .filter((m: any) => m.reference_type === 'receipt' && m.reference_id)
@@ -71,48 +72,53 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── Normalise into UnifiedLog shape ───────────────────────────────────────
-  const logs = (movements || []).map((m: any) => ({
-    id:             m.id,
-    source:         m.type as 'sale' | 'restock' | 'adjustment' | 'loss',
-    item_name:      m.items?.name ?? 'Unknown item',
-    item_id:        m.item_id,
-    variant_id:     m.variant_id ?? null,
-    receipt_number: m.reference_type === 'receipt' && m.reference_id
-                      ? receiptMap[m.reference_id] ?? null
-                      : null,
-    change_qty:     Number(m.quantity),
-    before_qty:     m.before_qty !== null ? Number(m.before_qty) : null,
-    after_qty:      m.after_qty  !== null ? Number(m.after_qty)  : null,
-    note:           m.note ?? null,
-    created_at:     m.created_at,
-    created_by:     m.type === 'void'
-                      // void: always use who actioned the void, not the original cashier
-                      ? m.created_by ?? null
-                      : (m.reference_type === 'receipt' && m.reference_id)
-                        ? receiptStaffMap[m.reference_id] ?? m.created_by ?? null
-                        : m.created_by ?? null,
-  }))
+  // Normalise into UnifiedLog shape — include batch fields when present
+  const logs = (movements || []).map((m: any) => {
+    const batch = m.stock_batches ?? null
+    // A restock with a batch_id is treated as 'batch_receive' in the UI
+    const source = (m.type === 'restock' && m.batch_id) ? 'batch_receive' : m.type
 
-  // ── Summary stats ─────────────────────────────────────────────────────────
+    return {
+      id:             m.id,
+      source,
+      item_name:      m.items?.name ?? 'Unknown item',
+      item_id:        m.item_id,
+      variant_id:     m.variant_id ?? null,
+      receipt_number: m.reference_type === 'receipt' && m.reference_id
+                        ? receiptMap[m.reference_id] ?? null
+                        : null,
+      change_qty:     Number(m.quantity),
+      before_qty:     m.before_qty !== null ? Number(m.before_qty) : null,
+      after_qty:      m.after_qty  !== null ? Number(m.after_qty)  : null,
+      note:           m.note ?? null,
+      created_at:     m.created_at,
+      created_by:     source === 'void'
+                        ? m.created_by ?? null
+                        : (m.reference_type === 'receipt' && m.reference_id)
+                          ? receiptStaffMap[m.reference_id] ?? m.created_by ?? null
+                          : m.created_by ?? null,
+      // Batch fields (null for non-batch rows)
+      batch_id:       m.batch_id ?? null,
+      batch_no:       batch?.batch_no ?? null,
+      expiry_date:    batch?.expiry_date ?? null,
+      pack_size:      batch?.pack_size ?? null,
+      pack_unit:      batch?.pack_unit ?? null,
+      qty_packs:      batch?.qty_packs ?? null,
+      qty_base:       batch?.qty_base ?? null,
+    }
+  })
+
+  // Summary stats
   const totalIn  = logs.filter(l => l.change_qty > 0).reduce((s, l) => s + l.change_qty, 0)
   const totalOut = Math.abs(logs.filter(l => l.change_qty < 0).reduce((s, l) => s + l.change_qty, 0))
   const uniqueItems = new Set(logs.map(l => l.item_name)).size
 
   const byItem: Record<string, number> = {}
-  logs.forEach(l => {
-    byItem[l.item_name] = (byItem[l.item_name] ?? 0) + Math.abs(l.change_qty)
-  })
+  logs.forEach(l => { byItem[l.item_name] = (byItem[l.item_name] ?? 0) + Math.abs(l.change_qty) })
   const mostMoved = Object.entries(byItem).sort((a, b) => b[1] - a[1])[0]?.[0] ?? ''
 
   return NextResponse.json({
     logs,
-    stats: {
-      totalIn,
-      totalOut,
-      netMovement: totalIn - totalOut,
-      uniqueItems,
-      mostMoved,
-    },
+    stats: { totalIn, totalOut, netMovement: totalIn - totalOut, uniqueItems, mostMoved },
   })
 }

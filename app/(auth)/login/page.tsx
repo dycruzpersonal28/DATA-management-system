@@ -176,7 +176,7 @@ export default function LoginPage() {
             {['Fast & reliable POS', 'Real-time inventory', 'Shift & staff tracking'].map(f => (
               <div key={f} className="flex items-center gap-3 rounded-xl px-4 py-2.5 bg-white/10">
                 <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#9FE1CB' }} />
-                <span className="text-sm" style={{ color: '#E1F5EE' }}>{f}</span>
+                <span className="text-sm" style={{ color: '#a0d1f4' }}>{f}</span>
               </div>
             ))}
           </div>
