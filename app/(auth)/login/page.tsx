@@ -157,7 +157,7 @@ export default function LoginPage() {
       {/* ── Left panel — branding ── */}
       <div
         className="hidden lg:flex w-1/2 flex-col items-center justify-center p-12 relative overflow-hidden"
-        style={{ background: 'linear-gradient(135deg, #0F6E56 0%, #1D9E75 100%)' }}
+        style={{ background: 'linear-gradient(135deg, #035ebfed 0%, #257cd7ed 100%)' }}
       >
         {/* Background circles */}
         <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-white/5" />
@@ -170,7 +170,7 @@ export default function LoginPage() {
           </div>
           <div>
             <h1 className="text-4xl font-bold text-white tracking-tight">THB Manila</h1>
-            <p className="mt-2 text-base" style={{ color: '#9FE1CB' }}>Point of Sale Management System</p>
+            <p className="mt-2 text-base" style={{ color: '#77b9ffed' }}>Point of Sale Management System</p>
           </div>
           <div className="mt-6 flex flex-col gap-3 w-full max-w-xs">
             {['Fast & reliable POS', 'Real-time inventory', 'Shift & staff tracking'].map(f => (
@@ -211,7 +211,7 @@ export default function LoginPage() {
               onClick={() => switchMode('password')}
               className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all"
               style={mode === 'password'
-                ? { background: '#0F6E56', color: 'white' }
+                ? { background: '#035ebfed', color: 'white' }
                 : { color: '#6b7280' }
               }
             >
