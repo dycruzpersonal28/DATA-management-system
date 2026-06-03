@@ -29,7 +29,7 @@ function PinPad({ value, onChange }: { value: string; onChange: (v: string) => v
             key={i}
             className="w-3 h-3 rounded-full border-2 transition-all duration-150"
             style={i < value.length
-              ? { background: '#1D9E75', borderColor: '#1D9E75', transform: 'scale(1.15)' }
+              ? { background: '#257cd7ed', borderColor: '#257cd7ed', transform: 'scale(1.15)' }
               : { background: 'transparent', borderColor: '#d1d5db' }
             }
           />

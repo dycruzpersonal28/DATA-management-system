@@ -3,10 +3,10 @@
 // /app/(dashboard)/hr/payroll/page.tsx
 
 import { useState, useEffect, useCallback } from 'react'
-import Link from 'next/link'
+
 import { toast } from 'sonner'
 import {
-  Calendar, ChevronLeft, ChevronRight, Plus, Lock, Unlock,
+  Calendar, ChevronLeft, ChevronRight, Plus, Lock,
   Trash2, Printer, RefreshCw, Users, Clock, AlertCircle,
   CheckCircle2, Edit3, X, Check, Settings, CalendarDays,
   Save, ChevronDown, UserPlus, LayoutTemplate, Download,
@@ -125,6 +125,7 @@ interface PayslipTemplate {
   showPagibig: boolean
   showTax: boolean
   footerNote: string
+  logoUrl: string
   createdAt: string
 }
 
@@ -178,6 +179,7 @@ const DEFAULT_TEMPLATE: Omit<PayslipTemplate, 'id' | 'name' | 'createdAt'> = {
   showPagibig: true,
   showTax: true,
   footerNote: '',
+  logoUrl: '/Capture.jpg',
 }
 
 // ─── Safe JSON fetch helper ───────────────────────────────────────────────────
@@ -449,113 +451,167 @@ function PayslipRow({ slip, onUpdate, onPrint, onVoid }: {
 // ─── Print Payslip ────────────────────────────────────────────────────────────
 
 function printPayslip(slip: Payslip, period: PayrollPeriod, tpl: PayslipTemplate | null = null, lateLogs?: { date: string; minutes: number }[], payslipNotes?: string, shopTimezone = 'Asia/Manila', allLogs?: { date: string; shift_name?: string; clock_in: string; clock_out: string | null; total_hours: number | null; late_minutes: number | null }[]) {
-  // ── Other (free-form) deductions — use values stored ON the payslip ──
   const otherDeductions = (slip.other_deductions ?? []).filter(o => o.label.trim() && o.amount > 0)
 
-  // ── Resolve template settings (fall back to "show everything") ──
-  const color        = tpl?.primaryColor   ?? '#111111'
-  const companyName  = tpl?.companyName    ?? ''
-  const companyAddr  = tpl?.companyAddress ?? ''
-  const footerNote   = tpl?.footerNote     ?? ''
-  const showEmpNo    = tpl ? tpl.showEmployeeNo    : true
-  const showOT       = tpl ? tpl.showOvertimePay   : true
-  const showAllow    = tpl ? tpl.showAllowance      : true
-  const showLate     = tpl ? tpl.showLateDeduction  : true
-  const showSSS      = tpl ? tpl.showSSS            : true
-  const showPH       = tpl ? tpl.showPhilHealth     : true
-  const showPagibig  = tpl ? tpl.showPagibig        : true
-  const showTax      = tpl ? tpl.showTax            : true
+  const color       = tpl?.primaryColor   ?? '#4f46e5'
+  const companyName = tpl?.companyName    ?? ''
+  const companyAddr = tpl?.companyAddress ?? ''
+  const footerNote  = tpl?.footerNote     ?? ''
+  const logoUrl     = tpl?.logoUrl        ?? ''
+  const showEmpNo   = tpl ? tpl.showEmployeeNo    : true
+  const showOT      = tpl ? tpl.showOvertimePay   : true
+  const showAllow   = tpl ? tpl.showAllowance      : true
+  const showLate    = tpl ? tpl.showLateDeduction  : true
+  const showSSS     = tpl ? tpl.showSSS            : true
+  const showPH      = tpl ? tpl.showPhilHealth     : true
+  const showPagibig = tpl ? tpl.showPagibig        : true
+  const showTax     = tpl ? tpl.showTax            : true
 
-  // ── Totals always use real values so net pay is always accurate ──
   const gross      = slip.basic_pay + slip.overtime_pay + slip.allowance
   const otherTotal = otherDeductions.reduce((sum, o) => sum + o.amount, 0)
   const deductions = slip.late_deduction + slip.sss_contribution
                    + slip.philhealth_contribution + slip.pagibig_contribution
                    + slip.tax_withheld + otherTotal
 
-  // ── Group logs by shift name for the attendance summary ──
-  const shiftSummary: Record<string, { days: number; totalHours: number }> = {}
-  if (allLogs && allLogs.length > 0) {
-    for (const log of allLogs) {
-      const key = log.shift_name || 'Unassigned'
-      if (!shiftSummary[key]) shiftSummary[key] = { days: 0, totalHours: 0 }
-      shiftSummary[key].days++
-      shiftSummary[key].totalHours += log.total_hours ?? 0
-    }
+  const sortedLogs     = (allLogs ?? []).slice().sort((a, b) => a.date.localeCompare(b.date))
+  const totalDays      = sortedLogs.length
+  const totalHoursAll  = sortedLogs.reduce((s, l) => s + (l.total_hours ?? 0), 0)
+  const lateDayCount   = sortedLogs.filter(l => (l.late_minutes ?? 0) > 0).length
+  const totalLateMin   = sortedLogs.reduce((s, l) => s + (l.late_minutes ?? 0), 0)
+
+  const fmtT = (iso: string) => {
+    try { return new Date(iso).toLocaleTimeString('en-US', { timeZone: shopTimezone, hour: '2-digit', minute: '2-digit' }) }
+    catch { return '—' }
   }
-  const shiftRows = Object.entries(shiftSummary)
-    .map(([name, v]) => `<div class="late-row"><span>${name}</span><span>${v.days} day${v.days !== 1 ? 's' : ''} · ${v.totalHours.toFixed(2)}h total</span></div>`)
-    .join('')
 
-  // ── Late day detail rows ──
-  const lateDayCount = lateLogs?.length ?? 0
-  const lateDayRows = (lateLogs ?? [])
-    .map(l => `<div class="late-row"><span>${fmtDate(l.date)}</span><span class="late-tag">${l.minutes} min late</span></div>`)
-    .join('')
+  const DSHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+  const MSHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
-  const html = `<!DOCTYPE html><html><head><title>Payslip — ${slip.employees.name}</title>
+  const attendanceRows = sortedLogs.map(l => {
+    const late = (l.late_minutes ?? 0) > 0
+    const [yr, mo, dy] = l.date.split('-').map(Number)
+    const label = `${DSHORT[new Date(yr, mo-1, dy).getDay()]}, ${MSHORT[mo-1]} ${dy}`
+    return `<tr${late ? ' class="lt"' : ''}>
+      <td>${label}</td><td>${l.shift_name || '—'}</td>
+      <td>${fmtT(l.clock_in)}</td><td>${l.clock_out ? fmtT(l.clock_out) : '—'}</td>
+      <td class="r">${l.total_hours != null ? l.total_hours.toFixed(1)+'h' : '—'}</td>
+      <td class="r">${late ? `<span class="lp">${l.late_minutes}m</span>` : '✓'}</td>
+    </tr>`
+  }).join('')
+
+  const shiftMap: Record<string, { days: number; hrs: number; lateMin: number }> = {}
+  for (const l of sortedLogs) {
+    const k = l.shift_name || 'Unassigned'
+    if (!shiftMap[k]) shiftMap[k] = { days: 0, hrs: 0, lateMin: 0 }
+    shiftMap[k].days++
+    shiftMap[k].hrs += l.total_hours ?? 0
+    shiftMap[k].lateMin += l.late_minutes ?? 0
+  }
+  const shiftRows = Object.entries(shiftMap).map(([n, v]) =>
+    `<tr><td>${n}</td><td class="r">${v.days}d</td><td class="r">${v.hrs.toFixed(1)}h</td><td class="r">${v.lateMin > 0 ? `<span class="lp">${v.lateMin}m late</span>` : '✓'}</td></tr>`
+  ).join('')
+
+  const logoTag = logoUrl ? `<img src="${logoUrl}" style="height:38px;object-fit:contain;display:block;margin-bottom:3px" onerror="this.style.display='none'" />` : ''
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Payslip</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#111;padding:32px;max-width:480px;margin:0 auto}
-  .accent{color:${color}}
-  .accent-border{border-color:${color}}
-  h1{font-size:18px;font-weight:700;margin-bottom:2px}
-  .company{font-size:11px;color:#555;margin-bottom:4px}
-  .period{font-size:11px;color:#666;margin-bottom:24px}
-  .section-title{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#888;font-weight:600;margin:16px 0 6px;padding-bottom:4px;border-bottom:2px solid ${color}}
-  .row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f0f0f0}
-  .row.total{border-top:1px solid #ddd;border-bottom:2px solid #111;font-weight:700;padding-top:8px;margin-top:4px}
-  .net{display:flex;justify-content:space-between;padding:12px 0;font-size:16px;font-weight:700;border-top:3px solid ${color};margin-top:8px;color:${color}}
-  .employee{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #e0e0e0}
-  .employee p{margin:2px 0}
-  .footer{margin-top:32px;font-size:10px;color:#aaa}
-  .notes-box{margin-top:16px;padding:10px 12px;background:#f9f9f9;border:1px solid #e0e0e0;border-radius:6px;font-size:11px;color:#444;white-space:pre-wrap}
-  .late-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:11px;color:#444;border-bottom:1px solid #f5f5f5}
-  .late-tag{background:#fee2e2;color:#b91c1c;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600}
-  .no-late{font-size:11px;color:#16a34a;padding:4px 0}
-  @media print{body{padding:16px}}
-</style>
-</head><body>
-${companyName ? `<p class="company" style="font-weight:600;font-size:13px">${companyName}</p>` : ''}
-${companyAddr ? `<p class="company">${companyAddr}</p>` : ''}
-<h1 class="accent">PAYSLIP</h1>
-<p class="period">${fmtDate(period.period_start)} – ${fmtDate(period.period_end)}</p>
+  body{font-family:Arial,sans-serif;font-size:9.5px;color:#222;padding:22px 28px;max-width:600px;margin:0 auto}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid ${color};padding-bottom:8px;margin-bottom:10px}
+  .hdr-left .co{font-size:11px;font-weight:700;color:#111}
+  .hdr-left .addr{font-size:8.5px;color:#888;margin-top:1px}
+  .hdr-left .title{font-size:16px;font-weight:800;color:${color};letter-spacing:-.3px;margin-top:4px}
+  .hdr-left .period{font-size:8px;color:#999;margin-top:1px}
+  .hdr-right{text-align:right;line-height:1.5}
+  .hdr-right .name{font-size:11px;font-weight:700;color:#111}
+  .hdr-right .sub{font-size:8.5px;color:#777}
+  .stats{display:flex;gap:0;margin-bottom:10px}
+  .stat{flex:1;text-align:center;padding:5px 4px;border-right:1px solid #eee}
+  .stat:last-child{border-right:none}
+  .stat .v{font-size:12px;font-weight:700;color:#111}
+  .stat .l{font-size:7.5px;text-transform:uppercase;color:#aaa;margin-top:1px;letter-spacing:.04em}
+  .stat.red .v{color:#dc2626}
+  .cols{display:flex;gap:16px;margin-bottom:8px}
+  .col{flex:1}
+  .sec{font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:${color};border-bottom:1px solid ${color};padding-bottom:2px;margin-bottom:4px;margin-top:8px}
+  .row{display:flex;justify-content:space-between;padding:2px 0;font-size:9px;border-bottom:1px solid #f5f5f5}
+  .row span:first-child{color:#555}
+  .row.tot{font-weight:700;font-size:9.5px;border-top:1px solid #ddd;border-bottom:none;padding-top:4px;margin-top:2px}
+  .net{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:${color};color:#fff;margin:8px 0}
+  .net .nl{font-size:8.5px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;opacity:.85}
+  .net .na{font-size:16px;font-weight:800}
+  table{width:100%;border-collapse:collapse;font-size:8.5px;margin-top:4px}
+  th{font-size:7.5px;text-transform:uppercase;letter-spacing:.05em;color:#999;font-weight:700;padding:3px 4px;text-align:left;border-bottom:1px solid #eee}
+  td{padding:2.5px 4px;border-bottom:1px solid #f8f8f8;color:#444;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  tr.lt td{color:#b91c1c}
+  .r{text-align:right}
+  .lp{background:#fee2e2;color:#b91c1c;padding:0 4px;border-radius:6px;font-size:7.5px;font-weight:700}
+  .notes{margin-top:8px;padding:6px 8px;background:#fafafa;border-left:2px solid ${color};font-size:8.5px;color:#555;white-space:pre-wrap;line-height:1.5}
+  .foot{margin-top:10px;padding-top:6px;border-top:1px solid #eee;font-size:7.5px;color:#bbb;display:flex;justify-content:space-between}
+  @media print{body{padding:14px 18px}@page{margin:.8cm;size:A4}}
+</style></head><body>
 
-<div class="employee">
-  <p><strong>${slip.employees.name}</strong></p>
-  ${showEmpNo && slip.employees.employee_no ? `<p>Employee #${slip.employees.employee_no}</p>` : ''}
-  <p>${slip.employees.role}</p>
-  ${slip.employees.employment_type ? `<p>${slip.employees.employment_type.replace('-',' ').replace(/\b\w/g,c=>c.toUpperCase())}</p>` : ''}
+<div class="hdr">
+  <div class="hdr-left">
+    ${logoTag}
+    ${companyName ? `<div class="co">${companyName}</div>` : ''}
+    ${companyAddr ? `<div class="addr">${companyAddr}</div>` : ''}
+    <div class="title">PAYSLIP</div>
+    <div class="period">${fmtDate(period.period_start)} – ${fmtDate(period.period_end)}</div>
+  </div>
+  <div class="hdr-right">
+    <div class="name">${slip.employees.name}</div>
+    <div class="sub">${slip.employees.role}</div>
+    ${showEmpNo && slip.employees.employee_no ? `<div class="sub">#${slip.employees.employee_no}</div>` : ''}
+    ${slip.employees.employment_type ? `<div class="sub">${slip.employees.employment_type.replace(/-/g,' ')}</div>` : ''}
+  </div>
 </div>
 
-${shiftRows ? `<p class="section-title">Attendance Summary</p>${shiftRows}` : ''}
+<div class="stats">
+  <div class="stat"><div class="v">${totalDays}</div><div class="l">Days</div></div>
+  <div class="stat"><div class="v">${totalHoursAll.toFixed(1)}h</div><div class="l">Hours</div></div>
+  <div class="stat${lateDayCount > 0 ? ' red' : ''}"><div class="v">${lateDayCount}</div><div class="l">Late days</div></div>
+  <div class="stat${totalLateMin > 0 ? ' red' : ''}"><div class="v">${totalLateMin}m</div><div class="l">Late total</div></div>
+</div>
 
-<p class="section-title">Earnings</p>
-<div class="row"><span>Basic Pay</span><span>${fmt(slip.basic_pay)}</span></div>
-${showOT && slip.overtime_pay > 0 ? `<div class="row"><span>Overtime Pay</span><span>${fmt(slip.overtime_pay)}</span></div>` : ''}
-${showAllow && slip.allowance > 0 ? `<div class="row"><span>Allowance</span><span>${fmt(slip.allowance)}</span></div>` : ''}
-<div class="row total"><span>Gross Pay</span><span>${fmt(gross)}</span></div>
+<div class="cols">
+  <div class="col">
+    <div class="sec">Earnings</div>
+    <div class="row"><span>Basic Pay</span><span>${fmt(slip.basic_pay)}</span></div>
+    ${showOT && slip.overtime_pay > 0 ? `<div class="row"><span>Overtime</span><span>${fmt(slip.overtime_pay)}</span></div>` : ''}
+    ${showAllow && slip.allowance > 0 ? `<div class="row"><span>Allowance</span><span>${fmt(slip.allowance)}</span></div>` : ''}
+    <div class="row tot"><span>Gross</span><span>${fmt(gross)}</span></div>
+  </div>
+  <div class="col">
+    <div class="sec">Deductions</div>
+    ${showLate && slip.late_deduction > 0 ? `<div class="row"><span>Late (${lateDayCount}d, ${totalLateMin}m)</span><span>–${fmt(slip.late_deduction)}</span></div>` : ''}
+    ${showSSS && slip.sss_contribution > 0 ? `<div class="row"><span>SSS</span><span>–${fmt(slip.sss_contribution)}</span></div>` : ''}
+    ${showPH && slip.philhealth_contribution > 0 ? `<div class="row"><span>PhilHealth</span><span>–${fmt(slip.philhealth_contribution)}</span></div>` : ''}
+    ${showPagibig && slip.pagibig_contribution > 0 ? `<div class="row"><span>Pag-IBIG</span><span>–${fmt(slip.pagibig_contribution)}</span></div>` : ''}
+    ${showTax && slip.tax_withheld > 0 ? `<div class="row"><span>Tax</span><span>–${fmt(slip.tax_withheld)}</span></div>` : ''}
+    ${otherDeductions.map(o => `<div class="row"><span>${o.label}</span><span>–${fmt(o.amount)}</span></div>`).join('')}
+    <div class="row tot"><span>Total Deductions</span><span>–${fmt(deductions)}</span></div>
+  </div>
+</div>
 
-<p class="section-title">Deductions</p>
-${showLate && slip.late_deduction > 0 ? `<div class="row"><span>Late Deduction${lateDayCount > 0 ? ` (${lateDayCount} day${lateDayCount !== 1 ? 's' : ''})` : ''}</span><span>–${fmt(slip.late_deduction)}</span></div>` : ''}
-${showSSS ? `<div class="row"><span>SSS</span><span>–${fmt(slip.sss_contribution)}</span></div>` : ''}
-${showPH ? `<div class="row"><span>PhilHealth</span><span>–${fmt(slip.philhealth_contribution)}</span></div>` : ''}
-${showPagibig ? `<div class="row"><span>Pag-IBIG</span><span>–${fmt(slip.pagibig_contribution)}</span></div>` : ''}
-${showTax && slip.tax_withheld > 0 ? `<div class="row"><span>Withholding Tax</span><span>–${fmt(slip.tax_withheld)}</span></div>` : ''}
-${otherDeductions.map(o => `<div class="row"><span>${o.label}</span><span>–${fmt(o.amount)}</span></div>`).join('')}
-<div class="row total"><span>Total Deductions</span><span>–${fmt(deductions)}</span></div>
+<div class="net"><span class="nl">Net Pay</span><span class="na">${fmt(slip.net_pay)}</span></div>
 
-<div class="net"><span>NET PAY</span><span>${fmt(slip.net_pay)}</span></div>
+${Object.keys(shiftMap).length > 0 ? `
+<div class="sec">Hours by Shift</div>
+<table><thead><tr><th>Shift</th><th class="r">Days</th><th class="r">Hours</th><th class="r">Late</th></tr></thead>
+<tbody>${shiftRows}</tbody></table>` : ''}
 
-<p class="section-title">Late Records</p>
-${lateDayRows || '<p class="no-late">✓ No late occurrences this period</p>'}
+${sortedLogs.length > 0 ? `
+<div class="sec">Daily Attendance</div>
+<table><thead><tr><th>Date</th><th>Shift</th><th>In</th><th>Out</th><th class="r">Hrs</th><th class="r">Late</th></tr></thead>
+<tbody>${attendanceRows}</tbody></table>` : ''}
 
-${payslipNotes ? `<div class="notes-box">${payslipNotes}</div>` : ''}
-
-<p class="footer">
-  ${footerNote ? `${footerNote}<br/>` : ''}
-  Generated ${new Date().toLocaleString('en-US', { timeZone: shopTimezone })}
-</p>
+${payslipNotes ? `<div class="notes">${payslipNotes}</div>` : ''}
+<div class="foot">
+  <span>${footerNote || 'System-generated payslip.'}</span>
+  <span>${new Date().toLocaleString('en-US', { timeZone: shopTimezone })}</span>
+</div>
 </body></html>`
 
   const win = window.open('', '_blank')
@@ -1314,6 +1370,7 @@ function TemplateFormModal({ initial, onClose, onSave }: {
     showPagibig: initial?.showPagibig ?? true,
     showTax: initial?.showTax ?? true,
     footerNote: initial?.footerNote ?? '',
+    logoUrl: initial?.logoUrl ?? '/Capture.jpg',
   })
 
   const Toggle = ({ label, field }: { label: string; field: keyof typeof form }) => (
@@ -1377,6 +1434,21 @@ function TemplateFormModal({ initial, onClose, onSave }: {
                 placeholder="Optional address line"
                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
               />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Logo</label>
+              <div className="flex items-center gap-3">
+                {form.logoUrl && (
+                  <img src={form.logoUrl} alt="Logo preview" className="w-10 h-10 object-contain rounded border border-gray-200 bg-gray-50 flex-shrink-0" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                )}
+                <input
+                  value={form.logoUrl}
+                  onChange={e => setForm(f => ({ ...f, logoUrl: e.target.value }))}
+                  placeholder="/Capture.jpg"
+                  className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                />
+              </div>
+              <p className="text-xs text-gray-400 mt-1">Path to image in your /public folder, e.g. /Capture.jpg</p>
             </div>
           </div>
 
@@ -1577,9 +1649,9 @@ const PAYROLL_SETTINGS_KEY = 'payroll_settings'
 function loadPayrollSettings(): PayrollSettings {
   try {
     const raw = localStorage.getItem(PAYROLL_SETTINGS_KEY)
-    if (!raw) return { late_deduction_per_minute: 0, late_deduction_flat_amount: 100, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60 }
-    return { late_deduction_per_minute: 0, late_deduction_flat_amount: 100, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60, ...JSON.parse(raw) }
-  } catch { return { late_deduction_per_minute: 0, late_deduction_flat_amount: 100, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60 } }
+    if (!raw) return { late_deduction_per_minute: 0, late_deduction_type: 'per_minute', late_deduction_flat_amount: 100, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60 }
+    return { late_deduction_per_minute: 0, late_deduction_type: 'per_minute', late_deduction_flat_amount: 100, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60, ...JSON.parse(raw) }
+  } catch { return { late_deduction_per_minute: 0, late_deduction_type: 'per_minute', late_deduction_flat_amount: 100, sss_rate: 0, philhealth_rate: 0, pagibig_flat: 0, overtime_multiplier: 1, tax_rate: 0, break_mode: 'auto', break_duration_minutes: 60 } }
 }
 
 function savePayrollSettings(s: PayrollSettings) {
@@ -1640,7 +1712,11 @@ function SettingsTab() {
         if (data?.settings && !data.error) {
           // API returns { settings: { ...fields, other_deductions: [...] } }
           const { other_deductions, ...rest } = data.settings
-          setSettings(prev => ({ ...prev, ...rest }))
+          // Merge with localStorage fallback so fields missing from the API
+          // response (e.g. late_deduction_type if the column was added later)
+          // are still populated from the last locally-saved value.
+          const localFallback = loadPayrollSettings()
+          setSettings(prev => ({ ...prev, ...localFallback, ...rest }))
           if (data.shop_timezone) setShopTimezone(data.shop_timezone)
           // Populate other deductions from DB, fall back to localStorage
           if (Array.isArray(other_deductions) && other_deductions.length > 0) {
@@ -1992,21 +2068,818 @@ function SettingsTab() {
   )
 }
 
+// ─── EditField ────────────────────────────────────────────────────────────────
+// Defined OUTSIDE QuickPayslipGenerator so it has a stable identity across
+// re-renders — prevents the "one character at a time" focus-loss bug.
+function EditField({ label, value, onChange, negative, isFinalized }: {
+  label: string; value: number; onChange: (v: number) => void; negative?: boolean; isFinalized: boolean
+}) {
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+      <span className="text-sm text-gray-600">{label}</span>
+      <div className="flex items-center gap-1">
+        {negative && <span className="text-xs text-red-400">−</span>}
+        <span className="text-xs text-gray-400">₱</span>
+        {isFinalized
+          ? <span className="w-32 px-2 py-1 text-sm text-right text-gray-800">{fmt(value)}</span>
+          : <input type="number" step="0.01" min="0" value={value || 0}
+              onChange={e => onChange(parseFloat(e.target.value) || 0)}
+              className="w-32 px-2 py-1 text-sm text-right border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+        }
+      </div>
+    </div>
+  )
+}
+
+// ─── Quick Payslip Generator ──────────────────────────────────────────────────
+
+type AttendanceLog = {
+  date: string
+  shift_name?: string
+  clock_in: string
+  clock_out: string | null
+  total_hours: number | null
+  late_minutes: number | null
+  overtime_hours: number | null
+}
+
+function QuickPayslipGenerator() {
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [empLoading, setEmpLoading] = useState(true)
+  const [templates, setTemplates] = useState<PayslipTemplate[]>([])
+  const [settings, setSettings] = useState<PayrollSettings | null>(null)
+  const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
+
+  // Period
+  const tz = 'Asia/Manila'
+  const now = new Date()
+  const tzParts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now)
+  const getP = (t: string) => tzParts.find(p => p.type === t)?.value ?? '01'
+  const y = getP('year'), mo = getP('month'), dy = parseInt(getP('day'))
+  const defaultStart = dy <= 15 ? `${y}-${mo}-01` : `${y}-${mo}-16`
+  const lastDay = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(parseInt(y), parseInt(mo), 0))
+  const defaultEnd = dy <= 15 ? `${y}-${mo}-15` : lastDay
+
+  const [employeeId, setEmployeeId] = useState('')
+  const [periodStart, setPeriodStart] = useState(defaultStart)
+  const [periodEnd, setPeriodEnd] = useState(defaultEnd)
+  const [format, setFormat] = useState<'payslip1' | 'payslip2'>('payslip1')
+  const [templateId, setTemplateId] = useState('')
+
+  // Fetched attendance
+  const [logs, setLogs] = useState<AttendanceLog[]>([])
+  const [logsLoading, setLogsLoading] = useState(false)
+  const [logsError, setLogsError] = useState('')
+
+  // Saved payslip state (after Save Draft / Finalize)
+  const [savedPeriodId, setSavedPeriodId] = useState<string | null>(null)
+  const [savedPayslipId, setSavedPayslipId] = useState<string | null>(null)
+  const [payslipStatus, setPayslipStatus] = useState<'draft' | 'released' | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [finalizing, setFinalizing] = useState(false)
+
+  // Computed pay values (editable overrides)
+  const [basicPay, setBasicPay] = useState(0)
+  const [overtimePay, setOvertimePay] = useState(0)
+  const [allowance, setAllowance] = useState(0)
+  const [lateDeduction, setLateDeduction] = useState(0)
+  const [sss, setSss] = useState(0)
+  const [philhealth, setPhilhealth] = useState(0)
+  const [pagibig, setPagibig] = useState(0)
+  const [tax, setTax] = useState(0)
+  const [otherDeductions, setOtherDeductions] = useState<{ id: string; label: string; amount: number }[]>([])
+
+  // Load employees + settings once
+  useEffect(() => {
+    fetch('/api/employees').then(r => safeJson(r)).then(d => {
+      setEmployees((d.employees ?? []).filter((e: any) => e.is_active !== false))
+    }).catch(() => {}).finally(() => setEmpLoading(false))
+    setTemplates(loadTemplates())
+    fetch('/api/payroll/settings').then(r => safeJson(r)).then(d => {
+      if (d?.settings && !d.error) {
+        // Merge with localStorage so fields missing from the API (e.g. late_deduction_type)
+        // still resolve to the last locally-saved value rather than undefined.
+        const localFallback = loadPayrollSettings()
+        setSettings({ ...localFallback, ...d.settings })
+      } else {
+        setSettings(loadPayrollSettings())
+      }
+      if (d?.shop_timezone) setShopTimezone(d.shop_timezone)
+    }).catch(() => setSettings(loadPayrollSettings()))
+    fetch('/api/shop-settings').then(r => r.json()).then(d => { if (d?.timezone) setShopTimezone(d.timezone) }).catch(() => {})
+  }, [])
+
+  // Fetch time logs whenever employee or period changes
+  useEffect(() => {
+    if (!employeeId || !periodStart || !periodEnd || !settings) {
+      setLogs([])
+      setBasicPay(0); setOvertimePay(0); setLateDeduction(0)
+      return
+    }
+    setLogsLoading(true)
+    setLogsError('')
+    fetch(`/api/time-logs?employee_id=${employeeId}&date_from=${periodStart}&date_to=${periodEnd}`)
+      .then(r => safeJson(r))
+      .then(d => {
+        if (d.error) { setLogsError(d.error); setLogs([]); return }
+        const raw = d.logs ?? []
+        const parsed: AttendanceLog[] = raw.map((l: any) => ({
+          date: l.date ?? l.clock_in?.split('T')[0],
+          shift_name: l.shift_schedules?.name ?? l.shift_name ?? null,
+          clock_in: l.clock_in,
+          clock_out: l.clock_out ?? null,
+          total_hours: l.total_hours != null ? Number(l.total_hours) : null,
+          late_minutes: l.late_minutes != null ? Number(l.late_minutes) : null,
+          overtime_hours: l.overtime_hours != null ? Number(l.overtime_hours) : null,
+        })).sort((a: AttendanceLog, b: AttendanceLog) => a.date.localeCompare(b.date))
+        setLogs(parsed)
+
+        // ── Auto-compute pay from logs + settings ──
+        const s = settings ?? loadPayrollSettings()
+        const emp = employees.find(e => e.id === employeeId)
+        const rate = emp?.hourly_rate ?? 0
+
+        const totalRegularHours = parsed.reduce((sum, l) => {
+          const h = l.total_hours ?? 0
+          const ot = l.overtime_hours ?? 0
+          return sum + Math.max(0, h - ot)
+        }, 0)
+        const totalOTHours = parsed.reduce((sum, l) => sum + (l.overtime_hours ?? 0), 0)
+        const totalLateMin = parsed.reduce((sum, l) => sum + (l.late_minutes ?? 0), 0)
+
+        const computedBasic = Math.round(totalRegularHours * rate * 100) / 100
+        const computedOT = Math.round(totalOTHours * rate * (s.overtime_multiplier ?? 1.25) * 100) / 100
+
+        // Late deduction
+        let computedLate = 0
+        if (s.late_deduction_type === 'flat') {
+          const lateDays = parsed.filter(l => (l.late_minutes ?? 0) > 0).length
+          computedLate = lateDays * (s.late_deduction_flat_amount ?? 0)
+        } else {
+          computedLate = Math.round(totalLateMin * (s.late_deduction_per_minute ?? 0) * 100) / 100
+        }
+
+        const computedAllowance = emp?.allowance ?? 0
+        const grossForDeductions = computedBasic + computedOT + computedAllowance
+        const computedSSS = Math.round(grossForDeductions * ((s.sss_rate ?? 0) / 100) * 100) / 100
+        const computedPH = Math.round(grossForDeductions * ((s.philhealth_rate ?? 0) / 100) * 100) / 100
+        const computedPagibig = s.pagibig_flat ?? 0
+        const computedTax = Math.round(grossForDeductions * ((s.tax_rate ?? 0) / 100) * 100) / 100
+
+        setBasicPay(computedBasic)
+        setOvertimePay(computedOT)
+        setAllowance(computedAllowance)
+        setLateDeduction(computedLate)
+        setSss(computedSSS)
+        setPhilhealth(computedPH)
+        setPagibig(computedPagibig)
+        setTax(computedTax)
+      })
+      .catch(() => setLogsError('Failed to load attendance logs'))
+      .finally(() => setLogsLoading(false))
+  }, [employeeId, periodStart, periodEnd, settings, employees])
+
+  // Reset saved state whenever the user picks a different employee or period
+  const resetSaved = () => {
+    setSavedPeriodId(null)
+    setSavedPayslipId(null)
+    setPayslipStatus(null)
+  }
+
+  // When employee changes also reset allowance from profile
+  const handleEmployeeChange = (id: string) => {
+    setEmployeeId(id)
+    const emp = employees.find(e => e.id === id)
+    setAllowance(emp?.allowance ?? 0)
+    resetSaved()
+  }
+
+  // ── Load existing draft ───────────────────────────────────────────────────────
+  // When the employee or period changes, check the DB for an existing payslip
+  // so the Generate tab shows the correct saved state on revisit.
+  // Uses the existing GET /api/payroll endpoints:
+  //   Step 1: GET /api/payroll          → all periods → find matching date range
+  //   Step 2: GET /api/payroll?period_id → payslips   → find this employee's slip
+  useEffect(() => {
+    if (!employeeId || !periodStart || !periodEnd) return
+    if (savedPayslipId) return // already hydrated this session
+
+    ;(async () => {
+      try {
+        // Step 1: find a period matching the selected date range
+        const periodsRes = await fetch('/api/payroll')
+        const periodsData = await safeJson(periodsRes)
+        if (periodsData.error || !periodsData.periods?.length) return
+
+        const matchedPeriod = periodsData.periods.find(
+          (p: PayrollPeriod) => p.period_start === periodStart && p.period_end === periodEnd
+        )
+        if (!matchedPeriod) return
+
+        // Step 2: get payslips for that period and find this employee's slip
+        const slipsRes = await fetch(`/api/payroll?period_id=${matchedPeriod.id}`)
+        const slipsData = await safeJson(slipsRes)
+        if (slipsData.error || !slipsData.payslips?.length) return
+
+        const slip: Payslip = slipsData.payslips.find((s: Payslip) => s.employee_id === employeeId)
+        if (!slip) return
+
+        // Hydrate saved state
+        setSavedPeriodId(matchedPeriod.id)
+        setSavedPayslipId(slip.id)
+        setPayslipStatus(slip.status)
+        setBasicPay(slip.basic_pay)
+        setOvertimePay(slip.overtime_pay)
+        setAllowance(slip.allowance)
+        setLateDeduction(slip.late_deduction)
+        setSss(slip.sss_contribution)
+        setPhilhealth(slip.philhealth_contribution)
+        setPagibig(slip.pagibig_contribution)
+        setTax(slip.tax_withheld)
+        if (Array.isArray(slip.other_deductions)) setOtherDeductions(slip.other_deductions)
+      } catch {
+        // Silently ignore — user just won't see draft indicator
+      }
+    })()
+  }, [employeeId, periodStart, periodEnd]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Save Draft ────────────────────────────────────────────────────────────────
+  // Persists the current payslip to the DB via create_period (single employee).
+  // If a draft already exists for this employee+period, updates it in place.
+  const handleSaveDraft = async () => {
+    if (!selectedEmployee) { toast.error('Please select an employee'); return }
+    if (!periodStart || !periodEnd) { toast.error('Please set a pay period'); return }
+    setSaving(true)
+    try {
+      if (savedPayslipId) {
+        // Already saved — just patch the amounts
+        const updates = {
+          basic_pay: basicPay, overtime_pay: overtimePay, allowance,
+          late_deduction: lateDeduction, sss_contribution: sss,
+          philhealth_contribution: philhealth, pagibig_contribution: pagibig,
+          tax_withheld: tax, net_pay: netPay,
+          other_deductions: otherDeductions.filter(o => o.label.trim()),
+        }
+        const res = await fetch('/api/payroll', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'update_payslip', payslip_id: savedPayslipId, updates }),
+        })
+        const data = await safeJson(res)
+        if (data.error) throw new Error(data.error)
+        toast.success('Draft updated')
+      } else {
+        // First save — create a new period for this single employee
+        const res = await fetch('/api/payroll', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'create_period',
+            period_start: periodStart,
+            period_end: periodEnd,
+            employee_ids: [selectedEmployee.id],
+          }),
+        })
+        const data = await safeJson(res)
+        if (data.error) throw new Error(data.error)
+        const periodId: string = data.period?.id
+        const payslipId: string = data.payslips?.[0]?.id
+        if (!periodId || !payslipId) throw new Error('Unexpected response from server')
+        setSavedPeriodId(periodId)
+        setSavedPayslipId(payslipId)
+        setPayslipStatus('draft')
+        if (selectedTpl?.id) savePeriodTemplate(periodId, selectedTpl.id)
+        // Immediately patch the computed amounts onto the new payslip
+        const updates = {
+          basic_pay: basicPay, overtime_pay: overtimePay, allowance,
+          late_deduction: lateDeduction, sss_contribution: sss,
+          philhealth_contribution: philhealth, pagibig_contribution: pagibig,
+          tax_withheld: tax, net_pay: netPay,
+          other_deductions: otherDeductions.filter(o => o.label.trim()),
+        }
+        const patchRes = await fetch('/api/payroll', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'update_payslip', payslip_id: payslipId, updates }),
+        })
+        const patchData = await safeJson(patchRes)
+        if (patchData.error) throw new Error(patchData.error)
+        toast.success('Payslip saved as draft')
+      }
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to save draft')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // ── Finalize ──────────────────────────────────────────────────────────────────
+  // Locks the saved payslip period so it can no longer be edited.
+  const handleFinalize = async () => {
+    if (!savedPeriodId) return
+    if (!confirm('Finalize this payslip? It will be locked and can no longer be edited.')) return
+    setFinalizing(true)
+    try {
+      const res = await fetch('/api/payroll', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'finalize_period', period_id: savedPeriodId }),
+      })
+      const data = await safeJson(res)
+      if (data.error) throw new Error(data.error)
+      setPayslipStatus('released')
+      toast.success('Payslip finalized and locked')
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to finalize')
+    } finally {
+      setFinalizing(false)
+    }
+  }
+
+  const isFinalized = payslipStatus === 'released'
+
+  const gross = basicPay + overtimePay + allowance
+  const otherTotal = otherDeductions.reduce((s, o) => s + (o.amount || 0), 0)
+  const totalDeductions = lateDeduction + sss + philhealth + pagibig + tax + otherTotal
+  const netPay = gross - totalDeductions
+
+  const addDeduction = () => { if (!isFinalized) setOtherDeductions(prev => [...prev, { id: crypto.randomUUID(), label: '', amount: 0 }]) }
+  const updateDeduction = (id: string, patch: Partial<{ label: string; amount: number }>) => {
+    if (!isFinalized) setOtherDeductions(prev => prev.map(o => o.id === id ? { ...o, ...patch } : o))
+  }
+  const removeDeduction = (id: string) => { if (!isFinalized) setOtherDeductions(prev => prev.filter(o => o.id !== id)) }
+
+  const selectedEmployee = employees.find(e => e.id === employeeId)
+  const selectedTpl = templates.find(t => t.id === templateId) ?? null
+  const accentColor = selectedTpl?.primaryColor ?? '#4f46e5'
+
+  // Attendance summary stats
+  const totalDays = logs.length
+  const totalHours = logs.reduce((s, l) => s + (l.total_hours ?? 0), 0)
+  const lateDays = logs.filter(l => (l.late_minutes ?? 0) > 0).length
+  const totalLateMin = logs.reduce((s, l) => s + (l.late_minutes ?? 0), 0)
+
+  // Shift breakdown for preview
+  const shiftBreakdown: Record<string, { days: number; hours: number; lateMin: number }> = {}
+  for (const l of logs) {
+    const k = l.shift_name || 'Unassigned'
+    if (!shiftBreakdown[k]) shiftBreakdown[k] = { days: 0, hours: 0, lateMin: 0 }
+    shiftBreakdown[k].days++
+    shiftBreakdown[k].hours += l.total_hours ?? 0
+    shiftBreakdown[k].lateMin += l.late_minutes ?? 0
+  }
+
+  const handlePrint = () => {
+    if (!selectedEmployee) { toast.error('Please select an employee'); return }
+    const fakeSlip: Payslip = {
+      id: 'preview', employee_id: employeeId, period_id: 'quick',
+      basic_pay: basicPay, overtime_pay: overtimePay, allowance,
+      late_deduction: lateDeduction, sss_contribution: sss,
+      philhealth_contribution: philhealth, pagibig_contribution: pagibig,
+      tax_withheld: tax, net_pay: netPay,
+      other_deductions: otherDeductions.filter(o => o.label.trim()),
+      status: 'draft', employees: selectedEmployee,
+    }
+    const fakePeriod: PayrollPeriod = {
+      id: 'quick', period_start: periodStart, period_end: periodEnd,
+      cutoff: null, status: 'draft', created_at: new Date().toISOString(),
+      payslip_count: 1, total_net_pay: netPay, finalized_count: 0,
+    }
+    const lateLogs = logs.filter(l => (l.late_minutes ?? 0) > 0).map(l => ({ date: l.date, minutes: l.late_minutes! }))
+    printPayslip(fakeSlip, fakePeriod, selectedTpl, lateLogs, settings?.payslip_notes, shopTimezone, logs)
+  }
+
+  // (EditField is defined outside this component — see below QuickPayslipGenerator)
+
+  return (
+    <div className="flex flex-1 overflow-hidden">
+
+      {/* ── Left panel: controls ── */}
+      <div className="w-[400px] flex-shrink-0 border-r border-gray-200 bg-white flex flex-col overflow-y-auto">
+        <div className="px-6 py-4 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-900">Generate Payslip</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Picks up real attendance data — all amounts auto-computed.</p>
+        </div>
+
+        <div className="px-6 py-5 space-y-5">
+
+          {/* Employee */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Employee</label>
+            {empLoading ? (
+              <div className="flex items-center gap-2 text-xs text-gray-400 py-2"><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
+            ) : (
+              <select value={employeeId} onChange={e => handleEmployeeChange(e.target.value)}
+                disabled={isFinalized}
+                className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white disabled:opacity-50 disabled:bg-gray-50">
+                <option value="">— Select employee —</option>
+                {employees.map(e => <option key={e.id} value={e.id}>{e.name}{e.employee_no ? ` (#${e.employee_no})` : ''}</option>)}
+              </select>
+            )}
+            {selectedEmployee && (
+              <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-indigo-50 border border-indigo-100 rounded-xl text-xs text-indigo-700">
+                <div className="w-7 h-7 rounded-full bg-indigo-200 flex items-center justify-center font-semibold text-indigo-800 text-[11px] flex-shrink-0">
+                  {selectedEmployee.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                </div>
+                <div>
+                  <p className="font-medium">{selectedEmployee.name}</p>
+                  <p className="text-indigo-400">{selectedEmployee.role}{selectedEmployee.employment_type ? ` · ${selectedEmployee.employment_type}` : ''}{selectedEmployee.hourly_rate ? ` · ₱${selectedEmployee.hourly_rate}/hr` : ''}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Pay Period */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Pay Period</label>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">From</label>
+                <input type="date" value={periodStart} onChange={e => { setPeriodStart(e.target.value); resetSaved() }}
+                  disabled={isFinalized}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:opacity-50 disabled:bg-gray-50" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">To</label>
+                <input type="date" value={periodEnd} onChange={e => { setPeriodEnd(e.target.value); resetSaved() }}
+                  disabled={isFinalized}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:opacity-50 disabled:bg-gray-50" />
+              </div>
+            </div>
+          </div>
+
+          {/* Attendance fetch status */}
+          {employeeId && (
+            <div>
+              {logsLoading ? (
+                <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-600">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                  Fetching attendance logs…
+                </div>
+              ) : logsError ? (
+                <div className="px-4 py-3 bg-red-50 border border-red-100 rounded-xl text-xs text-red-600 flex items-center gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {logsError}
+                </div>
+              ) : logs.length === 0 ? (
+                <div className="px-4 py-3 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-700 flex items-center gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                  No attendance logs found for this period. Amounts default to ₱0.
+                </div>
+              ) : (
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { val: totalDays, lbl: 'Days' },
+                    { val: totalHours.toFixed(1) + 'h', lbl: 'Hours' },
+                    { val: lateDays, lbl: 'Late days', alert: lateDays > 0 },
+                    { val: totalLateMin + ' min', lbl: 'Late total', alert: totalLateMin > 0 },
+                  ].map(({ val, lbl, alert }) => (
+                    <div key={lbl} className={`rounded-xl px-2 py-2 text-center ${alert ? 'bg-red-50 border border-red-100' : 'bg-gray-50 border border-gray-100'}`}>
+                      <p className={`text-sm font-bold ${alert ? 'text-red-600' : 'text-gray-800'}`}>{val}</p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">{lbl}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Payslip Format */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Format</label>
+            <div className="flex gap-3">
+              {(['payslip1', 'payslip2'] as const).map((f, i) => (
+                <button key={f} onClick={() => setFormat(f)}
+                  className={`flex-1 flex flex-col items-center gap-1.5 px-3 py-2.5 rounded-xl border-2 text-xs font-medium transition-all ${format === f ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:border-indigo-200'}`}>
+                  <div className={`w-full h-10 rounded-lg p-1.5 ${format === f ? 'bg-indigo-100' : 'bg-gray-100'}`}>
+                    {i === 0 ? (
+                      <div className="space-y-1">
+                        <div className={`h-1 w-10 rounded ${format === f ? 'bg-indigo-400' : 'bg-gray-300'}`} />
+                        <div className={`h-0.5 w-full rounded ${format === f ? 'bg-indigo-200' : 'bg-gray-200'}`} />
+                        <div className={`h-0.5 w-full rounded ${format === f ? 'bg-indigo-200' : 'bg-gray-200'}`} />
+                        <div className={`h-0.5 w-3/4 rounded ${format === f ? 'bg-indigo-200' : 'bg-gray-200'}`} />
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-1">
+                        {[...Array(4)].map((_, j) => <div key={j} className={`h-1 rounded ${format === f ? 'bg-indigo-200' : 'bg-gray-200'}`} />)}
+                      </div>
+                    )}
+                  </div>
+                  Payslip {i + 1}
+                </button>
+              ))}
+            </div>
+            {templates.length > 0 && (
+              <div className="mt-2">
+                <label className="block text-xs text-gray-500 mb-1">Template</label>
+                <select value={templateId} onChange={e => setTemplateId(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+                  <option value="">Default layout</option>
+                  {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* Finalized lock banner */}
+          {isFinalized && (
+            <div className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-700">
+              <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+              This payslip is finalized and locked. No further edits can be made.
+            </div>
+          )}
+
+          {/* Earnings — auto-filled, editable */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">Earnings</label>
+              {!isFinalized && <span className="text-[10px] text-indigo-500 font-medium">Auto-computed · editable</span>}
+            </div>
+            <div className="bg-gray-50 rounded-xl px-4 py-1">
+              <EditField label="Basic Pay" value={basicPay} onChange={setBasicPay} isFinalized={isFinalized} />
+              <EditField label="Overtime Pay" value={overtimePay} onChange={setOvertimePay} isFinalized={isFinalized} />
+              <EditField label="Allowance" value={allowance} onChange={setAllowance} isFinalized={isFinalized} />
+              <div className="flex items-center justify-between pt-2 pb-1">
+                <span className="text-sm font-semibold text-gray-700">Gross Pay</span>
+                <span className="text-sm font-bold text-gray-900">{fmt(gross)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Deductions — auto-filled, editable */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">Deductions</label>
+              {!isFinalized && <span className="text-[10px] text-indigo-500 font-medium">Auto-computed · editable</span>}
+            </div>
+            <div className="bg-gray-50 rounded-xl px-4 py-1">
+              <EditField label="Late Deduction" value={lateDeduction} onChange={setLateDeduction} negative isFinalized={isFinalized} />
+              <EditField label="SSS" value={sss} onChange={setSss} negative isFinalized={isFinalized} />
+              <EditField label="PhilHealth" value={philhealth} onChange={setPhilhealth} negative isFinalized={isFinalized} />
+              <EditField label="Pag-IBIG" value={pagibig} onChange={setPagibig} negative isFinalized={isFinalized} />
+              <EditField label="Withholding Tax" value={tax} onChange={setTax} negative isFinalized={isFinalized} />
+              {otherDeductions.map(o => (
+                <div key={o.id} className="flex items-center gap-2 py-2 border-b border-gray-100">
+                  <span className="text-xs text-red-400">−</span>
+                  {isFinalized ? (
+                    <span className="flex-1 text-xs text-gray-600">{o.label || '—'}</span>
+                  ) : (
+                    <input type="text" value={o.label} onChange={e => updateDeduction(o.id, { label: e.target.value })}
+                      placeholder="Deduction name…"
+                      className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+                  )}
+                  <span className="text-xs text-gray-400">₱</span>
+                  {isFinalized ? (
+                    <span className="w-24 text-xs text-right text-gray-800">{fmt(o.amount)}</span>
+                  ) : (
+                    <input type="number" step="0.01" min="0" value={o.amount || 0}
+                      onChange={e => updateDeduction(o.id, { amount: parseFloat(e.target.value) || 0 })}
+                      className="w-24 px-2 py-1 text-xs text-right border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+                  )}
+                  {!isFinalized && (
+                    <button onClick={() => removeDeduction(o.id)} className="p-1 text-gray-300 hover:text-red-500 rounded hover:bg-red-50 transition-colors">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {!isFinalized && (
+                <button onClick={addDeduction} className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium my-2 transition-colors">
+                  <Plus className="w-3.5 h-3.5" /> Add deduction
+                </button>
+              )}
+              <div className="flex items-center justify-between pt-1 pb-2 border-t border-gray-200">
+                <span className="text-sm font-semibold text-gray-700">Total Deductions</span>
+                <span className="text-sm font-bold text-red-600">−{fmt(totalDeductions)}</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* ── Right panel: live preview ── */}
+      <div className="flex-1 bg-gray-50 flex flex-col overflow-hidden">
+        <div className="px-6 py-4 bg-white border-b border-gray-200 flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-gray-900">Live Preview</h3>
+              {isFinalized && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200">
+                  <Lock className="w-3 h-3" /> Finalized
+                </span>
+              )}
+              {payslipStatus === 'draft' && !isFinalized && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 border border-amber-200">
+                  <Edit3 className="w-3 h-3" /> Draft Saved
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {logs.length > 0 ? `Based on ${logs.length} attendance log${logs.length !== 1 ? 's' : ''}` : 'Select employee and period to load attendance'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Print — always available */}
+            <button onClick={handlePrint} disabled={!employeeId || logsLoading}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 disabled:opacity-40 transition-colors">
+              <Printer className="w-4 h-4" /> Print
+            </button>
+            {/* Save Draft — hidden once finalized */}
+            {!isFinalized && (
+              <button onClick={handleSaveDraft} disabled={!employeeId || logsLoading || saving || finalizing}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-indigo-300 text-indigo-700 bg-indigo-50 rounded-xl hover:bg-indigo-100 disabled:opacity-40 transition-colors">
+                {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                {savedPayslipId ? 'Update Draft' : 'Save Draft'}
+              </button>
+            )}
+            {/* Finalize — only shown after saving a draft */}
+            {savedPeriodId && !isFinalized && (
+              <button onClick={handleFinalize} disabled={finalizing || saving}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 disabled:opacity-40 transition-colors">
+                {finalizing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                Finalize
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6">
+          {!employeeId ? (
+            <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 pb-12">
+              <Users className="w-10 h-10 mb-3 text-gray-300" />
+              <p className="font-medium">Select an employee to get started</p>
+              <p className="text-sm mt-1">Attendance data will be fetched automatically</p>
+            </div>
+          ) : logsLoading ? (
+            <div className="flex flex-col items-center justify-center h-full text-gray-400 pb-12">
+              <RefreshCw className="w-6 h-6 animate-spin mb-3 text-indigo-400" />
+              <p className="text-sm">Loading attendance data…</p>
+            </div>
+          ) : (
+            <div className="max-w-lg mx-auto space-y-4">
+
+              {/* Pay card */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+                {selectedTpl?.companyName && <p className="text-xs font-bold text-gray-700 mb-0.5">{selectedTpl.companyName}</p>}
+                {selectedTpl?.companyAddress && <p className="text-xs text-gray-400 mb-2">{selectedTpl.companyAddress}</p>}
+
+                <div className="flex items-start justify-between mb-4 pb-4 border-b border-gray-100">
+                  <div>
+                    <h2 className="text-xl font-extrabold" style={{ color: accentColor }}>PAYSLIP</h2>
+                    <p className="text-xs text-gray-400 mt-0.5">{fmtDate(periodStart)} – {fmtDate(periodEnd)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-gray-800">{selectedEmployee?.name}</p>
+                    <p className="text-xs text-gray-400">{selectedEmployee?.role}</p>
+                    {selectedEmployee?.employee_no && <p className="text-xs text-gray-400">#{selectedEmployee.employee_no}</p>}
+                  </div>
+                </div>
+
+                {/* Summary strip */}
+                {logs.length > 0 && (
+                  <div className="grid grid-cols-4 gap-2 mb-4">
+                    {[
+                      { val: totalDays, lbl: 'Days' },
+                      { val: totalHours.toFixed(1) + 'h', lbl: 'Hours' },
+                      { val: lateDays, lbl: 'Late days', alert: lateDays > 0 },
+                      { val: totalLateMin + ' min', lbl: 'Late total', alert: totalLateMin > 0 },
+                    ].map(({ val, lbl, alert }) => (
+                      <div key={lbl} className={`rounded-lg px-2 py-1.5 text-center ${alert ? 'bg-red-50' : 'bg-gray-50'}`}>
+                        <p className={`text-xs font-bold ${alert ? 'text-red-600' : 'text-gray-700'}`}>{val}</p>
+                        <p className="text-[9px] text-gray-400">{lbl}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Resolve template visibility flags for preview (mirrors printPayslip logic) */}
+                {(() => {
+                  const showOT      = selectedTpl ? selectedTpl.showOvertimePay  : true
+                  const showAllow   = selectedTpl ? selectedTpl.showAllowance     : true
+                  const showLate    = selectedTpl ? selectedTpl.showLateDeduction : true
+                  const showSSS     = selectedTpl ? selectedTpl.showSSS           : true
+                  const showPH      = selectedTpl ? selectedTpl.showPhilHealth    : true
+                  const showPagibig = selectedTpl ? selectedTpl.showPagibig       : true
+                  const showTax     = selectedTpl ? selectedTpl.showTax           : true
+
+                  const earningsRows: [string, number][] = [
+                    ['Basic Pay', basicPay],
+                    ...(showOT    ? [['Overtime Pay', overtimePay] as [string, number]] : []),
+                    ...(showAllow ? [['Allowance',    allowance]   as [string, number]] : []),
+                  ]
+                  const deductionRows: [string, number][] = [
+                    ...(showLate    ? [['Late Deduction', lateDeduction]  as [string, number]] : []),
+                    ...(showSSS     ? [['SSS',            sss]            as [string, number]] : []),
+                    ...(showPH      ? [['PhilHealth',     philhealth]     as [string, number]] : []),
+                    ...(showPagibig ? [['Pag-IBIG',       pagibig]        as [string, number]] : []),
+                    ...(showTax     ? [['Tax',            tax]            as [string, number]] : []),
+                    ...otherDeductions.filter(o => o.label.trim()).map(o => [o.label, o.amount] as [string, number]),
+                  ]
+
+                  return format === 'payslip1' ? (
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 pb-1 border-b-2" style={{ borderColor: accentColor }}>Earnings</p>
+                      {earningsRows.filter(([,v]) => v > 0).map(([l, v]) => (
+                        <div key={l} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span>{fmt(v)}</span></div>
+                      ))}
+                      <div className="flex justify-between py-1.5 text-xs font-bold border-t border-gray-200 mt-1"><span>Gross Pay</span><span>{fmt(gross)}</span></div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mt-3 mb-1 pb-1 border-b-2" style={{ borderColor: accentColor }}>Deductions</p>
+                      {deductionRows.filter(([,v]) => v > 0).map(([l, v]) => (
+                        <div key={l} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span className="text-red-600">−{fmt(v)}</span></div>
+                      ))}
+                      <div className="flex justify-between py-1.5 text-xs font-bold border-t border-gray-200 mt-1"><span>Total Deductions</span><span className="text-red-600">−{fmt(totalDeductions)}</span></div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-x-4">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 pb-1 border-b-2" style={{ borderColor: accentColor }}>Earnings</p>
+                        {earningsRows.filter(([,v]) => v > 0).map(([l, v]) => (
+                          <div key={l} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span>{fmt(v)}</span></div>
+                        ))}
+                        <div className="flex justify-between py-1.5 text-xs font-bold border-t border-gray-200 mt-1"><span>Gross</span><span>{fmt(gross)}</span></div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 pb-1 border-b-2" style={{ borderColor: accentColor }}>Deductions</p>
+                        {deductionRows.filter(([,v]) => v > 0).map(([l, v]) => (
+                          <div key={l} className="flex justify-between py-1 border-b border-gray-50 text-xs"><span className="text-gray-500">{l}</span><span className="text-red-500">−{fmt(v)}</span></div>
+                        ))}
+                        <div className="flex justify-between py-1.5 text-xs font-bold border-t border-gray-200 mt-1"><span>Total</span><span className="text-red-600">−{fmt(totalDeductions)}</span></div>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                <div className="flex justify-between items-center mt-4 px-4 py-3 rounded-xl text-white text-sm font-bold" style={{ backgroundColor: accentColor }}>
+                  <span>NET PAY</span><span className="text-base">{fmt(netPay)}</span>
+                </div>
+                {selectedTpl?.footerNote && <p className="text-[10px] text-gray-400 mt-3 pt-2 border-t border-gray-100">{selectedTpl.footerNote}</p>}
+              </div>
+
+              {/* Shift breakdown card */}
+              {Object.keys(shiftBreakdown).length > 0 && (
+                <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+                  <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Hours by Shift</p>
+                  <div className="space-y-2">
+                    {Object.entries(shiftBreakdown).map(([name, v]) => (
+                      <div key={name} className="flex items-center justify-between text-sm">
+                        <div>
+                          <span className="font-medium text-gray-800">{name}</span>
+                          <span className="text-xs text-gray-400 ml-2">{v.days} day{v.days !== 1 ? 's' : ''}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs">
+                          <span className="font-medium text-gray-700">{v.hours.toFixed(2)}h</span>
+                          {v.lateMin > 0
+                            ? <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full font-semibold">{v.lateMin} min late</span>
+                            : <span className="text-emerald-500">✓ on time</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Daily attendance log card */}
+              {logs.length > 0 && (
+                <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+                  <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Daily Attendance</p>
+                  <div className="space-y-1.5">
+                    {logs.map(l => {
+                      const isLate = (l.late_minutes ?? 0) > 0
+                      const [yr, mth, dd] = l.date.split('-').map(Number)
+                      const DSHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+                      const MSHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+                      const dow = new Date(yr, mth - 1, dd).getDay()
+                      const dateLabel = `${DSHORT[dow]}, ${MSHORT[mth-1]} ${dd}`
+                      const fmtT = (iso: string) => { try { return new Date(iso).toLocaleTimeString('en-US', { timeZone: shopTimezone, hour: '2-digit', minute: '2-digit' }) } catch { return '—' } }
+                      return (
+                        <div key={l.date + l.clock_in} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${isLate ? 'bg-red-50 border border-red-100' : 'bg-gray-50'}`}>
+                          <div className="w-28 text-gray-600 font-medium flex-shrink-0">{dateLabel}</div>
+                          <div className="flex-1 text-gray-400 truncate">{l.shift_name || '—'}</div>
+                          <div className="text-gray-500 flex-shrink-0">{fmtT(l.clock_in)} – {l.clock_out ? fmtT(l.clock_out) : '?'}</div>
+                          <div className="text-gray-600 font-medium flex-shrink-0 w-12 text-right">{l.total_hours != null ? l.total_hours.toFixed(2) + 'h' : '—'}</div>
+                          <div className="flex-shrink-0 w-20 text-right">
+                            {isLate
+                              ? <span className="px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full font-bold">{l.late_minutes} min</span>
+                              : <span className="text-emerald-500">✓</span>}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
-type Tab = 'payroll' | 'attendance' | 'templates' | 'settings'
+type Tab = 'generate' | 'attendance' | 'templates' | 'settings'
 
 
 export default function PayrollPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('payroll')
-  const [periods, setPeriods] = useState<PayrollPeriod[]>([])
-  const [selectedPeriod, setSelectedPeriod] = useState<PayrollPeriod | null>(null)
-  const [payslips, setPayslips] = useState<Payslip[]>([])
-  const [loadingPeriods, setLoadingPeriods] = useState(true)
-  const [loadingPayslips, setLoadingPayslips] = useState(false)
-  const [showCreateModal, setShowCreateModal] = useState(false)
-  const [finalizing, setFinalizing] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const [activeTab, setActiveTab] = useState<Tab>('generate')
   const [templates, setTemplates] = useState<PayslipTemplate[]>([])
   const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
 
@@ -2017,124 +2890,10 @@ export default function PayrollPage() {
       .catch(() => {})
   }, [])
 
-  const fetchPeriods = useCallback(async () => {
-    setLoadingPeriods(true)
-    try {
-      const res = await fetch('/api/payroll')
-      const data = await safeJson(res)
-      if (data.error) throw new Error(data.error)
-      setPeriods(data.periods ?? [])
-    } catch (e: any) {
-      toast.error(e.message ?? 'Failed to load payroll periods')
-    } finally {
-      setLoadingPeriods(false)
-    }
-  }, [])
-
-  const fetchPayslips = useCallback(async (period_id: string) => {
-    setLoadingPayslips(true)
-    try {
-      const res = await fetch(`/api/payroll?period_id=${period_id}`)
-      const data = await safeJson(res)
-      if (data.error) throw new Error(data.error)
-      setPayslips(data.payslips ?? [])
-    } catch (e: any) {
-      toast.error(e.message ?? 'Failed to load payslips')
-    } finally {
-      setLoadingPayslips(false)
-    }
-  }, [])
-
-  useEffect(() => { fetchPeriods() }, [fetchPeriods])
   useEffect(() => { setTemplates(loadTemplates()) }, [])
-  useEffect(() => {
-    if (selectedPeriod) fetchPayslips(selectedPeriod.id)
-    else setPayslips([])
-  }, [selectedPeriod, fetchPayslips])
-
-  const handleCreatePeriod = async (formData: { period_start: string; period_end: string; templateId?: string; employee_ids?: string[] }) => {
-    try {
-      const res = await fetch('/api/payroll', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'create_period', period_start: formData.period_start, period_end: formData.period_end, employee_ids: formData.employee_ids }),
-      })
-      const data = await safeJson(res)
-      if (data.error) throw new Error(data.error)
-      // Store the template association locally
-      if (formData.templateId && data.period?.id) {
-        savePeriodTemplate(data.period.id, formData.templateId)
-      }
-      toast.success(`Payroll period created with ${data.payslips?.length ?? 0} payslips`)
-      setShowCreateModal(false)
-      await fetchPeriods()
-      if (data.period) setSelectedPeriod(data.period)
-    } catch (e: any) { toast.error(e.message ?? 'Failed to create period') }
-  }
-
-  const handleUpdatePayslip = async (payslip_id: string, updates: Partial<Payslip>) => {
-    try {
-      const res = await fetch('/api/payroll', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update_payslip', payslip_id, updates }),
-      })
-      const data = await safeJson(res)
-      if (data.error) throw new Error(data.error)
-      setPayslips(prev => prev.map(s => s.id === payslip_id ? { ...s, ...data.payslip } : s))
-      fetchPeriods()
-    } catch (e: any) { toast.error(e.message ?? 'Failed to update payslip') }
-  }
-
-  const handleVoidPayslip = async (payslip_id: string) => {
-    try {
-      const res = await fetch('/api/payroll', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'void_payslip', payslip_id }),
-      })
-      const data = await safeJson(res)
-      if (data.error) throw new Error(data.error)
-      toast.success('Payslip voided and financial entries removed')
-      setPayslips(prev => prev.filter(s => s.id !== payslip_id))
-      fetchPeriods()
-    } catch (e: any) { toast.error(e.message ?? 'Failed to void payslip') }
-  }
-
-  const handleFinalize = async () => {
-    if (!selectedPeriod) return
-    if (!confirm('Finalize this payroll period? All payslips will be locked.')) return
-    setFinalizing(true)
-    try {
-      const res = await fetch('/api/payroll', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'finalize_period', period_id: selectedPeriod.id }),
-      })
-      const data = await safeJson(res)
-      if (data.error) throw new Error(data.error)
-      toast.success('Payroll period finalized')
-      setSelectedPeriod({ ...selectedPeriod, status: 'finalized' })
-      await fetchPeriods(); await fetchPayslips(selectedPeriod.id)
-    } catch (e: any) { toast.error(e.message ?? 'Failed to finalize') }
-    finally { setFinalizing(false) }
-  }
-
-  const handleDelete = async () => {
-    if (!selectedPeriod) return
-    if (!confirm('Delete this draft payroll period? This cannot be undone.')) return
-    setDeleting(true)
-    try {
-      const res = await fetch(`/api/payroll?period_id=${selectedPeriod.id}`, { method: 'DELETE' })
-      const data = await safeJson(res)
-      if (data.error) throw new Error(data.error)
-      toast.success('Period deleted'); setSelectedPeriod(null); await fetchPeriods()
-    } catch (e: any) { toast.error(e.message ?? 'Failed to delete') }
-    finally { setDeleting(false) }
-  }
-
-  const totalGross = payslips.reduce((s, p) => s + p.basic_pay + p.overtime_pay + p.allowance, 0)
-  const totalDeductions = payslips.reduce((s, p) => s + p.late_deduction + p.sss_contribution + p.philhealth_contribution + p.pagibig_contribution + p.tax_withheld, 0)
-  const totalNet = payslips.reduce((s, p) => s + p.net_pay, 0)
 
   const tabs: { id: Tab; label: string; icon: any }[] = [
-    { id: 'payroll', label: 'Payroll', icon: Calendar },
+    { id: 'generate', label: 'Generate', icon: FileDown },
     { id: 'attendance', label: 'Attendance', icon: CalendarDays },
     { id: 'templates', label: 'Templates', icon: LayoutTemplate },
     { id: 'settings', label: 'Settings', icon: Settings },
@@ -2160,189 +2919,10 @@ export default function PayrollPage() {
 
       {/* Tab content */}
       {activeTab === 'attendance' && <div className="flex-1 overflow-y-auto"><AttendanceTab /></div>}
+      {activeTab === 'generate' && <div className="flex-1 flex overflow-hidden"><QuickPayslipGenerator /></div>}
       {activeTab === 'templates' && <div className="flex-1 overflow-y-auto"><TemplatesTab /></div>}
       {activeTab === 'settings' && <div className="flex-1 overflow-y-auto"><SettingsTab /></div>}
 
-      {activeTab === 'payroll' && (
-        <div className="flex flex-1 overflow-hidden">
-          {/* Sidebar */}
-          <aside className="w-72 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-4 border-b border-gray-100">
-              <div>
-                <h2 className="font-semibold text-gray-900 text-sm">Payroll Periods</h2>
-                <p className="text-xs text-gray-400 mt-0.5">{periods.length} period{periods.length !== 1 ? 's' : ''}</p>
-              </div>
-              <button onClick={() => setShowCreateModal(true)}
-                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors">
-                <Plus className="w-3.5 h-3.5" /> New
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto py-2">
-              {loadingPeriods ? (
-                <div className="flex items-center justify-center h-24 text-gray-400"><RefreshCw className="w-4 h-4 animate-spin" /></div>
-              ) : periods.length === 0 ? (
-                <div className="px-4 py-8 text-center text-xs text-gray-400">
-                  <Calendar className="w-8 h-8 mx-auto mb-2 text-gray-300" />
-                  No payroll periods yet.<br />Click + New to get started.
-                </div>
-              ) : periods.map(period => (
-                <button key={period.id} onClick={() => setSelectedPeriod(period)}
-                  className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-50 ${selectedPeriod?.id === period.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-medium text-gray-800 truncate">{`${fmtDate(period.period_start)} – ${fmtDate(period.period_end)}`}</p>
-                    <Badge status={period.status} />
-                  </div>
-                  <div className="flex items-center gap-3 mt-1.5">
-                    <span className="text-xs text-gray-400 flex items-center gap-1"><Users className="w-3 h-3" />{period.payslip_count}</span>
-                    <span className="text-xs font-medium text-gray-700">{fmt(period.total_net_pay)}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </aside>
-
-          {/* Main content */}
-          <main className="flex-1 flex flex-col overflow-hidden">
-            {!selectedPeriod ? (
-              <div className="flex-1 flex items-center justify-center text-center p-8">
-                <div>
-                  <Calendar className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                  <p className="text-gray-500 font-medium">Select a payroll period</p>
-                  <p className="text-sm text-gray-400 mt-1">Or create a new one to get started</p>
-                  <button onClick={() => setShowCreateModal(true)}
-                    className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors">
-                    <Plus className="w-4 h-4" /> Create Payroll Period
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="bg-white border-b border-gray-200 px-6 py-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h1 className="text-lg font-semibold text-gray-900">{`${fmtDate(selectedPeriod.period_start)} – ${fmtDate(selectedPeriod.period_end)}`}</h1>
-                        <Badge status={selectedPeriod.status} />
-                      </div>
-                      <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5" />{fmtDate(selectedPeriod.period_start)} – {fmtDate(selectedPeriod.period_end)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {payslips.length > 0 && (
-                        <button
-                          onClick={() => exportPayslipsCSV(payslips, selectedPeriod)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
-                        >
-                          <FileDown className="w-3.5 h-3.5" /> Export CSV
-                        </button>
-                      )}
-                      <Link href={`/hr/payroll/${selectedPeriod.id}/payslip`}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors">
-                        <Printer className="w-3.5 h-3.5" /> View Payslips
-                      </Link>
-                      {selectedPeriod.status === 'draft' && (
-                        <>
-                          <button onClick={handleDelete} disabled={deleting}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50">
-                            <Trash2 className="w-3.5 h-3.5" /> Delete
-                          </button>
-                          <button onClick={handleFinalize} disabled={finalizing || payslips.length === 0}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50">
-                            {finalizing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />} Finalize Payroll
-                          </button>
-                        </>
-                      )}
-                      {selectedPeriod.status === 'finalized' && (
-                        <span className="text-xs text-emerald-600 flex items-center gap-1.5 px-3 py-1.5 border border-emerald-200 bg-emerald-50 rounded-lg">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Payroll Locked
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  {payslips.length > 0 && (
-                    <div className="grid grid-cols-4 gap-4 mt-4">
-                      {[
-                        { label: 'Employees', value: payslips.length.toString() },
-                        { label: 'Total Gross', value: fmt(totalGross) },
-                        { label: 'Deductions', value: `–${fmt(totalDeductions)}` },
-                        { label: 'Total Net Pay', value: fmt(totalNet), highlight: true },
-                      ].map(({ label, value, highlight }) => (
-                        <div key={label} className={`rounded-xl px-4 py-3 ${highlight ? 'bg-gray-900 text-white' : 'bg-gray-50 border border-gray-100'}`}>
-                          <p className="text-xs text-gray-400">{label}</p>
-                          <p className={`text-base font-semibold mt-0.5 ${highlight ? 'text-white' : 'text-gray-900'}`}>{value}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="flex-1 overflow-y-auto p-6">
-                  {loadingPayslips ? (
-                    <div className="flex items-center justify-center h-32 text-gray-400"><RefreshCw className="w-5 h-5 animate-spin mr-2" /> Loading payslips…</div>
-                  ) : payslips.length === 0 ? (
-                    <div className="text-center py-16 text-gray-400">
-                      <Users className="w-10 h-10 mx-auto mb-3 text-gray-300" />
-                      <p className="font-medium">No payslips found</p>
-                      <p className="text-sm mt-1">No active employees had time logs in this period</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-w-3xl">
-                      {selectedPeriod.status === 'draft' && (
-                        <div className="flex items-center gap-2 mb-4 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
-                          <Unlock className="w-3.5 h-3.5 flex-shrink-0" />
-                          Click any payslip to expand it. Tap any amount to edit it. Finalize when ready to lock.
-                        </div>
-                      )}
-                      {payslips.map(slip => (
-                        <PayslipRow key={slip.id} slip={slip} onUpdate={handleUpdatePayslip}
-                          onPrint={async (s) => {
-                            // Fetch all time logs for this employee within the period
-                            let lateLogs: { date: string; minutes: number }[] = []
-                            let allLogs: { date: string; shift_name?: string; clock_in: string; clock_out: string | null; total_hours: number | null; late_minutes: number | null }[] = []
-                            try {
-                              const res = await fetch(`/api/time-logs?employee_id=${s.employee_id}&date_from=${selectedPeriod.period_start}&date_to=${selectedPeriod.period_end}`)
-                              const data = await safeJson(res)
-                              const logs = data.logs ?? []
-                              lateLogs = logs
-                                .filter((l: any) => l.late_minutes && l.late_minutes > 0)
-                                .map((l: any) => ({
-                                  date: l.date ?? l.clock_in?.split('T')[0],
-                                  minutes: l.late_minutes,
-                                }))
-                              allLogs = logs.map((l: any) => ({
-                                date: l.date ?? l.clock_in?.split('T')[0],
-                                shift_name: l.shift_schedules?.name ?? l.shift_name ?? null,
-                                clock_in: l.clock_in,
-                                clock_out: l.clock_out,
-                                total_hours: l.total_hours,
-                                late_minutes: l.late_minutes,
-                              }))
-                            } catch {}
-                            // Load payslip notes from settings
-                            let notes: string | undefined
-                            try {
-                              const res = await fetch('/api/payroll/settings')
-                              const data = await safeJson(res)
-                              notes = data?.settings?.payslip_notes || loadPayrollSettings().payslip_notes
-                            } catch {
-                              notes = loadPayrollSettings().payslip_notes
-                            }
-                            printPayslip(s, selectedPeriod, getTemplateForPeriod(selectedPeriod.id), lateLogs, notes, shopTimezone, allLogs)
-                          }}
-                          onVoid={handleVoidPayslip} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </main>
-        </div>
-      )}
-
-      {showCreateModal && (
-        <CreatePeriodModal onClose={() => setShowCreateModal(false)} onCreate={handleCreatePeriod} templates={templates} />
-      )}
     </div>
   )
 }

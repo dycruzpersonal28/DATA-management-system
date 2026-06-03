@@ -13,6 +13,7 @@ import {
   CalendarClock, ClipboardList, ScanLine, ArrowLeftRight,
   ShieldCheck, KeyRound,
   Banknote, LayoutGrid, TrendingUp, History, BookOpen, Store,
+  Menu, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -57,27 +58,27 @@ const hrPaths        = ['/hr', '/employees']
 const financePaths   = ['/finance']
 const settingsPaths  = ['/settings']
 
-// ── Starbucks signature green palette (lighter, warmer) ───────────────────────
 const g = {
-  sidebar:    '#00704A',                      // Starbucks signature green
-  header:     '#005f3e',                      // slightly deeper for top section
-  activeBg:   'rgba(255,255,255,0.18)',        // frosted white active
+  sidebar:    '#257cd7ed',
+  header:     '#257cd7ed',
+  activeBg:   'rgba(255,255,255,0.18)',
   activeText: '#ffffff',
-  hoverBg:    'rgba(255,255,255,0.10)',        // subtle hover
-  text:       'rgba(255,255,255,0.78)',        // nav text — warm white
-  textMuted:  'rgba(255,255,255,0.42)',        // muted labels
-  border:     'rgba(255,255,255,0.12)',        // dividers
-  accent:     '#3de897',                      // bright mint dot / badges
+  hoverBg:    'rgba(255,255,255,0.10)',
+  text:       'rgba(255, 255, 255, 0.78)',
+  textMuted:  'rgba(255,255,255,0.42)',
+  border:     'rgba(255, 255, 255, 0.12)',
+  accent:     '#4fbbf1',
   subLine:    'rgba(255,255,255,0.15)',
 }
 
 // ── NavItem ───────────────────────────────────────────────────────────────────
 function NavItem({
-  href, icon: Icon, label, isActive, onClick, chevron, chevronOpen,
+  href, icon: Icon, label, isActive, onClick, chevron, chevronOpen, onNavClick,
 }: {
   href?: string; icon: React.ElementType; label: string
   isActive: boolean; onClick?: () => void
   chevron?: boolean; chevronOpen?: boolean
+  onNavClick?: () => void
 }) {
   const cls = 'w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 group'
   const style = {
@@ -104,7 +105,7 @@ function NavItem({
 
   if (href) {
     return (
-      <Link href={href} className={cls} style={style} onMouseEnter={onEnter} onMouseLeave={onLeave}>
+      <Link href={href} className={cls} style={style} onMouseEnter={onEnter} onMouseLeave={onLeave} onClick={onNavClick}>
         {inner}
       </Link>
     )
@@ -122,10 +123,11 @@ function NavItem({
 }
 
 // ── SubMenu ───────────────────────────────────────────────────────────────────
-function SubMenu({ open, items, pathname }: {
+function SubMenu({ open, items, pathname, onNavClick }: {
   open: boolean
   items: { label: string; href: string; icon: React.ElementType }[]
   pathname: string
+  onNavClick?: () => void
 }) {
   if (!open) return null
   return (
@@ -135,6 +137,7 @@ function SubMenu({ open, items, pathname }: {
         const isActive = pathname === sub.href || pathname.startsWith(sub.href + '/')
         return (
           <Link key={sub.href} href={sub.href}
+            onClick={onNavClick}
             className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
             style={{
               color: isActive ? g.activeText : g.textMuted,
@@ -163,9 +166,9 @@ function SectionLabel({ label }: { label: string }) {
   )
 }
 
-// ── Sidebar ───────────────────────────────────────────────────────────────────
-export default function Sidebar({ shop, userName, userRole }: {
-  shop: any; userName?: string; userRole?: string
+// ── Sidebar Inner Content ─────────────────────────────────────────────────────
+function SidebarContent({ shop, userName, userRole, onNavClick }: {
+  shop: any; userName?: string; userRole?: string; onNavClick?: () => void
 }) {
   const pathname = usePathname()
   const router   = useRouter()
@@ -191,7 +194,6 @@ export default function Sidebar({ shop, userName, userRole }: {
 
   const firstName = userName?.trim().split(' ')[0] ?? 'User'
   const role      = userRole ?? 'cashier'
-  const initial   = firstName.charAt(0).toUpperCase()
 
   async function handleSignOut() {
     await supabase.auth.signOut()
@@ -208,20 +210,15 @@ export default function Sidebar({ shop, userName, userRole }: {
   const rb = roleBadge[role] ?? roleBadge.cashier
 
   return (
-    <aside className="w-56 flex flex-col h-full flex-shrink-0 select-none"
-      style={{ backgroundColor: g.sidebar, fontFamily: "'DM Sans', 'Inter', sans-serif" }}>
-
+    <div className="flex flex-col h-full" style={{ backgroundColor: g.sidebar }}>
       {/* ── User header ──────────────────────────────────────────────────── */}
-      <div className="px-4 pt-5 pb-4" style={{ backgroundColor: g.header, borderBottom: `1px solid ${g.border}` }}>
+      <div className="px-4 pt-5 pb-4 flex-shrink-0" style={{ backgroundColor: g.header, borderBottom: `1px solid ${g.border}` }}>
         <div className="flex items-center gap-3">
-          {/* Avatar */}
           <img
-  src="/Capture.jpg"
-  alt={firstName}
-  className="w-9 h-9 rounded-xl flex-shrink-0 object-cover"
-/>
-
-          {/* Name + role + store */}
+            src="/Capture.jpg"
+            alt={firstName}
+            className="w-9 h-9 rounded-xl flex-shrink-0 object-cover"
+          />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold truncate" style={{ color: '#fff' }}>{firstName}</p>
             <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md font-semibold"
@@ -235,8 +232,6 @@ export default function Sidebar({ shop, userName, userRole }: {
               </p>
             )}
           </div>
-
-          {/* Logout */}
           <button onClick={handleSignOut} title="Sign out"
             className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-150"
             style={{ color: g.textMuted }}
@@ -260,49 +255,136 @@ export default function Sidebar({ shop, userName, userRole }: {
       <nav className="flex-1 px-2.5 py-2 overflow-y-auto space-y-0.5"
         style={{ scrollbarWidth: 'thin', scrollbarColor: `${g.border} transparent` }}>
 
-        <NavItem href="/dashboard" icon={LayoutDashboard} label="Dashboard" isActive={pathname === '/dashboard'} />
+        <NavItem href="/dashboard" icon={LayoutDashboard} label="Dashboard"
+          isActive={pathname === '/dashboard'} onNavClick={onNavClick} />
 
         <SectionLabel label="Catalogue" />
         <NavItem icon={Package} label="Items" isActive={isItemsActive}
           onClick={() => setItemsOpen(p => !p)} chevron chevronOpen={itemsOpen} />
-        <SubMenu open={itemsOpen} items={itemsSubmenu} pathname={pathname} />
+        <SubMenu open={itemsOpen} items={itemsSubmenu} pathname={pathname} onNavClick={onNavClick} />
 
         <NavItem icon={Package} label="Inventory" isActive={isInventoryActive}
           onClick={() => setInventoryOpen(p => !p)} chevron chevronOpen={inventoryOpen} />
-        <SubMenu open={inventoryOpen} items={inventorySubmenu} pathname={pathname} />
+        <SubMenu open={inventoryOpen} items={inventorySubmenu} pathname={pathname} onNavClick={onNavClick} />
 
         <SectionLabel label="Operations" />
         <NavItem icon={CalendarClock} label="HR" isActive={isHrActive}
           onClick={() => setHrOpen(p => !p)} chevron chevronOpen={hrOpen} />
-        <SubMenu open={hrOpen} items={hrSubmenu} pathname={pathname} />
+        <SubMenu open={hrOpen} items={hrSubmenu} pathname={pathname} onNavClick={onNavClick} />
 
         <NavItem icon={TrendingUp} label="Finance" isActive={isFinanceActive}
           onClick={() => setFinanceOpen(p => !p)} chevron chevronOpen={financeOpen} />
-        <SubMenu open={financeOpen} items={financeSubmenu} pathname={pathname} />
+        <SubMenu open={financeOpen} items={financeSubmenu} pathname={pathname} onNavClick={onNavClick} />
 
-        <NavItem href="/reports" icon={BarChart2} label="Reports" isActive={pathname.startsWith('/reports')} />
+        <NavItem href="/reports" icon={BarChart2} label="Reports"
+          isActive={pathname.startsWith('/reports')} onNavClick={onNavClick} />
 
         <SectionLabel label="Commerce" />
-        <NavItem href="/customers" icon={Users} label="Customers" isActive={pathname.startsWith('/customers')} />
-        <NavItem href="/transactions" icon={ArrowLeftRight} label="Transactions" isActive={pathname.startsWith('/transactions')} />
-        <NavItem href="/staff" icon={LayoutGrid} label="Staff Dashboard" isActive={pathname === '/staff'} />
-        <NavItem href="/pos" icon={ShoppingCart} label="POS" isActive={pathname.startsWith('/pos')} />
+        <NavItem href="/customers" icon={Users} label="Customers"
+          isActive={pathname.startsWith('/customers')} onNavClick={onNavClick} />
+        <NavItem href="/transactions" icon={ArrowLeftRight} label="Transactions"
+          isActive={pathname.startsWith('/transactions')} onNavClick={onNavClick} />
+        <NavItem href="/staff" icon={LayoutGrid} label="Staff Dashboard"
+          isActive={pathname === '/staff'} onNavClick={onNavClick} />
+        <NavItem href="/pos" icon={ShoppingCart} label="POS"
+          isActive={pathname.startsWith('/pos')} onNavClick={onNavClick} />
 
         <div className="pt-3 pb-1" style={{ borderTop: `1px solid ${g.border}`, marginTop: '8px' }}>
           <NavItem icon={Settings} label="Settings" isActive={isSettingsActive}
             onClick={() => setSettingsOpen(p => !p)} chevron chevronOpen={settingsOpen} />
-          <SubMenu open={settingsOpen} items={settingsSubmenu} pathname={pathname} />
+          <SubMenu open={settingsOpen} items={settingsSubmenu} pathname={pathname} onNavClick={onNavClick} />
         </div>
-
       </nav>
 
       {/* ── Kitchen Printers ─────────────────────────────────────────────── */}
-      <div className="px-2.5 pb-3 pt-2" style={{ borderTop: `1px solid ${g.border}` }}>
-        <NavItem href="/settings/kitchen-printers" icon={Printer} label="Kitchen Printers" isActive={pathname === '/settings/kitchen-printers'} />
+      <div className="px-2.5 pb-3 pt-2 flex-shrink-0" style={{ borderTop: `1px solid ${g.border}` }}>
+        <NavItem href="/settings/kitchen-printers" icon={Printer} label="Kitchen Printers"
+          isActive={pathname === '/settings/kitchen-printers'} onNavClick={onNavClick} />
         {shop?.kds_enabled && (
-          <NavItem href="/kds" icon={Monitor} label="Kitchen Display" isActive={pathname === '/kds'} />
+          <NavItem href="/kds" icon={Monitor} label="Kitchen Display"
+            isActive={pathname === '/kds'} onNavClick={onNavClick} />
         )}
       </div>
-    </aside>
+    </div>
+  )
+}
+
+// ── Main Sidebar export ───────────────────────────────────────────────────────
+export default function Sidebar({ shop, userName, userRole }: {
+  shop: any; userName?: string; userRole?: string
+}) {
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const pathname = usePathname()
+
+  // Close mobile sidebar on route change
+  useEffect(() => {
+    setMobileOpen(false)
+  }, [pathname])
+
+  // Prevent body scroll when mobile sidebar is open
+  useEffect(() => {
+    if (mobileOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => { document.body.style.overflow = '' }
+  }, [mobileOpen])
+
+  return (
+    <>
+      {/* ── Mobile hamburger button (visible only on mobile/tablet) ────── */}
+      <button
+        onClick={() => setMobileOpen(true)}
+        className="lg:hidden fixed top-3 left-3 z-40 w-9 h-9 rounded-xl flex items-center justify-center shadow-lg transition-all duration-150"
+        style={{ backgroundColor: g.sidebar, color: '#fff' }}
+        aria-label="Open menu"
+      >
+        <Menu className="w-5 h-5" />
+      </button>
+
+      {/* ── Desktop sidebar (always visible on lg+) ──────────────────────── */}
+      <aside className="hidden lg:flex w-56 flex-col h-full flex-shrink-0 select-none"
+        style={{ fontFamily: "'DM Sans', 'Inter', sans-serif" }}>
+        <SidebarContent shop={shop} userName={userName} userRole={userRole} />
+      </aside>
+
+      {/* ── Mobile overlay backdrop ───────────────────────────────────────── */}
+      {mobileOpen && (
+        <div
+          className="lg:hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      {/* ── Mobile sidebar drawer ─────────────────────────────────────────── */}
+      <aside
+        className={cn(
+          'lg:hidden fixed top-0 left-0 z-50 h-full w-64 flex flex-col select-none',
+          'transition-transform duration-300 ease-in-out',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full'
+        )}
+        style={{ fontFamily: "'DM Sans', 'Inter', sans-serif" }}
+      >
+        {/* Close button inside drawer */}
+        <button
+          onClick={() => setMobileOpen(false)}
+          className="absolute top-3 right-3 z-10 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-150"
+          style={{ color: g.textMuted }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = g.hoverBg }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent' }}
+          aria-label="Close menu"
+        >
+          <X className="w-4 h-4" />
+        </button>
+
+        <SidebarContent
+          shop={shop}
+          userName={userName}
+          userRole={userRole}
+          onNavClick={() => setMobileOpen(false)}
+        />
+      </aside>
+    </>
   )
 }

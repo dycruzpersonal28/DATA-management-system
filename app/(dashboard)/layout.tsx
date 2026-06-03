@@ -33,7 +33,7 @@ export default async function DashboardLayout({
 
   // 4. Only owners and managers can access the back office
   const allowedRoles = ['owner', 'Owner', 'manager', 'Manager']
-if (!allowedRoles.includes(appUser.role)) {
+  if (!allowedRoles.includes(appUser.role)) {
     redirect('/staff')
   }
 
@@ -51,7 +51,8 @@ if (!allowedRoles.includes(appUser.role)) {
         userName={appUser.name}
         userRole={appUser.role}
       />
-      <main className="flex-1 overflow-y-auto">
+      {/* pt-14 on mobile gives room for the hamburger button; removed on lg+ */}
+      <main className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 pt-14 lg:pt-0">
         {children}
       </main>
     </div>

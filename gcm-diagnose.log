@@ -1,0 +1,193 @@
+﻿Diagnose log at 2026-06-02T16:13:59Z
+
+AppPath: C:\Program Files\Git\mingw64\bin\git-credential-manager.exe
+InstallDir: C:\Program Files\Git\mingw64\bin\
+Version: 2.7.3+5fa7116896c82164996a609accd1c5ad90fe730a
+
+------------
+Diagnostic: Environment
+Skipped: False
+Success: True
+Exception: None
+Log:
+OSType: Windows
+OSVersion: 10.0 (build 18363)
+Reading environment variables... OK
+ Variables:
+SystemDrive=C:
+ProgramFiles(x86)=C:\Program Files (x86)
+MSYSTEM=MINGW64
+ProgramW6432=C:\Program Files
+ChocolateyInstall=C:\ProgramData\chocolatey
+PROCESSOR_IDENTIFIER=Intel64 Family 6 Model 142 Stepping 11, GenuineIntel
+TMP=C:\Users\ALLISON\AppData\Local\Temp
+PROCESSOR_ARCHITECTURE=AMD64
+VSCODE_GIT_ASKPASS_MAIN=c:\Users\ALLISON\AppData\Roaming\Code\User\globalStorage\vscode.git\askpass\493597c785d4c5cb\askpass-main.js
+Path=C:/Program Files/Git/mingw64/libexec/git-core;C:\Program Files\Git\mingw64\bin;C:\Program Files\Git\usr\bin;C:\Users\ALLISON\bin;c:\Users\ALLISON\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\debugCommand;c:\Users\ALLISON\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\copilotCli;C:\Python314\Scripts\;C:\Python314\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\ProgramData\chocolatey\bin;C:\Program Files\nodejs\;C:\Program Files\Git\cmd;C:\Users\ALLISON\AppData\Local\Microsoft\WindowsApps;C:\Users\ALLISON\AppData\Roaming\npm;C:\Users\ALLISON\AppData\Local\Programs\Microsoft VS Code\bin
+USERPROFILE=C:\Users\ALLISON
+configsetroot=C:\WINDOWS\ConfigSetRoot
+PROCESSOR_REVISION=8e0b
+ChocolateyLastPathUpdate=134234251850640029
+FPS_BROWSER_APP_PROFILE_STRING=Internet Explorer
+FPS_BROWSER_USER_PROFILE_STRING=Default
+LOGONSERVER=\\LAPTOP-EVG83GPP
+TEMP=C:\Users\ALLISON\AppData\Local\Temp
+USERNAME=ALLISON
+SystemRoot=C:\WINDOWS
+CHROME_CRASHPAD_PIPE_NAME=\\.\pipe\crashpad_9928_ORCHEHBHXTGRMDLK
+GIT_EXEC_PATH=C:/Program Files/Git/mingw64/libexec/git-core
+PLINK_PROTOCOL=ssh
+OneDrive=C:\Users\ALLISON\OneDrive
+USERDOMAIN_ROAMINGPROFILE=LAPTOP-EVG83GPP
+CommonProgramFiles=C:\Program Files\Common Files
+VSCODE_INJECTION=1
+VSCODE_PYTHON_AUTOACTIVATE_GUARD=1
+ProgramData=C:\ProgramData
+LANG=en_US.UTF-8
+GIT_ASKPASS=c:\Users\ALLISON\AppData\Roaming\Code\User\globalStorage\vscode.git\askpass\493597c785d4c5cb\askpass.sh
+HOMEPATH=\Users\ALLISON
+COMPUTERNAME=LAPTOP-EVG83GPP
+ALLUSERSPROFILE=C:\ProgramData
+CommonProgramW6432=C:\Program Files\Common Files
+COPILOT_DEBUG_NONCE=9f9221c51775be91aba20118d3c76742
+TERM=xterm-256color
+SESSIONNAME=Console
+DriverData=C:\Windows\System32\Drivers\DriverData
+HOMEDRIVE=C:
+windir=C:\WINDOWS
+GIT_TRACE2_PARENT_SID=06384290-2cfc-4622-8f84-c98731ff8a5f
+VSCODE_GIT_ASKPASS_NODE=C:\Users\ALLISON\AppData\Local\Programs\Microsoft VS Code\Code.exe
+NUMBER_OF_PROCESSORS=2
+OS=Windows_NT
+ProgramFiles=C:\Program Files
+ComSpec=C:\WINDOWS\system32\cmd.exe
+PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.PY;.PYW;.CPL
+HOME=C:\Users\ALLISON
+PSModulePath=C:\Users\ALLISON\Documents\WindowsPowerShell\Modules;C:\Program Files\WindowsPowerShell\Modules;C:\WINDOWS\system32\WindowsPowerShell\v1.0\Modules
+TMPDIR=C:\Users\ALLISON\AppData\Local\Temp
+APPDATA=C:\Users\ALLISON\AppData\Roaming
+USERDOMAIN=LAPTOP-EVG83GPP
+PROCESSOR_LEVEL=6
+asl.log=Destination=file
+LOCALAPPDATA=C:\Users\ALLISON\AppData\Local
+VSCODE_GIT_IPC_HANDLE=\\.\pipe\vscode-git-9358e22a49-sock
+TERM_PROGRAM_VERSION=1.122.1
+CommonProgramFiles(x86)=C:\Program Files (x86)\Common Files
+COLORTERM=truecolor
+PUBLIC=C:\Users\Public
+TERM_PROGRAM=vscode
+VSCODE_GIT_ASKPASS_EXTRA_ARGS=
+
+
+------------
+Diagnostic: File system
+Skipped: False
+Success: True
+Exception: None
+Log:
+Temporary directory is 'C:\Users\ALLISON\AppData\Local\Temp\'...
+Checking basic file I/O...
+Writing to temporary file 'C:\Users\ALLISON\AppData\Local\Temp\1c434dbabde40a58c3c20e0b'... OK
+Reading from temporary file 'C:\Users\ALLISON\AppData\Local\Temp\1c434dbabde40a58c3c20e0b'... OK
+Deleting temporary file 'C:\Users\ALLISON\AppData\Local\Temp\1c434dbabde40a58c3c20e0b'... OK
+Testing IFileSystem instance...
+UserHomePath: C:\Users\ALLISON
+UserDataDirectoryPath: C:\Users\ALLISON\.gcm
+GetCurrentDirectory(): C:\Users\ALLISON\Documents\data-management-system
+
+------------
+Diagnostic: Networking
+Skipped: False
+Success: True
+Exception: None
+Log:
+Checking networking and HTTP stack...
+Creating HTTP client... OK
+IsNetworkAvailable: True
+Sending HEAD request to http://example.com...Sending HEAD request to https://example.com... OK
+ OK
+Acquiring free TCP port... OK
+Testing local HTTP loopback connections...
+Creating new HTTP listener for http://localhost:65269/... OK
+Waiting for loopback connection... OK
+Writing response... OK
+Waiting for response data... OK
+Loopback connection data OK
+
+------------
+Diagnostic: Git
+Skipped: False
+Success: True
+Exception: None
+Log:
+Getting Git version... OK
+Git version is '2.54.0.windows.1'
+Locating current repository...Git repository at 'C:/Users/ALLISON/Documents/data-management-system/.git'
+ OK
+Listing all Git configuration... OK
+Git configuration:
+file:C:/Program Files/Git/etc/gitconfig	diff.astextplain.textconv=astextplain
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.clean=git-lfs clean -- %f
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.smudge=git-lfs smudge -- %f
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.process=git-lfs filter-process
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.required=true
+file:C:/Program Files/Git/etc/gitconfig	http.sslbackend=schannel
+file:C:/Program Files/Git/etc/gitconfig	core.autocrlf=true
+file:C:/Program Files/Git/etc/gitconfig	core.fscache=true
+file:C:/Program Files/Git/etc/gitconfig	core.symlinks=false
+file:C:/Program Files/Git/etc/gitconfig	pull.rebase=false
+file:C:/Program Files/Git/etc/gitconfig	credential.helper=manager
+file:C:/Program Files/Git/etc/gitconfig	credential.https://dev.azure.com.usehttppath=true
+file:C:/Program Files/Git/etc/gitconfig	init.defaultbranch=master
+file:C:/Users/ALLISON/.gitconfig	user.name=Amor
+file:C:/Users/ALLISON/.gitconfig	user.email=thbmanila24@gmail.com
+file:.git/config	core.repositoryformatversion=0
+file:.git/config	core.filemode=false
+file:.git/config	core.bare=false
+file:.git/config	core.logallrefupdates=true
+file:.git/config	core.symlinks=false
+file:.git/config	core.ignorecase=true
+file:.git/config	remote.origin.url=https://github.com/dycruzpersonal28/DATA-management-system.git
+file:.git/config	remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*
+file:.git/config	branch.master.remote=origin
+file:.git/config	branch.master.merge=refs/heads/master
+file:.git/config	branch.master.vscode-merge-base=origin/master
+file:.git/config	user.name=dycruzpersonal28
+file:.git/config	user.email=dycruz28@gmail.com
+
+
+------------
+Diagnostic: Credential storage
+Skipped: False
+Success: True
+Exception: None
+Log:
+ICredentialStore instance is of type: CredentialStore
+Writing test credential... OK
+Reading test credential... OK
+Deleting test credential... OK
+
+------------
+Diagnostic: Microsoft authentication (AAD/MSA)
+Skipped: False
+Success: True
+Exception: None
+Log:
+Broker is not enabled.
+Flow type is: Auto
+Gathering MSAL token cache data... OK
+CacheDirectory: C:\Users\ALLISON\AppData\Local\.IdentityService
+CacheFileName: msal.cache
+CacheFilePath: C:\Users\ALLISON\AppData\Local\.IdentityService\msal.cache
+Creating cache helper... OK
+Verifying MSAL token cache persistence... OK
+
+------------
+Diagnostic: GitHub API
+Skipped: False
+Success: True
+Exception: None
+Log:
+Using 'https://github.com/' as API target.
+Querying '/meta' endpoint... OK
+
