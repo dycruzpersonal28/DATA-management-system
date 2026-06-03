@@ -7,7 +7,7 @@ import { Providers } from '@/lib/providers'
 const dmSans = DM_Sans({ subsets: ['latin'], weight: ['400', '500', '600'] })
 
 export const metadata: Metadata = {
-  title: 'POS System',
+  title: 'WinMor Management System',
   description: 'Point of Sale Management System',
   manifest: '/manifest.json',
   appleWebApp: {
