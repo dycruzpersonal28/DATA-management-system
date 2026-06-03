@@ -18,6 +18,7 @@ const ROUTE_PERMISSION_MAP: Record<string, string> = {
   '/inventory':     'page_inventory',
   '/customers':     'page_customers',
   '/employees':     'page_employees',
+  '/settings/kitchen-printers': 'page_kitchen_printers',
   '/settings':      'page_settings',
   '/pos':           'page_pos',
   '/staff':         'page_staff_dashboard',
