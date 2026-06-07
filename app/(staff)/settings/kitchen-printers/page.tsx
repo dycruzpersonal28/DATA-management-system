@@ -93,7 +93,16 @@ function PrinterGroupForm({
   ]
 
   return (
-    <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 space-y-4">
+    <div className="bg-gray-50 border border-gray-200 rounded-2xl flex flex-col max-h-[80vh]">
+      <div className="flex gap-2 p-4 border-b border-gray-200 bg-gray-50 rounded-t-2xl flex-shrink-0">
+        <Button size="sm" disabled={loading} onClick={() => onSave({ ...form, categories: selectedCats })}>
+          <Check className="w-3.5 h-3.5 mr-1.5" /> Save Printer Group
+        </Button>
+        <Button size="sm" variant="outline" onClick={onCancel}>
+          <X className="w-3.5 h-3.5 mr-1.5" /> Cancel
+        </Button>
+      </div>
+      <div className="overflow-y-auto flex-1 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-medium text-gray-500 block mb-1">Printer Group Name</label>
@@ -182,7 +191,7 @@ function PrinterGroupForm({
         {categories.length === 0 ? (
           <p className="text-xs text-gray-400">No categories found.</p>
         ) : (
-          <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto pr-1">
+          <div className="grid grid-cols-2 gap-1.5 max-h-32 overflow-y-auto pr-1">
             {categories.map(cat => (
               <button
                 key={cat.id}
@@ -256,13 +265,6 @@ function PrinterGroupForm({
         </div>
       </div>
 
-      <div className="flex gap-2 pt-1">
-        <Button size="sm" disabled={loading} onClick={() => onSave({ ...form, categories: selectedCats })}>
-          <Check className="w-3.5 h-3.5 mr-1.5" /> Save Printer Group
-        </Button>
-        <Button size="sm" variant="outline" onClick={onCancel}>
-          <X className="w-3.5 h-3.5 mr-1.5" /> Cancel
-        </Button>
       </div>
     </div>
   )
@@ -383,7 +385,7 @@ export default function KitchenPrintersPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-8 max-w-2xl">
+    <div className="h-full overflow-y-auto p-4 max-w-2xl">
       <div className="mb-6">
         <h2 className="text-xl font-semibold text-gray-900">Kitchen Printers</h2>
         <p className="text-sm text-gray-500 mt-1">
