@@ -13,7 +13,7 @@ import {
   CalendarClock, ClipboardList, ScanLine, ArrowLeftRight,
   ShieldCheck, KeyRound,
   Banknote, LayoutGrid, TrendingUp, History, BookOpen, Store,
-  Menu, X,
+  Menu, X, Layers,                            // ← Layers added
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -40,16 +40,18 @@ const financeSubmenu = [
   { label: 'Journal',  href: '/finance/journal', icon: BookOpen },
 ]
 const settingsSubmenu = [
-  { label: 'Features',          href: '/settings/features',         icon: Zap },
-  { label: 'Store Settings',    href: '/settings/store',            icon: Store },
-  { label: 'Payment Types',     href: '/settings/payment-types',    icon: CreditCard },
-  { label: 'Loyalty',           href: '/settings/loyalty',          icon: Heart },
-  { label: 'Taxes & Discounts', href: '/settings/taxes-discounts',  icon: Percent },
-  { label: 'Receipt',           href: '/settings/receipt',          icon: Receipt },
-  { label: 'Dining Options',    href: '/settings/dining-options',   icon: UtensilsCrossed },
-  { label: 'Users & POS',       href: '/settings/pos-settings',     icon: Monitor },
-  { label: 'Roles',             href: '/settings/roles',            icon: ShieldCheck },
-  { label: 'Permissions',       href: '/settings/permissions',      icon: KeyRound },
+  { label: 'Features',          href: '/settings/features',              icon: Zap },
+  { label: 'Store Settings',    href: '/settings/store',                 icon: Store },
+  { label: 'Payment Types',     href: '/settings/payment-types',         icon: CreditCard },
+  { label: 'Conv. Presets',     href: '/settings/conversion-presets',    icon: Layers },  // ← NEW
+  { label: 'Loyalty',           href: '/settings/loyalty',               icon: Heart },
+  { label: 'Taxes & Discounts', href: '/settings/taxes-discounts',       icon: Percent },
+  { label: 'Receipt',           href: '/settings/receipt',               icon: Receipt },
+  { label: 'Dining Options',    href: '/settings/dining-options',        icon: UtensilsCrossed },
+  { label: 'Users & POS',       href: '/settings/pos-settings',          icon: Monitor },
+  { label: 'Roles',             href: '/settings/roles',                 icon: ShieldCheck },
+  { label: 'KDS Stations',      href: '/settings/kds',                   icon: Monitor },
+  { label: 'Permissions',       href: '/settings/permissions',           icon: KeyRound },
 ]
 
 const itemsPaths     = ['/items', '/categories', '/modifiers', '/ingredients']
@@ -302,7 +304,11 @@ function SidebarContent({ shop, userName, userRole, onNavClick }: {
           isActive={pathname === '/settings/kitchen-printers'} onNavClick={onNavClick} />
         {shop?.kds_enabled && (
           <NavItem href="/kds" icon={Monitor} label="Kitchen Display"
-            isActive={pathname === '/kds'} onNavClick={onNavClick} />
+            isActive={pathname.startsWith('/kds') && !pathname.startsWith('/kds/logs')} onNavClick={onNavClick} />
+        )}
+        {shop?.kds_enabled && (
+          <NavItem href="/kds/logs" icon={History} label="KDS Logs"
+            isActive={pathname.startsWith('/kds/logs')} onNavClick={onNavClick} />
         )}
       </div>
     </div>

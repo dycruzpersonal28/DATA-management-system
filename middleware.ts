@@ -139,6 +139,8 @@ export async function middleware(request: NextRequest) {
   // ── Load role + permissions (cached 60s) ──────────────────────────────────
   let isFullAccess = false
   let allowed: string[] = []
+  let appUser: { email: string; role_id: string } | null = null
+  let roleName: string | undefined
 
   const cached = userCache.get(user.id)
   if (cached && cached.exp > Date.now()) {
@@ -151,21 +153,23 @@ export async function middleware(request: NextRequest) {
     )
 
     // 1. Get email + role_id from app_users
-    const { data: appUser } = await admin
+    const { data: fetchedAppUser, error: appUserError } = await admin
       .from('app_users')
       .select('email, role_id')
       .eq('auth_user_id', user.id)
       .single()
 
+    if (appUserError) console.error('🔍 APP USER ERROR:', appUserError.message)
+    appUser = fetchedAppUser  // ✅ assign to outer variable
+
     // 2. Look up the actual role name from the roles table
-    let roleName: string | undefined
     if (appUser?.role_id) {
       const { data: roleRow } = await admin
         .from('roles')
         .select('name')
         .eq('id', appUser.role_id)
         .single()
-      roleName = roleRow?.name
+      roleName = roleRow?.name  // ✅ assigns to outer variable
     }
 
     // 3. Check if this role gets full access
@@ -191,7 +195,10 @@ export async function middleware(request: NextRequest) {
       }
     }
 
-    userCache.set(user.id, { isFullAccess, allowed, exp: Date.now() + 60_000 })
+    // ✅ Only cache if app_users row was found
+    if (appUser) {
+      userCache.set(user.id, { isFullAccess, allowed, exp: Date.now() + 60_000 })
+    }
   }
 
   // ── Logged in + on auth page → redirect to correct home ──────────────────

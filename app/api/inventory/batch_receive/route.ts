@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
     qty_packs,
     conversion  = 1,
     note        = null,
+    preset_id   = null,
   } = body
 
   if (!item_id) {
@@ -75,6 +76,7 @@ export async function POST(req: NextRequest) {
         qty_base:      qtyBase,
         qty_remaining: qtyBase,
         note:          note || null,
+        preset_id:     preset_id || null,
       })
       .select('id')
       .single()

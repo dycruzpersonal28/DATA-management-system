@@ -1208,7 +1208,7 @@ export default function DashboardPage() {
           clickable onClick={() => setModal('payment')}
         />
         <StatCard
-          label="Cost of Goods" icon={Package} color="text-blue-600" bg="bg-blue-50"
+          label="Cost of Goods Sold" icon={Package} color="text-blue-600" bg="bg-blue-50"
           value={fmt(summary?.cogs ?? 0)}
           sub="Auto-calculated from BOM"
           locked={!showCogs}
@@ -1283,7 +1283,7 @@ export default function DashboardPage() {
           <p className="text-2xl font-bold text-teal-700 tracking-tight">
             {stockValue !== null ? fmt(stockValue) : '—'}
           </p>
-          <p className="text-xs font-medium text-gray-500 mt-1">Stock Value at Cost</p>
+          <p className="text-xs font-medium text-gray-500 mt-1">Unsold Stock Value based on Cost</p>
           <p className="text-xs text-gray-400 mt-0.5">Raw Stocks on hand · cost basis</p>
         </button>
       </div>

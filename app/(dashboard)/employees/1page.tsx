@@ -172,14 +172,21 @@ const NAV_TREE = [
     ],
   },
 
-  {
-    nav: 'Kitchen Display',
-    icon: '🍳',
-    items: [
-      { name: 'page_kds',      label: 'Access KDS' },
-      { name: 'page_kds_logs', label: 'View KDS Logs' },
+    {
+        nav: 'KDS Dashboard',
+        icon: 'screen_kds',
+        items: [
+       { name: 'page_kds',               label: 'Access KDS' },
     ],
-  },
+    },
+
+    {
+        nav: 'KDS Logs',
+        icon: 'graph_kds_logs',
+        items: [
+       { name: 'settings_kds_logs',      label: 'View KDS Logs' },
+    ],
+    },
 ]
 
 const EMPTY_FORM = {

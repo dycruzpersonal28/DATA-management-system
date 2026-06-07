@@ -76,20 +76,30 @@ export async function GET(req: NextRequest) {
     )
   }
 
+  // All valid (non-orphaned, non-voided) entries — used for display COGS
+  const allValidRows = allEntries.filter(e => {
+    if (e.reference_type !== 'receipt') return true
+    return validReceiptIds.has(e.reference_id)
+  })
+
   // Keep entries where:
   // 1. Not receipt-linked (manual journal entries always shown)
   // 2. Receipt exists and is not voided
-  // 3. If COGS toggle is OFF, exclude cogs type entries from receipt-linked rows
-  const rows = allEntries.filter(e => {
-    if (e.reference_type !== 'receipt') return true
-    if (!validReceiptIds.has(e.reference_id)) return false
+  // 3. If COGS toggle is OFF, exclude cogs type entries from P&L calculation
+  const rows = allValidRows.filter(e => {
     if (!autoCogsEnabled && e.type === 'cogs') return false
     return true
   })
 
-  // ── Aggregate totals ───────────────────────────────────────────────────────
+  // ── Always compute real COGS for display (regardless of toggle) ───────────
+  let totalCogsDisplay = 0
+  for (const e of allValidRows) {
+    if (e.type === 'cogs') totalCogsDisplay += Number(e.amount)
+  }
+
+  // ── Aggregate totals (COGS excluded from rows when toggle is OFF) ──────────
   let totalRevenue   = 0
-  let totalCogs      = 0
+  let totalCogs      = 0   // used only for P&L math
   let totalPayroll   = 0
   let totalDiscount  = 0
   let totalTax       = 0
@@ -135,7 +145,7 @@ export async function GET(req: NextRequest) {
 
   const daily = Object.values(dailyMap).map(d => ({
     ...d,
-    net: d.revenue - d.cogs - d.payroll - d.discount,
+    net: d.revenue - (autoCogsEnabled ? d.cogs : 0) - d.payroll - d.discount,
   }))
 
   // ── Real-time labor accrual (clocked-in employees today) ──────────────────
@@ -179,7 +189,8 @@ export async function GET(req: NextRequest) {
     summary: {
       totalRevenue:            parseFloat(totalRevenue.toFixed(2)),
       totalOtherIncome:        parseFloat(totalOtherIncome.toFixed(2)),
-      totalCogs:               parseFloat(totalCogs.toFixed(2)),
+      totalCogs:               parseFloat(totalCogsDisplay.toFixed(2)),
+      autoCogsEnabled,
       totalPayroll:            parseFloat(totalPayroll.toFixed(2)),
       totalDiscount:           parseFloat(totalDiscount.toFixed(2)),
       totalTax:                parseFloat(totalTax.toFixed(2)),

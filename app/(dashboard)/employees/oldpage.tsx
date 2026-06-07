@@ -139,7 +139,6 @@ const NAV_TREE = [
       { name: 'hr_manage_shifts',  label: 'Manage Shifts' },
       { name: 'page_attendance',   label: 'View Attendance' },
       { name: 'page_kiosk',        label: 'Access HR Kiosk' },
-      { name: 'page_payroll',      label: 'View Payroll' },
       { name: 'hr_view_payroll',   label: 'View Payroll Info' },
     ],
   },
@@ -150,9 +149,8 @@ const NAV_TREE = [
       { name: 'page_settings',        label: 'View Settings' },
       { name: 'settings_store',       label: 'Manage Store Settings' },
       { name: 'settings_features',    label: 'Manage Features' },
-      { name: 'settings_payment',           label: 'Manage Payment Types' },
-      { name: 'settings_conversion_presets', label: 'Manage Conversion Presets' },
-      { name: 'settings_loyalty',           label: 'Manage Loyalty' },
+      { name: 'settings_payment',     label: 'Manage Payment Types' },
+      { name: 'settings_loyalty',     label: 'Manage Loyalty' },
       { name: 'settings_taxes',       label: 'Manage Taxes & Discounts' },
       { name: 'settings_receipt',     label: 'Manage Receipt' },
       { name: 'settings_printers',    label: 'Manage Kitchen Printers' },
@@ -160,7 +158,6 @@ const NAV_TREE = [
       { name: 'settings_pos',         label: 'Manage POS Settings' },
       { name: 'settings_roles',       label: 'Manage Roles' },
       { name: 'settings_permissions', label: 'Manage Permissions' },
-      { name: 'settings_kds',         label: 'Manage KDS Stations' },  
     ],
   },
   {
@@ -169,15 +166,6 @@ const NAV_TREE = [
     items: [
       { name: 'page_staff_dashboard',   label: 'Access Staff Dashboard' },
       { name: 'page_kitchen_printers',  label: 'Access Printer Setup' },
-    ],
-  },
-
-  {
-    nav: 'Kitchen Display',
-    icon: '🍳',
-    items: [
-      { name: 'page_kds',      label: 'Access KDS' },
-      { name: 'page_kds_logs', label: 'View KDS Logs' },
     ],
   },
 ]

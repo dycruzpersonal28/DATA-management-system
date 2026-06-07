@@ -95,7 +95,7 @@ export async function GET(req: NextRequest) {
   if (inventoryItemIds.length > 0) {
     const { data: batchData, error: batchError } = await admin
       .from('stock_batches')
-      .select('id, item_id, batch_no, pack_size, pack_unit, qty_packs, qty_base, qty_remaining, expiry_date, received_at, note')
+      .select('id, item_id, batch_no, pack_size, pack_unit, qty_packs, qty_base, qty_remaining, conversion, preset_id, expiry_date, received_at, note')
       .in('item_id', inventoryItemIds)
       .gt('qty_remaining', 0)
       .order('received_at', { ascending: true })
@@ -283,6 +283,70 @@ export async function POST(req: NextRequest) {
         variant_id: null,
       })
       if (error) throw error
+    }
+
+    // ── When manually setting stock, sync batches via FIFO ──────────────
+    // Distributes the new quantity across batches oldest-first (FIFO)
+    if (mode === 'set') {
+      // Fetch all active batches ordered oldest first (FIFO)
+      const { data: activeBatches, error: fetchErr } = await admin
+        .from('stock_batches')
+        .select('id, qty_remaining')
+        .eq('item_id', item_id)
+        .eq('shop_id', shopId)
+        .gt('qty_remaining', 0)
+        .order('received_at', { ascending: true })
+      if (fetchErr) throw fetchErr
+
+      if (activeBatches && activeBatches.length > 0) {
+        let remaining = newQty  // total to distribute across batches
+
+        for (const batch of activeBatches) {
+          if (remaining <= 0) {
+            const { error } = await admin
+              .from('stock_batches')
+              .update({ qty_remaining: 0 })
+              .eq('id', batch.id)
+            if (error) throw error
+          } else if (remaining >= batch.qty_remaining) {
+            remaining -= batch.qty_remaining
+          } else {
+            const { error } = await admin
+              .from('stock_batches')
+              .update({ qty_remaining: remaining })
+              .eq('id', batch.id)
+            if (error) throw error
+            remaining = 0
+          }
+        }
+      }
+    }
+
+    // ── On loss/dispense, deduct from batches FIFO ──────────────────────
+    if (mode === 'adjust' && adj_type === 'loss') {
+      const { data: activeBatches, error: fetchErr } = await admin
+        .from('stock_batches')
+        .select('id, qty_remaining')
+        .eq('item_id', item_id)
+        .eq('shop_id', shopId)
+        .gt('qty_remaining', 0)
+        .order('received_at', { ascending: true })
+      if (fetchErr) throw fetchErr
+
+      if (activeBatches && activeBatches.length > 0) {
+        let toDeduct = Math.abs(movementQty) // movementQty is negative, so abs it
+
+        for (const batch of activeBatches) {
+          if (toDeduct <= 0) break
+          const deductFromBatch = Math.min(toDeduct, batch.qty_remaining)
+          const { error } = await admin
+            .from('stock_batches')
+            .update({ qty_remaining: batch.qty_remaining - deductFromBatch })
+            .eq('id', batch.id)
+          if (error) throw error
+          toDeduct -= deductFromBatch
+        }
+      }
     }
 
     const { error: mvErr } = await admin

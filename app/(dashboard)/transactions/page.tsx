@@ -101,52 +101,542 @@ function ManagerPinModal({ onApprove, onClose }: { onApprove: (id: string, name:
   )
 }
 
-// ── Edit Transaction Modal ─────────────────────────────────────────────────────
-function EditTransactionModal({ receipt, currencySymbol, onClose, onSaved }: {
-  receipt: any; currencySymbol: string; onClose: () => void; onSaved: () => void
+// ── Item Stock Action Modal (for removed items) ───────────────────────────────
+function ItemStockModal({ itemName, onConfirm, onClose }: {
+  itemName: string
+  onConfirm: (type: 'return_stock' | 'wastage') => void
+  onClose: () => void
 }) {
-  const [note, setNote] = useState(receipt.note || '')
-  const [saving, setSaving] = useState(false)
-
-  async function handleSave() {
-    setSaving(true)
-    await supabase.from('receipts').update({ note }).eq('id', receipt.id)
-    setSaving(false)
-    toast.success('Transaction updated')
-    onSaved(); onClose()
-  }
-
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-9 h-9 bg-blue-100 rounded-xl flex items-center justify-center">
-            <Edit2 className="w-4 h-4 text-blue-600" />
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center">
+            <ArrowDownCircle className="w-5 h-5 text-orange-600" />
           </div>
-          <h3 className="text-sm font-semibold text-gray-900">Edit Transaction #{receipt.receipt_number}</h3>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Remove Item</h3>
+            <p className="text-xs text-gray-400 truncate max-w-[180px]">{itemName}</p>
+          </div>
           <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>
         </div>
+        <p className="text-xs text-gray-500 mb-4 mt-1">How should the stock be handled for this removed item?</p>
         <div className="space-y-3">
-          <div>
-            <label className="text-xs font-medium text-gray-500 block mb-1">Total</label>
-            <p className="text-sm font-semibold text-gray-800">{currencySymbol}{Number(receipt.total).toFixed(2)}</p>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-gray-500 block mb-1.5">Note</label>
-            <textarea rows={3} value={note} onChange={e => setNote(e.target.value)}
-              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400"
-              placeholder="Add a note to this transaction…" />
-          </div>
+          <button onClick={() => onConfirm('return_stock')}
+            className="w-full text-left p-4 rounded-xl border-2 border-emerald-200 hover:border-emerald-400 hover:bg-emerald-50 transition-all group">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center group-hover:bg-emerald-200">
+                <ArrowDownCircle className="w-4 h-4 text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-800">Return to Stock</p>
+                <p className="text-xs text-gray-500">Item not yet dispatched — restock inventory.</p>
+              </div>
+            </div>
+          </button>
+          <button onClick={() => onConfirm('wastage')}
+            className="w-full text-left p-4 rounded-xl border-2 border-amber-200 hover:border-amber-400 hover:bg-amber-50 transition-all group">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center group-hover:bg-amber-200">
+                <ArrowUpCircle className="w-4 h-4 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-800">Mark as Wastage</p>
+                <p className="text-xs text-gray-500">Already dispatched — log as wastage, no restock.</p>
+              </div>
+            </div>
+          </button>
         </div>
-        <div className="flex gap-2 mt-5">
+        <button onClick={onClose} className="w-full mt-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Ingredient Confirm Modal (for added items) ────────────────────────────────
+function IngredientConfirmModal({ itemName, onConfirm, onClose }: {
+  itemName: string
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
+            <Edit2 className="w-5 h-5 text-blue-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Add Item</h3>
+            <p className="text-xs text-gray-400 truncate max-w-[180px]">{itemName}</p>
+          </div>
+          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>
+        </div>
+        <p className="text-sm text-gray-600 mb-5">
+          Adding this item will <span className="font-semibold text-blue-700">deduct ingredients</span> from inventory. Continue?
+        </p>
+        <div className="flex gap-2">
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
-          <button onClick={handleSave} disabled={saving}
-            className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-40 transition-all">
-            {saving ? 'Saving…' : 'Save'}
+          <button onClick={onConfirm} className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-all">
+            Confirm & Deduct
           </button>
         </div>
       </div>
     </div>
+  )
+}
+
+// ── Edit Transaction Modal ─────────────────────────────────────────────────────
+function EditTransactionModal({ receipt, receiptItemsMap, currencySymbol, managerId, managerName, onClose, onSaved }: {
+  receipt: any
+  receiptItemsMap: Record<string, any[]>
+  currencySymbol: string
+  managerId: string
+  managerName: string
+  onClose: () => void
+  onSaved: () => void
+}) {
+  type EditItem = {
+    id: string
+    item_name: string
+    quantity: number
+    unit_price: number
+    line_total: number
+    addons: any[]
+    note: string
+    _isNew?: boolean
+    _deleted?: boolean
+    _stockAction?: 'return_stock' | 'wastage'
+    _item_id?: string | null
+    _variant_id?: string | null
+  }
+
+  const initialItems: EditItem[] = (receiptItemsMap[receipt.id] || []).map((it: any) => ({
+    id: it.id,
+    item_name: it.item_name,
+    quantity: Number(it.quantity),
+    unit_price: Number(it.unit_price),
+    line_total: Number(it.line_total),
+    addons: it.addons || [],
+    note: it.note || '',
+  }))
+
+  const [items, setItems] = useState<EditItem[]>(initialItems)
+  const [note, setNote] = useState(receipt.note || '')
+  const [saving, setSaving] = useState(false)
+
+  // New item form
+  const [showNewItem, setShowNewItem] = useState(false)
+  const [newQty, setNewQty] = useState(1)
+
+  // Menu search panel state
+  const [menuItems, setMenuItems] = useState<any[]>([])
+  const [menuCategories, setMenuCategories] = useState<any[]>([])
+  const [menuSearch, setMenuSearch] = useState('')
+  const [menuCategory, setMenuCategory] = useState<string | 'all'>('all')
+  const [menuLoading, setMenuLoading] = useState(false)
+  const [selectedMenuItem, setSelectedMenuItem] = useState<any | null>(null)
+  const [selectedVariant, setSelectedVariant] = useState<any | null>(null)
+
+  // Sub-modals
+  const [stockModalItem, setStockModalItem] = useState<EditItem | null>(null)
+  const [ingredientConfirmItem, setIngredientConfirmItem] = useState<EditItem | null>(null)
+
+  const visibleItems = items.filter(it => !it._deleted)
+  const computedTotal = visibleItems.reduce((s, it) => s + it.line_total, 0)
+
+  function updateItem(id: string, patch: Partial<EditItem>) {
+    setItems(prev => prev.map(it => {
+      if (it.id !== id) return it
+      const updated = { ...it, ...patch }
+      updated.line_total = updated.quantity * updated.unit_price
+      return updated
+    }))
+  }
+
+  function requestRemove(item: EditItem) {
+    if (item._isNew) {
+      // New items added this session can just be removed without stock prompting
+      setItems(prev => prev.filter(it => it.id !== item.id))
+    } else {
+      setStockModalItem(item)
+    }
+  }
+
+  function confirmRemove(stockAction: 'return_stock' | 'wastage') {
+    if (!stockModalItem) return
+    setItems(prev => prev.map(it =>
+      it.id === stockModalItem.id ? { ...it, _deleted: true, _stockAction: stockAction } : it
+    ))
+    setStockModalItem(null)
+  }
+
+  // Fetch menu items when the panel opens
+  useEffect(() => {
+    if (!showNewItem) return
+    setMenuLoading(true)
+    Promise.all([
+      supabase
+        .from('items')
+        .select('id, name, price, is_active, available_for_sale, category_id, item_variants(id, name, price)')
+        .eq('is_active', true)
+        .eq('available_for_sale', true)
+        .order('name'),
+      supabase
+        .from('categories')
+        .select('id, name')
+        
+        .order('sort_order'),
+    ]).then(([itemsRes, catsRes]) => {
+      setMenuItems(itemsRes.data || [])
+      setMenuCategories(catsRes.data || [])
+      setMenuLoading(false)
+    })
+  }, [showNewItem])
+
+  function requestAddMenuItem() {
+    if (!selectedMenuItem) return
+    const hasVariants = (selectedMenuItem.item_variants?.length ?? 0) > 0
+    if (hasVariants && !selectedVariant) return
+    const price = Number(selectedVariant?.price ?? selectedMenuItem.price)
+    const candidate: EditItem = {
+      id: `new_${Date.now()}`,
+      item_name: selectedVariant
+        ? `${selectedMenuItem.name} (${selectedVariant.name})`
+        : selectedMenuItem.name,
+      quantity: newQty,
+      unit_price: price,
+      line_total: newQty * price,
+      addons: [],
+      note: '',
+      _isNew: true,
+      _item_id: selectedMenuItem.id,
+      _variant_id: selectedVariant?.id ?? null,
+    }
+    setIngredientConfirmItem(candidate)
+  }
+
+  function requestAddItem() {
+    // Legacy — unused now, kept to avoid TS errors if referenced elsewhere
+  }
+
+  function confirmAddItem() {
+    if (!ingredientConfirmItem) return
+    setItems(prev => [...prev, ingredientConfirmItem])
+    setIngredientConfirmItem(null)
+    // Reset panel
+    setSelectedMenuItem(null)
+    setSelectedVariant(null)
+    setMenuSearch('')
+    setMenuCategory('all')
+    setNewQty(1)
+    setShowNewItem(false)
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      const deletedItems = items.filter(it => it._deleted && !it._isNew)
+      const newItems     = items.filter(it => it._isNew && !it._deleted)
+      const changedItems = items.filter(it => !it._isNew && !it._deleted).filter(it => {
+        const orig = initialItems.find(o => o.id === it.id)
+        return orig && (orig.quantity !== it.quantity || orig.unit_price !== it.unit_price || orig.note !== it.note)
+      })
+
+      const res = await fetch(`/api/transactions/${receipt.id}/edit-items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deleted_items: deletedItems.map(it => ({
+            id: it.id,
+            item_name: it.item_name,
+            stockAction: it._stockAction ?? 'return_stock',
+          })),
+          added_items: newItems.map(it => ({
+            item_name:  it.item_name,
+            quantity:   it.quantity,
+            unit_price: it.unit_price,
+            line_total: it.line_total,
+            addons:     it.addons,
+            note:       it.note,
+            item_id:    it._item_id ?? null,
+            variant_id: it._variant_id ?? null,
+          })),
+          changed_items: changedItems.map(it => {
+            const orig = initialItems.find(o => o.id === it.id)!
+            return {
+              id:            it.id,
+              item_name:     it.item_name,
+              quantity:      it.quantity,
+              unit_price:    it.unit_price,
+              line_total:    it.line_total,
+              note:          it.note,
+              prev_quantity: orig.quantity,
+            }
+          }),
+          new_total:   computedTotal,
+          note,
+          edited_by:   managerId,
+          editor_name: managerName,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to save changes')
+        return
+      }
+
+      toast.success('Transaction updated')
+      onSaved(); onClose()
+    } catch (err) {
+      console.error(err)
+      toast.error('Failed to save changes')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      {stockModalItem && (
+        <ItemStockModal
+          itemName={stockModalItem.item_name}
+          onConfirm={confirmRemove}
+          onClose={() => setStockModalItem(null)}
+        />
+      )}
+      {ingredientConfirmItem && (
+        <IngredientConfirmModal
+          itemName={ingredientConfirmItem.item_name}
+          onConfirm={confirmAddItem}
+          onClose={() => setIngredientConfirmItem(null)}
+        />
+      )}
+
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
+
+          {/* Header */}
+          <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 flex-shrink-0">
+            <div className="w-9 h-9 bg-blue-100 rounded-xl flex items-center justify-center">
+              <Edit2 className="w-4 h-4 text-blue-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">Edit Transaction</h3>
+              <p className="text-xs text-gray-400">#{receipt.receipt_number || receipt._ref} · Approved by {managerName}</p>
+            </div>
+            <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>
+          </div>
+
+          {/* Scrollable body */}
+          <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+
+            {/* Line items */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Line Items</p>
+                <button onClick={() => setShowNewItem(v => !v)}
+                  className="text-xs text-blue-600 hover:underline font-medium">
+                  {showNewItem ? 'Cancel' : '+ Add item'}
+                </button>
+              </div>
+
+              {/* Menu search panel */}
+              {showNewItem && (
+                <div className="mb-3 rounded-xl border-2 border-blue-200 bg-blue-50 overflow-hidden">
+                  {/* Search + category bar */}
+                  <div className="p-3 border-b border-blue-100 space-y-2">
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                      <input
+                        autoFocus
+                        value={menuSearch}
+                        onChange={e => { setMenuSearch(e.target.value); setSelectedMenuItem(null); setSelectedVariant(null) }}
+                        placeholder="Search menu items..."
+                        className="w-full pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                      />
+                    </div>
+                    {menuCategories.length > 0 && (
+                      <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                        <button
+                          onClick={() => setMenuCategory('all')}
+                          className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${menuCategory === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-blue-100'}`}>
+                          All
+                        </button>
+                        {menuCategories.map((cat: any) => (
+                          <button key={cat.id}
+                            onClick={() => setMenuCategory(cat.id)}
+                            className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${menuCategory === cat.id ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-blue-100'}`}>
+                            {cat.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Item list */}
+                  <div className="max-h-48 overflow-y-auto">
+                    {menuLoading ? (
+                      <p className="text-xs text-gray-400 text-center py-6">Loading menu...</p>
+                    ) : (() => {
+                      const filtered = menuItems.filter((mi: any) => {
+                        const matchSearch = !menuSearch || mi.name.toLowerCase().includes(menuSearch.toLowerCase())
+                        const matchCat = menuCategory === 'all' || mi.category_id === menuCategory
+                        return matchSearch && matchCat
+                      })
+                      if (filtered.length === 0) return (
+                        <p className="text-xs text-gray-400 text-center py-6">No items found</p>
+                      )
+                      return (
+                        <div className="divide-y divide-blue-100">
+                          {filtered.map((mi: any) => {
+                            const isSelected = selectedMenuItem?.id === mi.id
+                            const hasVariants = mi.item_variants?.length > 0
+                            return (
+                              <div key={mi.id}>
+                                <button
+                                  onClick={() => { setSelectedMenuItem(isSelected ? null : mi); setSelectedVariant(null) }}
+                                  className={`w-full text-left px-3 py-2.5 flex items-center justify-between transition-colors ${isSelected ? 'bg-blue-100' : 'hover:bg-blue-50'}`}>
+                                  <div>
+                                    <p className="text-xs font-semibold text-gray-800">{mi.name}</p>
+                                    <p className="text-[10px] text-gray-400">{menuCategories.find(c => c.id === mi.category_id)?.name}</p>
+                                  </div>
+                                  <div className="text-right flex-shrink-0 ml-3">
+                                    {!hasVariants && (
+                                      <p className="text-xs font-bold text-gray-900">{currencySymbol}{Number(mi.price).toFixed(2)}</p>
+                                    )}
+                                    {hasVariants && (
+                                      <p className="text-[10px] text-blue-500 font-medium">{mi.item_variants.length} variants</p>
+                                    )}
+                                  </div>
+                                </button>
+                                {/* Variant picker */}
+                                {isSelected && hasVariants && (
+                                  <div className="px-3 pb-2 flex flex-wrap gap-1.5">
+                                    {mi.item_variants.map((v: any) => (
+                                      <button key={v.id}
+                                        onClick={() => setSelectedVariant(selectedVariant?.id === v.id ? null : v)}
+                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                                          selectedVariant?.id === v.id
+                                            ? 'bg-blue-600 text-white border-blue-600'
+                                            : 'bg-white text-gray-700 border-gray-200 hover:border-blue-400'
+                                        }`}>
+                                        {v.name} — {currencySymbol}{Number(v.price).toFixed(2)}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )
+                    })()}
+                  </div>
+
+                  {/* Qty + Add row — shown once item (and variant if needed) is selected */}
+                  {selectedMenuItem && (!((selectedMenuItem?.item_variants?.length ?? 0) > 0) || selectedVariant) && (
+                    <div className="px-3 py-2.5 border-t border-blue-100 bg-white flex items-center gap-2">
+                      <p className="text-xs font-medium text-gray-700 flex-1 truncate">
+                        {selectedVariant ? `${selectedMenuItem.name} (${selectedVariant.name})` : selectedMenuItem.name}
+                        <span className="ml-1 font-bold text-blue-600">
+                          {currencySymbol}{Number(selectedVariant?.price ?? selectedMenuItem.price).toFixed(2)}
+                        </span>
+                      </p>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setNewQty(q => Math.max(1, q - 1))}
+                          className="w-6 h-6 rounded bg-gray-100 border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-200">-</button>
+                        <span className="w-6 text-center text-xs font-semibold">{newQty}</span>
+                        <button onClick={() => setNewQty(q => q + 1)}
+                          className="w-6 h-6 rounded bg-gray-100 border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-200">+</button>
+                      </div>
+                      <button onClick={requestAddMenuItem}
+                        className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-all">
+                        Add
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Existing items */}
+              <div className="space-y-2">
+                {visibleItems.map(item => (
+                  <div key={item.id} className={`flex items-center gap-2 p-3 rounded-xl border ${item._isNew ? 'border-blue-200 bg-blue-50' : 'border-gray-100 bg-gray-50'}`}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-800 truncate">{item.item_name}
+                        {item._isNew && <span className="ml-1 text-[10px] text-blue-600 font-semibold">NEW</span>}
+                      </p>
+                      {item.addons?.length > 0 && (
+                        <p className="text-[10px] text-indigo-500 truncate">
+                          {item.addons.map((a: any) => a.name).join(', ')}
+                        </p>
+                      )}
+                    </div>
+                    {/* Qty */}
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => updateItem(item.id, { quantity: Math.max(1, item.quantity - 1) })}
+                        className="w-5 h-5 rounded bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs flex items-center justify-center font-bold">−</button>
+                      <span className="w-6 text-center text-xs font-semibold text-gray-800">{item.quantity}</span>
+                      <button onClick={() => updateItem(item.id, { quantity: item.quantity + 1 })}
+                        className="w-5 h-5 rounded bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs flex items-center justify-center font-bold">+</button>
+                    </div>
+                    {/* Unit price */}
+                    <input type="number" min={0} step="0.01" value={item.unit_price}
+                      onChange={e => updateItem(item.id, { unit_price: parseFloat(e.target.value) || 0 })}
+                      className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-xs text-right focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white" />
+                    {/* Line total */}
+                    <span className="w-20 text-right text-xs font-semibold text-gray-900 tabular-nums">
+                      {currencySymbol}{item.line_total.toFixed(2)}
+                    </span>
+                    {/* Delete */}
+                    <button onClick={() => requestRemove(item)}
+                      className="p-1 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Computed total */}
+            <div className="flex items-center justify-between py-2 border-t border-gray-100">
+              <span className="text-sm font-semibold text-gray-700">New Total</span>
+              <span className="text-sm font-bold text-gray-900 tabular-nums">{currencySymbol}{computedTotal.toFixed(2)}</span>
+            </div>
+
+            {/* Note */}
+            <div>
+              <label className="text-xs font-medium text-gray-500 block mb-1.5">Note</label>
+              <textarea rows={2} value={note} onChange={e => setNote(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400"
+                placeholder="Add a note to this transaction…" />
+            </div>
+
+            {/* Audit notice */}
+            {items.some(it => it._deleted || it._isNew) && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                <p className="text-xs text-amber-700 font-medium">
+                  ⚠️ Changes will be logged in the audit trail with your manager approval.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-5 py-4 border-t border-gray-100 flex gap-2 flex-shrink-0">
+            <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
+            <button onClick={handleSave} disabled={saving || visibleItems.length === 0}
+              className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-40 transition-all">
+              {saving ? 'Saving…' : 'Save Changes'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -250,7 +740,7 @@ export default function TransactionsPage() {
   const [expanded, setExpanded]   = useState<string | null>(null)
   const [showPin, setShowPin]     = useState(false)
   const [pinAction, setPinAction] = useState<{ type: 'void' | 'edit' | 'reprint'; tx: any } | null>(null)
-  const [editReceipt, setEditReceipt] = useState<any | null>(null)
+  const [editReceipt, setEditReceipt] = useState<{ tx: any; managerId: string; managerName: string } | null>(null)
   const [voidTypeReceipt, setVoidTypeReceipt] = useState<{ tx: any; managerId: string; managerName: string } | null>(null)
 
   useEffect(() => {
@@ -455,7 +945,7 @@ export default function TransactionsPage() {
     const { type, tx } = pinAction
     if (type === 'void') {
       setVoidTypeReceipt({ tx, managerId, managerName })
-    } else if (type === 'edit') setEditReceipt(tx)
+    } else if (type === 'edit') setEditReceipt({ tx, managerId, managerName })
     else if (type === 'reprint') handleReprint(tx)
     setPinAction(null)
   }
@@ -551,8 +1041,11 @@ export default function TransactionsPage() {
       )}
       {editReceipt && (
         <EditTransactionModal
-          receipt={editReceipt}
+          receipt={editReceipt.tx}
+          receiptItemsMap={receiptItems}
           currencySymbol={currencySymbol}
+          managerId={editReceipt.managerId}
+          managerName={editReceipt.managerName}
           onClose={() => setEditReceipt(null)}
           onSaved={loadData}
         />

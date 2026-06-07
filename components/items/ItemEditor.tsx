@@ -22,6 +22,13 @@ type Props = {
 
 type Ingredient = { ingredient_id: string; quantity: number }
 
+type ModifierGroup = {
+  id: string
+  name: string
+  required: boolean
+  multiple_select: boolean
+}
+
 type Variant = {
   id?: string           // undefined = new (not saved yet)
   name: string
@@ -31,6 +38,11 @@ type Variant = {
   expanded: boolean
   ingSearch: string
   showIngSearch: boolean
+}
+
+type AddonCategory = {
+  category_id: string
+  multiple_select: boolean
 }
 
 type FormState = {
@@ -45,7 +57,8 @@ type FormState = {
   is_composite: boolean
   has_variants: boolean
   offer_addons: boolean
-  addon_category_id: string
+  addon_category_id: string        // kept for backward compat / export
+  addon_categories: AddonCategory[] // new multi-category support
   is_active: boolean
   track_stock: boolean
   sold_by_weight: boolean
@@ -74,11 +87,13 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
   const [ingSearch, setIngSearch] = useState('')
   const [showIngSearch, setShowIngSearch] = useState(false)
   const [skuLoading, setSkuLoading] = useState(false)
+  const [modifierGroups, setModifierGroups]           = useState<ModifierGroup[]>([])
+  const [assignedGroupIds, setAssignedGroupIds]       = useState<Set<string>>(new Set())
 
   const [form, setForm] = useState<FormState>({
     name: '', description: '', sku: '', barcode: '', price: '', cost: '',
     category_id: '', level_id: '', is_composite: false, has_variants: false,
-    offer_addons: false, addon_category_id: '',
+    offer_addons: false, addon_category_id: '', addon_categories: [],
     is_active: true, track_stock: false, sold_by_weight: false, tax_rate: '0',
     ingredients: [], variants: [],
   })
@@ -146,6 +161,23 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
         })),
       }))
 
+      // Load assigned addon categories from junction table
+      const { data: addonCatRows } = await supabase
+        .from('item_addon_categories')
+        .select('category_id, multiple_select')
+        .eq('item_id', item!.id)
+
+      const addonCategories: AddonCategory[] = (addonCatRows ?? []).map((r: any) => ({
+        category_id: r.category_id,
+        multiple_select: r.multiple_select ?? false,
+      }))
+
+      // Fallback: if no junction rows but old addon_category_id exists, migrate it
+      const legacyAddonCatId = (item as any).addon_category_id
+      const finalAddonCategories = addonCategories.length === 0 && legacyAddonCatId
+        ? [{ category_id: legacyAddonCatId, multiple_select: false }]
+        : addonCategories
+
       setForm({
         name: item!.name,
         description: item!.description ?? '',
@@ -159,6 +191,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
         has_variants: (item as any).has_variants ?? false,
         offer_addons: (item as any).offer_addons ?? false,
         addon_category_id: (item as any).addon_category_id ?? '',
+        addon_categories: finalAddonCategories,
         is_active: item!.is_active,
         track_stock: item!.track_stock,
         sold_by_weight: item!.sold_by_weight,
@@ -173,7 +206,28 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
     loadVariants()
   }, [item])
 
-  function set<K extends keyof FormState>(key: K, val: FormState[K]) {
+  // Load all modifier groups for this shop
+  useEffect(() => {
+    supabase
+      .from('modifier_groups')
+      .select('id, name, required, multiple_select')
+      .eq('shop_id', shopId)
+      .order('created_at', { ascending: true })
+      .then(({ data }) => setModifierGroups(data || []))
+  }, [shopId])
+
+  // Load assigned modifier groups for this item
+  useEffect(() => {
+    if (!item) return
+    supabase
+      .from('item_modifier_groups')
+      .select('group_id')
+      .eq('item_id', item.id)
+      .then(({ data }) => {
+        setAssignedGroupIds(new Set((data || []).map(r => r.group_id)))
+      })
+  }, [item])
+    function set<K extends keyof FormState>(key: K, val: FormState[K]) {
     setForm(prev => ({ ...prev, [key]: val }))
   }
 
@@ -370,6 +424,26 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
       } else {
         // Variants turned off — delete all
         await supabase.from('item_variants').delete().eq('item_id', itemId!)
+      }
+
+      // Save addon category assignments (junction table)
+      await supabase.from('item_addon_categories').delete().eq('item_id', itemId!)
+      if (form.offer_addons && form.addon_categories.length > 0) {
+        await supabase.from('item_addon_categories').insert(
+          form.addon_categories.map(ac => ({
+            item_id: itemId!,
+            category_id: ac.category_id,
+            multiple_select: ac.multiple_select,
+          }))
+        )
+      }
+
+      // Save modifier group assignments
+      await supabase.from('item_modifier_groups').delete().eq('item_id', itemId!)
+      if (assignedGroupIds.size > 0) {
+        await supabase.from('item_modifier_groups').insert(
+          [...assignedGroupIds].map(group_id => ({ item_id: itemId!, group_id }))
+        )
       }
 
       toast.success(isNew ? 'Item created' : 'Item saved')
@@ -803,6 +877,45 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
             )}
           </div>
 
+          {/* Modifiers */}
+          <div>
+            <div className="mb-3">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Modifier Groups</p>
+              <p className="text-xs text-gray-400 mt-0.5">Assign modifier groups (size, toppings, etc.) to this item</p>
+            </div>
+            {modifierGroups.length === 0 ? (
+              <p className="text-xs text-gray-400 italic">No modifier groups yet — create them in Settings → Modifiers</p>
+            ) : (
+              <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
+                {modifierGroups.map(group => (
+                  <div key={group.id} className="flex items-center justify-between px-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">{group.name}</p>
+                      <div className="flex gap-1.5 mt-0.5">
+                        {group.required && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-50 text-red-500">Required</span>
+                        )}
+                        {group.multiple_select && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-500">Multi-select</span>
+                        )}
+                      </div>
+                    </div>
+                    <Switch
+                      checked={assignedGroupIds.has(group.id)}
+                      onCheckedChange={v => {
+                        setAssignedGroupIds(prev => {
+                          const n = new Set(prev)
+                          v ? n.add(group.id) : n.delete(group.id)
+                          return n
+                        })
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Add-Ons */}
           <div>
             <div className="flex items-center justify-between mb-3">
@@ -814,28 +927,62 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                 <span className="text-xs text-gray-500">{form.offer_addons ? 'On' : 'Off'}</span>
                 <Switch checked={form.offer_addons} onCheckedChange={v => {
                   set('offer_addons', v)
-                  if (!v) set('addon_category_id', '')
+                  if (!v) set('addon_categories', [])
                 }} />
               </div>
             </div>
             {form.offer_addons && (
-              <div className="border border-gray-100 rounded-xl p-3 bg-gray-50/50">
-                <Label className="text-xs text-gray-500 mb-1.5 block">Add-On Category</Label>
-                <select
-                  value={form.addon_category_id}
-                  onChange={e => set('addon_category_id', e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-                >
-                  <option value="">— select a category —</option>
-                  {categories.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-                {!form.addon_category_id && (
-                  <p className="text-xs text-amber-500 mt-1.5">⚠ Select a category to define which add-ons appear on POS</p>
+              <div>
+                {categories.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic">No categories yet — create them in Settings → Categories</p>
+                ) : (
+                  <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
+                    {categories.map(cat => {
+                      const assigned = form.addon_categories.find(ac => ac.category_id === cat.id)
+                      const isOn = !!assigned
+                      return (
+                        <div key={cat.id} className="px-4 py-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                              <p className="text-sm font-medium text-gray-800">{cat.name}</p>
+                            </div>
+                            <Switch
+                              checked={isOn}
+                              onCheckedChange={v => {
+                                if (v) {
+                                  set('addon_categories', [...form.addon_categories, { category_id: cat.id, multiple_select: false }])
+                                } else {
+                                  set('addon_categories', form.addon_categories.filter(ac => ac.category_id !== cat.id))
+                                }
+                              }}
+                            />
+                          </div>
+                          {isOn && (
+                            <div className="mt-2 ml-4 flex items-center gap-2">
+                              <Switch
+                                checked={assigned!.multiple_select}
+                                onCheckedChange={v => {
+                                  set('addon_categories', form.addon_categories.map(ac =>
+                                    ac.category_id === cat.id ? { ...ac, multiple_select: v } : ac
+                                  ))
+                                }}
+                              />
+                              <span className="text-xs text-gray-500">
+                                {assigned!.multiple_select ? 'Multi-select (customer can pick multiple items)' : 'Single-select (customer picks one item)'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
                 )}
-                {form.addon_category_id && (
-                  <p className="text-xs text-emerald-600 mt-1.5">✓ Add-ons will be pulled from this category on POS</p>
+                {form.addon_categories.length === 0 && (
+                  <p className="text-xs text-amber-500 mt-2">⚠ Toggle at least one category to define which add-ons appear on POS</p>
+                )}
+                {form.addon_categories.length > 0 && (
+                  <p className="text-xs text-emerald-600 mt-2">✓ {form.addon_categories.length} category{form.addon_categories.length > 1 ? 'ies' : 'y'} selected as add-on source</p>
                 )}
               </div>
             )}
