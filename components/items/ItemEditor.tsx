@@ -376,12 +376,14 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
       if (form.has_variants) {
         // Delete removed variants (those with id not in current list)
         const keptIds = form.variants.filter(v => v.id).map(v => v.id!)
-        if (keptIds.length > 0) {
-          await supabase.from('item_variants')
-            .delete().eq('item_id', itemId!).not('id', 'in', `(${keptIds.map(id => `'${id}'`).join(',')})`)
-        } else {
-          await supabase.from('item_variants').delete().eq('item_id', itemId!)
-        }
+        const { data: existingVariants } = await supabase
+          .from('item_variants').select('id').eq('item_id', itemId!)
+        const toDelete = (existingVariants ?? [])
+          .map((v: any) => v.id)
+          .filter((id: string) => !keptIds.includes(id))
+        if (toDelete.length > 0) {
+          await supabase.from('item_variants').delete().in('id', toDelete)
+          }
 
         for (let i = 0; i < form.variants.length; i++) {
           const v = form.variants[i]
