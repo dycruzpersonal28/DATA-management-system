@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Monitor, Clock, CheckCircle2, ChefHat, Bell, RefreshCw, ArrowLeft, Settings, X } from 'lucide-react'
+import { Monitor, Clock, CheckCircle2, ChefHat, Bell, RefreshCw, ArrowLeft, X } from 'lucide-react'
 
 // ── Sound Settings Types ───────────────────────────────────────────────────────
 type SoundSettings = {
@@ -31,12 +31,9 @@ function useAudio() {
     return ctxRef.current
   }
 
-  // Strong kitchen bell — new order
   function playNewOrder() {
     const ctx = getCtx()
     const now = ctx.currentTime
-
-    // Main bell tone (fundamental + harmonics for richness)
     const freqs = [880, 1760, 2640]
     freqs.forEach((freq, i) => {
       const osc = ctx.createOscillator()
@@ -51,8 +48,6 @@ function useAudio() {
       osc.start(now)
       osc.stop(now + 1.8)
     })
-
-    // Second ding after 0.35s for a double-bell feel
     setTimeout(() => {
       const ctx2 = getCtx()
       const t = ctx2.currentTime
@@ -73,11 +68,9 @@ function useAudio() {
     }, 350)
   }
 
-  // Urgent alarm — critical aging order
   function playCritical() {
     const ctx = getCtx()
     const now = ctx.currentTime
-    // Three sharp beeps
     for (let i = 0; i < 3; i++) {
       const osc = ctx.createOscillator()
       const gain = ctx.createGain()
@@ -94,7 +87,6 @@ function useAudio() {
     }
   }
 
-  // Gentle reminder — ready but not served
   function playReadyReminder() {
     const ctx = getCtx()
     const now = ctx.currentTime
@@ -139,7 +131,6 @@ function SoundSettingsPanel({
         </button>
       </div>
 
-      {/* Master toggle */}
       <div className="flex items-center justify-between mb-4 pb-4 border-b border-gray-800">
         <span className="text-gray-300 font-medium">Enable Sounds</span>
         <button
@@ -151,8 +142,6 @@ function SoundSettingsPanel({
       </div>
 
       <div className={`space-y-5 ${!settings.enabled ? 'opacity-40 pointer-events-none' : ''}`}>
-
-        {/* New order */}
         <div>
           <div className="flex items-center justify-between mb-1">
             <span className="text-gray-300">🔔 New Order Bell</span>
@@ -169,7 +158,6 @@ function SoundSettingsPanel({
           <p className="text-xs text-gray-600">Double bell when a new order appears</p>
         </div>
 
-        {/* Critical aging */}
         <div>
           <div className="flex items-center justify-between mb-2">
             <span className="text-gray-300">🚨 Critical Age Alert</span>
@@ -203,7 +191,6 @@ function SoundSettingsPanel({
           </div>
         </div>
 
-        {/* Ready reminder */}
         <div>
           <div className="flex items-center justify-between mb-2">
             <span className="text-gray-300">⏰ Ready Reminder</span>
@@ -285,7 +272,6 @@ function StationPicker({ stations, onSelect }: {
           <h1 className="text-2xl font-bold">Kitchen Display</h1>
         </div>
         <p className="text-center text-gray-500 text-sm mb-10">Select a station to open</p>
-
         <div className="space-y-3">
           {stations.map(station => (
             <button
@@ -316,15 +302,16 @@ function StationPicker({ stations, onSelect }: {
 }
 
 // ── Elapsed Hook ───────────────────────────────────────────────────────────────
-function useElapsed(dateStr: string) {
+function useElapsed(dateStr: string, frozen = false) {
   const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
     const start = new Date(dateStr).getTime()
     const tick = () => setElapsed(Math.floor((Date.now() - start) / 1000))
     tick()
+    if (frozen) return // don't start interval if frozen
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [dateStr])
+  }, [dateStr, frozen])
   return elapsed
 }
 
@@ -347,7 +334,7 @@ function OrderCard({ order, onAdvance, criticalSeconds }: {
   onAdvance: (orderId: string, to: string, from: string) => void
   criticalSeconds: number
 }) {
-  const elapsed = useElapsed(order.created_at)
+  const elapsed = useElapsed(order.created_at, order.status === 'served')
   const cfg = STATUS_CONFIG[order.status]
   const isServed = order.status === 'served'
   const isCritical = elapsed >= criticalSeconds && order.status !== 'served'
@@ -472,9 +459,20 @@ export default function KdsDisplayPage() {
 
   const channelRef = useRef<any>(null)
   const prevOrderIdsRef = useRef<Set<string>>(new Set())
-  const criticalAlertedRef = useRef<Map<string, number>>(new Map()) // orderId → last alerted timestamp
-  const readyAlertedRef = useRef<Map<string, number>>(new Map())   // orderId → last alerted timestamp
+  const criticalAlertedRef = useRef<Map<string, number>>(new Map())
+  const readyAlertedRef = useRef<Map<string, number>>(new Map())
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Suppress DB-triggered reloads for 3s after an optimistic update so the
+  // realtime echo of our own write can't overwrite local state before the DB
+  // read catches up.
+  const suppressReloadUntilRef = useRef<number>(0)
+
+  // FIX: Keep soundSettings in a ref so loadOrders can read the latest value
+  // without having soundSettings in its dependency array (which caused
+  // loadOrders to be recreated on every slider change, triggering a full
+  // re-fetch that would race against in-flight served updates).
+  const soundSettingsRef = useRef(soundSettings)
+  useEffect(() => { soundSettingsRef.current = soundSettings }, [soundSettings])
 
   const audio = useAudio()
 
@@ -497,9 +495,18 @@ export default function KdsDisplayPage() {
     load()
   }, [])
 
-  const loadOrders = useCallback(async () => {
+  // FIX: Removed `soundSettings` and `showServed` from deps.
+  // - showServed is only used in render (line ~747), not inside this function.
+  // - soundSettings is now read via soundSettingsRef.current so it's always
+  //   fresh but doesn't cause loadOrders to be recreated on every change.
+  // Result: loadOrders is only recreated when station/shop changes, so the
+  // auto-refresh interval stays stable and won't race against DB updates.
+  const loadOrders = useCallback(async (force = false) => {
     if (!selectedStation || !shopId) return
+    // Skip reload if we just did an optimistic update — wait for suppression to lift
+    if (!force && Date.now() < suppressReloadUntilRef.current) return
 
+    const ss = soundSettingsRef.current
     const catIds = selectedStation.kds_station_categories.map(sc => sc.category_id)
     const todayStart = new Date()
     todayStart.setHours(0, 0, 0, 0)
@@ -578,8 +585,8 @@ export default function KdsDisplayPage() {
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     })
 
-    // ── Sound: detect new orders ───────────────────────────────────────────────
-    if (soundSettings.enabled && soundSettings.newOrder) {
+    // Sound: detect new orders
+    if (ss.enabled && ss.newOrder) {
       const newIds = built.map(o => o.receipt_id)
       const prevIds = prevOrderIdsRef.current
       const hasNew = newIds.some(id => !prevIds.has(id))
@@ -591,10 +598,27 @@ export default function KdsDisplayPage() {
       prevOrderIdsRef.current = new Set(built.map(o => o.receipt_id))
     }
 
-    setOrders(built)
-  }, [selectedStation, shopId, showServed, soundSettings])
+    // FIX: Merge incoming DB data with current optimistic state.
+    // If an order was marked served locally but the DB hasn't confirmed yet,
+    // keep the local 'served' status so the card doesn't flicker back.
+    setOrders(prev => {
+      const localStatusMap = new Map(prev.map(o => [o.receipt_id, o.status]))
+      return built.map(o => {
+        const localStatus = localStatusMap.get(o.receipt_id)
+        // If local state is ahead of DB (e.g. served vs ready), trust local
+        const statusOrder = { pending: 0, preparing: 1, ready: 2, served: 3 }
+        if (
+          localStatus &&
+          statusOrder[localStatus] > statusOrder[o.status as keyof typeof statusOrder]
+        ) {
+          return { ...o, status: localStatus }
+        }
+        return o
+      })
+    })
+  }, [selectedStation, shopId]) // FIX: only recreate when station/shop changes
 
-  // ── Auto refresh every 10 seconds ─────────────────────────────────────────────
+  // Auto refresh every 10 seconds
   useEffect(() => {
     if (!selectedStation) return
     if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
@@ -606,7 +630,7 @@ export default function KdsDisplayPage() {
 
   useEffect(() => { loadOrders() }, [loadOrders])
 
-  // ── Sound: periodic critical + ready alerts ────────────────────────────────
+  // Sound: periodic critical + ready alerts
   useEffect(() => {
     if (!soundSettings.enabled) return
 
@@ -623,7 +647,6 @@ export default function KdsDisplayPage() {
         if (order.status === 'served') return
         const age = now - new Date(order.created_at).getTime()
 
-        // Critical aging
         if (age >= criticalMs) {
           const lastAlerted = criticalAlertedRef.current.get(order.receipt_id) ?? 0
           if (now - lastAlerted >= criticalRepeatMs) {
@@ -632,7 +655,6 @@ export default function KdsDisplayPage() {
           }
         }
 
-        // Ready reminder
         if (order.status === 'ready') {
           const lastAlerted = readyAlertedRef.current.get(order.receipt_id) ?? 0
           if (now - lastAlerted >= readyRepeatMs) {
@@ -642,24 +664,30 @@ export default function KdsDisplayPage() {
         }
       })
 
-      // Play once even if multiple orders qualify, stagger if both
       if (playCriticalSound) audio.playCritical()
       if (playReadySound) {
         setTimeout(() => audio.playReadyReminder(), playCriticalSound ? 1200 : 0)
       }
-    }, 5_000) // check every 5s
+    }, 5_000)
 
     return () => clearInterval(id)
   }, [orders, soundSettings])
 
+  // Realtime subscription
   useEffect(() => {
     if (!shopId) return
     if (channelRef.current) supabase.removeChannel(channelRef.current)
 
     const channel = supabase
       .channel('kds-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'receipts', filter: `shop_id=eq.${shopId}` }, () => loadOrders())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_orders', filter: `shop_id=eq.${shopId}` }, () => loadOrders())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'receipts', filter: `shop_id=eq.${shopId}` }, () => {
+        // Small delay so new receipts are fully committed before we fetch
+        setTimeout(() => loadOrders(), 500)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_orders', filter: `shop_id=eq.${shopId}` }, () => {
+        // Delay + suppression check: ignore the echo of our own writes for 3s
+        setTimeout(() => loadOrders(), 500)
+      })
       .subscribe()
 
     channelRef.current = channel
@@ -675,6 +703,23 @@ export default function KdsDisplayPage() {
       ? Math.floor((Date.now() - new Date(order.updated_at).getTime()) / 1000)
       : null
 
+    // FIX: Optimistically update UI immediately (moved to top, before DB calls)
+    // so any concurrent auto-refresh sees the new status in local state first
+    // and won't overwrite it via the merge logic in loadOrders.
+    setOrders(prev => prev.map(o =>
+      (o.id === orderId || o.receipt_id === order.receipt_id)
+        ? { ...o, status: toStatus as any, updated_at: now }
+        : o
+    ))
+
+    // Suppress any DB-triggered reloads for 3 seconds so the realtime echo
+    // of our own write can't race and overwrite the optimistic state above.
+    suppressReloadUntilRef.current = Date.now() + 3000
+
+    // Clear alerts for this order when it advances
+    criticalAlertedRef.current.delete(order.receipt_id)
+    readyAlertedRef.current.delete(order.receipt_id)
+
     let kdsOrderId = order.id
 
     const { data: existing } = await supabase
@@ -685,13 +730,40 @@ export default function KdsDisplayPage() {
       .maybeSingle()
 
     if (existing) {
-      await supabase.from('kds_orders').update({ status: toStatus, updated_at: now }).eq('id', existing.id)
+      const { data: updateData, error: updateError } = await supabase
+        .from('kds_orders')
+        .update({ status: toStatus, updated_at: now })
+        .eq('id', existing.id)
+        .select('id, status')
+        .single()
+
+      if (updateError) {
+        console.error('[KDS] Update failed:', updateError)
+        // Revert optimistic update on failure
+        setOrders(prev => prev.map(o =>
+          (o.id === orderId || o.receipt_id === order.receipt_id)
+            ? { ...o, status: fromStatus as any }
+            : o
+        ))
+        return
+      }
+      console.log('[KDS] Update confirmed in DB:', updateData)
       kdsOrderId = existing.id
     } else {
-      const { data: created } = await supabase
+      const { data: created, error: insertError } = await supabase
         .from('kds_orders')
         .insert({ shop_id: shopId, receipt_id: order.receipt_id, status: toStatus, items: order.items, updated_at: now })
         .select('id').single()
+
+      if (insertError) {
+        console.error('[KDS] Insert failed:', insertError)
+        setOrders(prev => prev.map(o =>
+          (o.id === orderId || o.receipt_id === order.receipt_id)
+            ? { ...o, status: fromStatus as any }
+            : o
+        ))
+        return
+      }
       kdsOrderId = created?.id ?? orderId
     }
 
@@ -705,10 +777,7 @@ export default function KdsDisplayPage() {
       duration_seconds: durationSeconds,
     })
 
-    // Clear alerts for this order when it advances
-    criticalAlertedRef.current.delete(order.receipt_id)
-    readyAlertedRef.current.delete(order.receipt_id)
-
+    // Update with confirmed DB id once we have it
     setOrders(prev => prev.map(o =>
       (o.id === orderId || o.receipt_id === order.receipt_id)
         ? { ...o, id: kdsOrderId, status: toStatus as any, updated_at: now }
@@ -785,10 +854,9 @@ export default function KdsDisplayPage() {
           >
             {showServed ? 'Hide Served' : 'Show Served'}
           </button>
-          <button onClick={loadOrders} className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors" title="Refresh">
+          <button onClick={() => loadOrders(true)} className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors" title="Refresh">
             <RefreshCw className="w-4 h-4" />
           </button>
-          {/* Sound settings toggle */}
           <button
             onClick={() => setShowSoundSettings(v => !v)}
             className={`p-1.5 rounded-lg transition-colors relative ${showSoundSettings ? 'bg-gray-700 text-amber-400' : 'hover:bg-gray-800 text-gray-400 hover:text-white'}`}
