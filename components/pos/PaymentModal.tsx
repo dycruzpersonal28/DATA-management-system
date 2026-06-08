@@ -142,6 +142,9 @@ function buildKitchenTicket(
   return new Uint8Array(cmd)
 }
 
+// Cache paired BT devices so we can reconnect without re-prompting
+const btDeviceCache = new Map<string, any>()
+
 const BT_SERVICE_UUIDS = [
   '000018f0-0000-1000-8000-00805f9b34fb',
   '0000ff00-0000-1000-8000-00805f9b34fb',
@@ -158,10 +161,16 @@ async function sendToBluetoothPrinter(deviceName: string, data: Uint8Array): Pro
   try {
     const bt = (navigator as any).bluetooth
     if (!bt) return false
-    const requestOpts: any = deviceName
-      ? { filters: [{ name: deviceName }], optionalServices: BT_SERVICE_UUIDS }
-      : { acceptAllDevices: true, optionalServices: BT_SERVICE_UUIDS }
-    const device = await bt.requestDevice(requestOpts)
+
+    let device = btDeviceCache.get(deviceName)
+    if (!device) {
+      const requestOpts: any = deviceName
+        ? { filters: [{ name: deviceName }], optionalServices: BT_SERVICE_UUIDS }
+        : { acceptAllDevices: true, optionalServices: BT_SERVICE_UUIDS }
+      device = await bt.requestDevice(requestOpts)
+      btDeviceCache.set(deviceName, device)
+    }
+
     const server = await device.gatt.connect()
     let characteristic = null
     for (const svcUuid of BT_SERVICE_UUIDS) {
@@ -198,30 +207,39 @@ async function sendToNetworkPrinter(ip: string, text: string): Promise<boolean> 
 }
 
 function printViaWindow(text: string, title: string, logoUrl?: string | null) {
-  const win = window.open('', '_blank', 'width=400,height=600')
+  const win = window.open('', '_blank', 'width=300,height=600')
   if (!win) return
 
   const logoHtml = logoUrl
-    ? `<div style="text-align:center;margin-bottom:8px;"><img src="${logoUrl}" style="max-height:64px;max-width:180px;object-fit:contain;" /></div>`
+    ? `<div style="text-align:center;margin-bottom:8px;"><img src="${logoUrl}" style="max-height:48px;max-width:140px;object-fit:contain;" /></div>`
     : ''
 
-  // Split receipt: header lines (before first divider) get centered HTML; body keeps monospace pre
   const lines = text.split('\n')
-  const dividerIndex = lines.findIndex(l => /^-{10,}/.test(l))
-  const headerLines = dividerIndex > 0 ? lines.slice(0, dividerIndex) : []
-  const bodyLines   = dividerIndex > 0 ? lines.slice(dividerIndex)    : lines
 
-  const headerHtml = headerLines
-    .map(l => `<div style="text-align:center;">${l.replace(/</g, '&lt;') || '&nbsp;'}</div>`)
-    .join('')
-  const bodyHtml = `<pre style="margin:0;">${bodyLines.map(l => l.replace(/</g, '&lt;')).join('\n')}</pre>`
+  const bodyHtml = lines.map(l => {
+    const escaped = l.replace(/</g, '&lt;')
+    return `<div>${escaped || '&nbsp;'}</div>`
+  }).join('')
 
   win.document.write(`<html><head><title>${title}</title>
     <style>
-      body { font-family: 'Courier New', monospace; font-size: 12px; margin: 16px; }
-      @media print { @page { margin: 0; } body { margin: 8mm; } }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: 'Courier New', monospace;
+        font-size: 11px;
+        width: 57mm;
+        margin: 0 auto;
+        padding: 4mm 2mm;
+        white-space: pre;
+        word-break: break-all;
+      }
+      div { line-height: 1.4; }
+      @media print {
+        @page { size: 57mm auto; margin: 0; }
+        body { padding: 2mm; }
+      }
     </style></head>
-    <body>${logoHtml}${headerHtml}${bodyHtml}</body></html>`)
+    <body>${logoHtml}${bodyHtml}</body></html>`)
   win.document.close(); win.focus(); win.print()
 }
 
@@ -356,6 +374,8 @@ export default function PaymentModal({ total, onClose, itemNotes, itemDiscounts,
   const [lastReceipt, setLastReceipt] = useState<any>(null)
   const [lastReceiptItems, setLastReceiptItems] = useState<any[]>([])
   const [cashierName, setCashierName] = useState<string | null>(cashierNameProp ?? null)
+  const [kitchenPrinting, setKitchenPrinting] = useState(false)
+  const [kitchenPrintArgs, setKitchenPrintArgs] = useState<{ receipt: any; receiptItems: any[]; shopId: string } | null>(null)
   const { shop: shopFromHook, currencySymbol } = useShop()
 
   useEffect(() => { if (shopFromHook) setShop(shopFromHook) }, [shopFromHook])
@@ -459,9 +479,7 @@ export default function PaymentModal({ total, onClose, itemNotes, itemDiscounts,
         }
       }
 
-      triggerKitchenPrint(supabase, receipt, receiptItems, shop.id, currencySymbol)
-        .catch(err => console.error('Kitchen print failed:', err))
-
+      setKitchenPrintArgs({ receipt, receiptItems, shopId: shop.id })
       setLastReceipt(receipt)
       setLastReceiptItems(receiptItems)
       setChange(changeAmount)
@@ -502,6 +520,26 @@ export default function PaymentModal({ total, onClose, itemNotes, itemDiscounts,
             </Button>
             <Button className="flex-1" onClick={onClose}>New order</Button>
           </div>
+          {kitchenPrintArgs && (
+            <Button
+              variant="outline"
+              className="w-full"
+              disabled={kitchenPrinting}
+              onClick={async () => {
+                setKitchenPrinting(true)
+                try {
+                  await triggerKitchenPrint(supabase, kitchenPrintArgs.receipt, kitchenPrintArgs.receiptItems, kitchenPrintArgs.shopId, currencySymbol)
+                } catch (err) {
+                  console.error('Kitchen print failed:', err)
+                } finally {
+                  setKitchenPrinting(false)
+                }
+              }}
+            >
+              <Printer className="w-4 h-4 mr-1.5" />
+              {kitchenPrinting ? 'Sending to kitchen…' : 'Print to Kitchen'}
+            </Button>
+          )}
         </div>
       </div>
     )
