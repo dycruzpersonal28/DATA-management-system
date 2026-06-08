@@ -318,6 +318,10 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
   async function handleSave() {
     if (!form.name.trim()) { toast.error('Item name is required'); return }
 
+    const { data: { session } } = await supabase.auth.getSession()
+    console.log('Session user:', session?.user?.id)
+    console.log('Shop ID:', shopId)
+
     // Validate variants
     if (form.has_variants) {
       if (form.variants.length === 0) { toast.error('Add at least one variant'); return }

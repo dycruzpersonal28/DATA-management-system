@@ -207,41 +207,37 @@ async function sendToNetworkPrinter(ip: string, text: string): Promise<boolean> 
 }
 
 function printViaWindow(text: string, title: string, logoUrl?: string | null) {
-  const win = window.open('', '_blank', 'width=320,height=640')
+  const win = window.open('', '_blank', 'width=300,height=600')
   if (!win) return
 
   const logoHtml = logoUrl
-    ? `<div class="logo"><img src="${logoUrl}" /></div>`
+    ? `<div style="text-align:center;margin-bottom:8px;"><img src="${logoUrl}" style="max-height:48px;max-width:140px;object-fit:contain;" /></div>`
     : ''
 
-  let firstContentLine = true
-  const bodyHtml = text.split('\n').map(l => {
-    const escaped = l.replace(/</g, '&lt;')
-    const isDividerEq   = /^={10,}$/.test(l)
-    const isDividerDash = /^-{10,}$/.test(l)
-    const isTotal       = /^TOTAL\s/.test(l)
-    const isBlank       = l.trim() === ''
-    const isStoreName   = firstContentLine && !isBlank && !isDividerDash && !isDividerEq
+  const lines = text.split('\n')
 
-    if (isStoreName) { firstContentLine = false; return `<div class="store-name">${escaped}</div>` }
-    if (isDividerEq)   return `<hr class="thick" />`
-    if (isDividerDash) return `<hr class="thin" />`
-    if (isTotal)       return `<div class="total-line">${escaped}</div>`
+  const bodyHtml = lines.map(l => {
+    const escaped = l.replace(/</g, '&lt;')
     return `<div>${escaped || '&nbsp;'}</div>`
   }).join('')
 
   win.document.write(`<html><head><title>${title}</title>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: 'Courier New', monospace; font-size: 12px; width: 58mm; margin: 0 auto; padding: 4mm 2mm; background: #fff; color: #000; }
-      div { line-height: 1.5; white-space: pre; word-break: break-all; }
-      .logo { text-align: center; margin-bottom: 6px; }
-      .logo img { max-height: 52px; max-width: 150px; object-fit: contain; }
-      .store-name { text-align: center; font-size: 15px; font-weight: bold; letter-spacing: 0.5px; margin-bottom: 2px; white-space: normal; }
-      .total-line { font-size: 14px; font-weight: bold; white-space: pre; }
-      hr.thin  { border: none; border-top: 1px dashed #666; margin: 3px 0; }
-      hr.thick { border: none; border-top: 2px solid #000; margin: 3px 0; }
-      @media print { @page { size: 58mm auto; margin: 0; } body { padding: 2mm; } }
+      body {
+        font-family: 'Courier New', monospace;
+        font-size: 11px;
+        width: 57mm;
+        margin: 0 auto;
+        padding: 4mm 2mm;
+        white-space: pre;
+        word-break: break-all;
+      }
+      div { line-height: 1.4; }
+      @media print {
+        @page { size: 57mm auto; margin: 0; }
+        body { padding: 2mm; }
+      }
     </style></head>
     <body>${logoHtml}${bodyHtml}</body></html>`)
   win.document.close(); win.focus(); win.print()
@@ -365,107 +361,6 @@ function buildFallbackText(
   return lines.join('\n')
 }
 
-function buildReceiptESCPOS(
-  receipt: any,
-  items: any[],
-  shop: any,
-  currencySymbol: string,
-  change: number,
-  paymentName: string,
-  cashierName?: string | null,
-): Uint8Array {
-  const ESC = 0x1b
-  const GS  = 0x1d
-  const W   = 32 // chars per line on 58mm paper
-
-  const cmd: number[] = []
-
-  // Safe ASCII encode — replace multi-byte currency symbols
-  const safeText = (s: string) => {
-    const safe = s.replace(/₱/g, 'PHP').replace(/[^\x00-\x7F]/g, '?')
-    for (const c of safe) cmd.push(c.charCodeAt(0) & 0xff)
-  }
-  const lf  = () => cmd.push(0x0a)
-  const line = (s: string) => { safeText(s); lf() }
-  const blank = () => lf()
-
-  const padCenter = (s: string, w = W) => {
-    const pad = Math.max(0, Math.floor((w - s.length) / 2))
-    return ' '.repeat(pad) + s.substring(0, w)
-  }
-  const twoCol = (left: string, right: string, w = W) => {
-    const gap = w - left.length - right.length
-    return gap > 0 ? left + ' '.repeat(gap) + right : left.substring(0, w - right.length - 1) + ' ' + right
-  }
-  const sym = currencySymbol.replace(/₱/g, 'PHP')
-
-  // ── Init ────────────────────────────────────────────────────────────────────
-  cmd.push(ESC, 0x40)                  // initialize
-
-  // ── Store name — centered, bold, double-height ──────────────────────────────
-  cmd.push(ESC, 0x61, 0x01)           // align center
-  cmd.push(GS,  0x21, 0x10)           // double height only (keeps 32-char width)
-  cmd.push(ESC, 0x45, 0x01)           // bold on
-  line(shop?.name || 'Receipt')
-  cmd.push(GS,  0x21, 0x00)           // normal size
-  cmd.push(ESC, 0x45, 0x00)           // bold off
-
-  if (shop?.address) line(shop.address)
-  if (shop?.phone)   line(shop.phone)
-  blank()
-
-  // ── Meta — left aligned ─────────────────────────────────────────────────────
-  cmd.push(ESC, 0x61, 0x00)           // align left
-  line(padCenter(`Receipt #${receipt.receipt_number}`))
-  line(padCenter(new Date(receipt.created_at).toLocaleString()))
-  if (cashierName) line(padCenter(`Cashier: ${cashierName}`))
-  line('-'.repeat(W))
-
-  // ── Items ───────────────────────────────────────────────────────────────────
-  for (const item of items) {
-    line(twoCol(`${item.quantity}x ${item.item_name}`, `${sym}${Number(item.line_total).toFixed(2)}`))
-    if (item.addons?.length) {
-      for (const a of item.addons) {
-        const label = `  + ${a.name}${a.quantity > 1 ? ` x${a.quantity}` : ''}`
-        line(twoCol(label, `${sym}${(a.price * a.quantity).toFixed(2)}`))
-      }
-    }
-    if (item.note) line(`  >> ${item.note}`)
-  }
-
-  // ── Subtotal ─────────────────────────────────────────────────────────────────
-  line('-'.repeat(W))
-  line(twoCol('Subtotal', `${sym}${Number(receipt.subtotal).toFixed(2)}`))
-  if (Number(receipt.discount_amount) > 0) {
-    line(twoCol('Discount', `-${sym}${Number(receipt.discount_amount).toFixed(2)}`))
-  }
-
-  // ── TOTAL — bold, double-height ──────────────────────────────────────────────
-  line('='.repeat(W))
-  cmd.push(GS,  0x21, 0x10)           // double height
-  cmd.push(ESC, 0x45, 0x01)           // bold on
-  line(twoCol('TOTAL', `${sym}${Number(receipt.total).toFixed(2)}`))
-  cmd.push(GS,  0x21, 0x00)           // normal size
-  cmd.push(ESC, 0x45, 0x00)           // bold off
-  line('='.repeat(W))
-
-  // ── Payment details ───────────────────────────────────────────────────────────
-  line(twoCol('Payment', paymentName))
-  if (change > 0) line(twoCol('Change', `${sym}${change.toFixed(2)}`))
-
-  // ── Footer ────────────────────────────────────────────────────────────────────
-  blank()
-  cmd.push(ESC, 0x61, 0x01)           // center
-  line(shop?.receipt_footer || 'Thank you!')
-  blank()
-
-  // Feed 4 lines + partial cut
-  cmd.push(ESC, 0x64, 0x04)
-  cmd.push(GS,  0x56, 0x42, 0x00)
-
-  return new Uint8Array(cmd)
-}
-
 export default function PaymentModal({ total, onClose, itemNotes, itemDiscounts, cashierName: cashierNameProp }: Props) {
   const supabase = createClient()
   const { items, customerId, discountAmount, clearCart, subtotal } = useCart()
@@ -572,9 +467,13 @@ export default function PaymentModal({ total, onClose, itemNotes, itemDiscounts,
           const ok = await sendToNetworkPrinter(shop.receipt_printer_address, receiptText)
           if (!ok) printViaWindow(receiptText, `Receipt ${receiptNumber}`, shop?.logo_url)
         } else if (shop.receipt_printer_type === 'bluetooth') {
-          const receiptBytes = buildReceiptESCPOS(receipt, receiptItems, shop, currencySymbol, changeAmount, selectedType?.name || '', resolvedEmployeeName)
-          const ok = await sendToBluetoothPrinter(shop.receipt_printer_address || '', receiptBytes)
-          if (!ok) printViaWindow(receiptText, `Receipt ${receiptNumber}`, shop?.logo_url)
+          try {
+            const device = await (navigator as any).bluetooth.requestDevice({ filters: [{ services: ['000018f0-0000-1000-8000-00805f9b34fb'] }] })
+            const server = await device.gatt.connect()
+            const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb')
+            const characteristic = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb')
+            await characteristic.writeValue(new TextEncoder().encode(receiptText))
+          } catch { printViaWindow(receiptText, `Receipt ${receiptNumber}`, shop?.logo_url) }
         } else {
           printViaWindow(receiptText, `Receipt ${receiptNumber}`, shop?.logo_url)
         }
