@@ -30,6 +30,7 @@ type ModifierGroup = {
 }
 
 type Variant = {
+  // addon support per variant
   id?: string           // undefined = new (not saved yet)
   name: string
   price: string
@@ -38,6 +39,8 @@ type Variant = {
   expanded: boolean
   ingSearch: string
   showIngSearch: boolean
+  offer_addons: boolean
+  addon_categories: AddonCategory[]
 }
 
 type AddonCategory = {
@@ -75,7 +78,7 @@ function calcCost(ingredients: Ingredient[], allItems: Item[]): number {
 }
 
 function newVariant(): Variant {
-  return { name: '', price: '', cost: 0, ingredients: [], expanded: true, ingSearch: '', showIngSearch: false }
+  return { name: '', price: '', cost: 0, ingredients: [], expanded: true, ingSearch: '', showIngSearch: false, offer_addons: false, addon_categories: [] }
 }
 
 export default function ItemEditor({ item, allItems, levels, categories, shopId, onClose, onSaved }: Props) {
@@ -147,6 +150,18 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
         .eq('item_id', item!.id)
         .order('sort_order', { ascending: true })
 
+      // Load per-variant addon categories
+      const variantIds = (variantRows ?? []).map(v => v.id)
+      const { data: variantAddonRows } = variantIds.length > 0
+        ? await supabase.from('item_variant_addon_categories').select('variant_id, category_id, multiple_select').in('variant_id', variantIds)
+        : { data: [] }
+
+      const variantAddonMap: Record<string, AddonCategory[]> = {}
+      for (const row of (variantAddonRows ?? [])) {
+        if (!variantAddonMap[row.variant_id]) variantAddonMap[row.variant_id] = []
+        variantAddonMap[row.variant_id].push({ category_id: row.category_id, multiple_select: row.multiple_select ?? false })
+      }
+
       const variants: Variant[] = (variantRows ?? []).map(v => ({
         id: v.id,
         name: v.name,
@@ -155,6 +170,8 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
         expanded: false,
         ingSearch: '',
         showIngSearch: false,
+        offer_addons: (variantAddonMap[v.id] ?? []).length > 0,
+        addon_categories: variantAddonMap[v.id] ?? [],
         ingredients: (v.item_variant_ingredients ?? []).map((vi: any) => ({
           ingredient_id: vi.ingredient_id,
           quantity: vi.quantity,
@@ -423,6 +440,18 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
               const { error: ingError } = await supabase.from('item_variant_ingredients').insert(ingRows)
               if (ingError) throw ingError
             }
+          }
+
+          // Save variant addon categories
+          await supabase.from('item_variant_addon_categories').delete().eq('variant_id', variantId!)
+          if (v.offer_addons && v.addon_categories.length > 0) {
+            const addonRows = v.addon_categories.map(ac => ({
+              variant_id: variantId!,
+              category_id: ac.category_id,
+              multiple_select: ac.multiple_select,
+            }))
+            const { error: addonError } = await supabase.from('item_variant_addon_categories').insert(addonRows)
+            if (addonError) throw addonError
           }
         }
       } else {
@@ -864,6 +893,80 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                               <p className="text-xs text-gray-400 mt-2">No ingredients added yet.</p>
                             )}
                           </div>
+
+                          {/* Variant Add-Ons */}
+                          <div className="border-t border-gray-100 pt-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <div>
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Add-Ons</p>
+                                <p className="text-xs text-gray-400 mt-0.5">Show add-on options for this variant on POS</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-400">{v.offer_addons ? 'On' : 'Off'}</span>
+                                <Switch
+                                  checked={v.offer_addons}
+                                  onCheckedChange={val => updateVariant(vi, {
+                                    offer_addons: val,
+                                    addon_categories: val ? v.addon_categories : [],
+                                  })}
+                                />
+                              </div>
+                            </div>
+                            {v.offer_addons && (
+                              <div>
+                                {categories.length === 0 ? (
+                                  <p className="text-xs text-gray-400 italic">No categories yet</p>
+                                ) : (
+                                  <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
+                                    {categories.map(cat => {
+                                      const assigned = v.addon_categories.find(ac => ac.category_id === cat.id)
+                                      const isOn = !!assigned
+                                      return (
+                                        <div key={cat.id} className="px-3 py-2.5">
+                                          <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                                              <p className="text-sm text-gray-800">{cat.name}</p>
+                                            </div>
+                                            <Switch
+                                              checked={isOn}
+                                              onCheckedChange={val => {
+                                                const updated = val
+                                                  ? [...v.addon_categories, { category_id: cat.id, multiple_select: false }]
+                                                  : v.addon_categories.filter(ac => ac.category_id !== cat.id)
+                                                updateVariant(vi, { addon_categories: updated })
+                                              }}
+                                            />
+                                          </div>
+                                          {isOn && (
+                                            <div className="mt-2 ml-4 flex items-center gap-2">
+                                              <Switch
+                                                checked={assigned!.multiple_select}
+                                                onCheckedChange={val => {
+                                                  updateVariant(vi, {
+                                                    addon_categories: v.addon_categories.map(ac =>
+                                                      ac.category_id === cat.id ? { ...ac, multiple_select: val } : ac
+                                                    ),
+                                                  })
+                                                }}
+                                              />
+                                              <span className="text-xs text-gray-500">
+                                                {assigned!.multiple_select ? 'Multi-select' : 'Single-select'}
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                                {v.addon_categories.length === 0 && (
+                                  <p className="text-xs text-amber-500 mt-2">⚠ Toggle at least one category</p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
                         </div>
                       )}
                     </div>

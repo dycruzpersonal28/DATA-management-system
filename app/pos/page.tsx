@@ -19,11 +19,12 @@ import { toast } from 'sonner'
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Variant = { id: string; name: string; price: number; cost: number }
 type AddonItem = { id: string; name: string; price: number; selected: boolean; quantity: number }
+type AddonCategory = { id: string; name: string; items: AddonItem[] }
 
 type PickerProps = {
   item: any
   variants: Variant[]
-  addonItems: AddonItem[]
+  addonCategories: AddonCategory[]
   onConfirm: (variant: Variant | null, note: string, addons: AddonItem[]) => void
   onClose: () => void
   currencySymbol: string
@@ -38,27 +39,54 @@ type AvailabilityInfo = {
 type AvailabilityMap = Map<string, AvailabilityInfo>
 
 // ── Variant Picker Modal ──────────────────────────────────────────────────────
-function VariantPickerModal({ item, variants, addonItems: initialAddons, onConfirm, onClose, currencySymbol }: PickerProps) {
+function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClose, currencySymbol }: PickerProps) {
   const [selected, setSelected] = useState<Variant | null>(null)
   const [note, setNote] = useState('')
-  const [showAddons, setShowAddons] = useState(false)
-  const [addons, setAddons] = useState<AddonItem[]>(initialAddons)
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
+  const [catItems, setCatItems] = useState<Map<string, AddonItem[]>>(() => {
+    const m = new Map<string, AddonItem[]>()
+    for (const cat of addonCategories) m.set(cat.id, cat.items)
+    return m
+  })
+
   const hasVariants = variants.length > 0
-  const hasAddons = initialAddons.length > 0
-  const selectedAddons = addons.filter(a => a.selected)
-  const addonsTotal = selectedAddons.reduce((sum, a) => sum + a.price * a.quantity, 0)
+  const hasAddons = addonCategories.length > 0
+
+  const allSelectedAddons = Array.from(catItems.values()).flat().filter(a => a.selected)
+  const addonsTotal = allSelectedAddons.reduce((sum, a) => sum + a.price * a.quantity, 0)
   const basePrice = selected ? selected.price : Number(item.price)
   const grandTotal = basePrice + addonsTotal
 
-  function toggleAddon(id: string) {
-    setAddons(prev => prev.map(a => a.id === id ? { ...a, selected: !a.selected, quantity: !a.selected ? 1 : 0 } : a))
+  function toggleCat(catId: string) {
+    setExpandedCats(prev => {
+      const next = new Set(prev)
+      next.has(catId) ? next.delete(catId) : next.add(catId)
+      return next
+    })
   }
-  function changeQty(id: string, delta: number) {
-    setAddons(prev => prev.map(a => a.id !== id ? a : { ...a, quantity: Math.max(1, a.quantity + delta) }))
+  function toggleAddon(catId: string, addonId: string) {
+    setCatItems(prev => {
+      const next = new Map(prev)
+      const items = (next.get(catId) || []).map(a =>
+        a.id === addonId ? { ...a, selected: !a.selected, quantity: !a.selected ? 1 : 0 } : a
+      )
+      next.set(catId, items)
+      return next
+    })
+  }
+  function changeQty(catId: string, addonId: string, delta: number) {
+    setCatItems(prev => {
+      const next = new Map(prev)
+      const items = (next.get(catId) || []).map(a =>
+        a.id === addonId ? { ...a, quantity: Math.max(1, a.quantity + delta) } : a
+      )
+      next.set(catId, items)
+      return next
+    })
   }
   function handleConfirm() {
     if (hasVariants && !selected) { toast.error('Please select a variant'); return }
-    onConfirm(selected, note, addons.filter(a => a.selected))
+    onConfirm(selected, note, allSelectedAddons)
   }
 
   return (
@@ -87,34 +115,69 @@ function VariantPickerModal({ item, variants, addonItems: initialAddons, onConfi
           )}
           {hasAddons && (
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Add-Ons</p>
-                <button onClick={() => setShowAddons(v => !v)} className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${showAddons ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
-                  {showAddons ? 'Hide' : 'Add-Ons?'}
-                </button>
-              </div>
-              {showAddons && (
-                <div className="space-y-1.5">
-                  {addons.map(a => (
-                    <div key={a.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all ${a.selected ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-white'}`}>
-                      <button onClick={() => toggleAddon(a.id)} className={`w-5 h-5 rounded-md border-2 flex-shrink-0 flex items-center justify-center transition-colors ${a.selected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300'}`}>
-                        {a.selected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Add-Ons</p>
+              <div className="space-y-2">
+                {addonCategories.map(cat => {
+                  const items = catItems.get(cat.id) || []
+                  const selectedInCat = items.filter(a => a.selected)
+                  const isOpen = expandedCats.has(cat.id)
+                  return (
+                    <div key={cat.id} className={`rounded-xl border transition-all overflow-hidden ${selectedInCat.length > 0 ? 'border-indigo-300' : 'border-gray-200'}`}>
+                      {/* Category header row — always visible */}
+                      <button
+                        onClick={() => toggleCat(cat.id)}
+                        className={`w-full flex items-center justify-between px-3 py-2.5 transition-colors text-left ${isOpen ? 'bg-indigo-50' : 'bg-white hover:bg-gray-50'}`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm font-semibold text-gray-800 truncate">{cat.name}</span>
+                          {selectedInCat.length > 0 && (
+                            <span className="flex-shrink-0 px-2 py-0.5 bg-indigo-600 text-white rounded-full text-[10px] font-bold">
+                              {selectedInCat.length}
+                            </span>
+                          )}
+                        </div>
+                        <ChevronRight className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
                       </button>
-                      <div className="flex-1 min-w-0" onClick={() => toggleAddon(a.id)}>
-                        <p className="text-sm font-medium text-gray-800 truncate">{a.name}</p>
-                        <p className="text-xs text-indigo-600 font-semibold">+{currencySymbol}{Number(a.price).toFixed(2)}</p>
-                      </div>
-                      {a.selected && (
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <button onClick={() => changeQty(a.id, -1)} className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"><Minus className="w-3 h-3" /></button>
-                          <span className="text-sm font-medium w-4 text-center">{a.quantity}</span>
-                          <button onClick={() => changeQty(a.id, 1)} className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"><Plus className="w-3 h-3" /></button>
+                      {/* Selected summary chips — shown when collapsed */}
+                      {!isOpen && selectedInCat.length > 0 && (
+                        <div className="px-3 pb-2 flex flex-wrap gap-1">
+                          {selectedInCat.map(a => (
+                            <span key={a.id} className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-medium">
+                              {a.name}{a.quantity > 1 ? ` x${a.quantity}` : ''}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {/* Expanded items list */}
+                      {isOpen && (
+                        <div className="border-t border-gray-100 divide-y divide-gray-100">
+                          {items.map(a => (
+                            <div key={a.id} className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${a.selected ? 'bg-indigo-50' : 'bg-white'}`}>
+                              <button
+                                onClick={() => toggleAddon(cat.id, a.id)}
+                                className={`w-5 h-5 rounded-md border-2 flex-shrink-0 flex items-center justify-center transition-colors ${a.selected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300'}`}
+                              >
+                                {a.selected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                              </button>
+                              <div className="flex-1 min-w-0" onClick={() => toggleAddon(cat.id, a.id)}>
+                                <p className="text-sm font-medium text-gray-800 truncate">{a.name}</p>
+                                {a.price > 0 && <p className="text-xs text-indigo-600 font-semibold">+{currencySymbol}{Number(a.price).toFixed(2)}</p>}
+                              </div>
+                              {a.selected && (
+                                <div className="flex items-center gap-1.5 flex-shrink-0">
+                                  <button onClick={() => changeQty(cat.id, a.id, -1)} className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"><Minus className="w-3 h-3" /></button>
+                                  <span className="text-sm font-medium w-4 text-center">{a.quantity}</span>
+                                  <button onClick={() => changeQty(cat.id, a.id, 1)} className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"><Plus className="w-3 h-3" /></button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
-                  ))}
-                </div>
-              )}
+                  )
+                })}
+              </div>
             </div>
           )}
           <div>
@@ -124,7 +187,7 @@ function VariantPickerModal({ item, variants, addonItems: initialAddons, onConfi
         </div>
         <div className="px-5 pb-5 pt-3 border-t border-gray-100 flex-shrink-0 space-y-3">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-500">{item.name}{selected ? ` (${selected.name})` : ''}{selectedAddons.length > 0 ? ` + ${selectedAddons.length} add-on${selectedAddons.length > 1 ? 's' : ''}` : ''}</span>
+            <span className="text-gray-500">{item.name}{selected ? ` (${selected.name})` : ''}{allSelectedAddons.length > 0 ? ` + ${allSelectedAddons.length} add-on${allSelectedAddons.length > 1 ? 's' : ''}` : ''}</span>
             <span className="font-semibold text-gray-900">{currencySymbol}{grandTotal.toFixed(2)}</span>
           </div>
           <div className="flex gap-2">
@@ -491,7 +554,7 @@ export default function POSPage() {
   // Picker
   const [pickerItem, setPickerItem] = useState<any | null>(null)
   const [pickerVariants, setPickerVariants] = useState<Variant[]>([])
-  const [pickerAddons, setPickerAddons] = useState<AddonItem[]>([])
+  const [pickerAddonCategories, setPickerAddonCategories] = useState<AddonCategory[]>([])
   const [pickerLoading, setPickerLoading] = useState(false)
 
   // Cart bottom sheet (tablet)
@@ -499,6 +562,9 @@ export default function POSPage() {
 
   // Inventory availability
   const [availabilityMap, setAvailabilityMap] = useState<AvailabilityMap>(new Map())
+
+  // Addon category counts per item
+  const [addonCatCounts, setAddonCatCounts] = useState<Map<string, number>>(new Map())
 
   useEffect(() => {
     setNow(new Date())
@@ -554,6 +620,18 @@ export default function POSPage() {
         return !level || level.is_sellable === true
       }))
       setLoading(false)
+
+      // Fetch addon category counts per item
+      const { data: addonCats } = await supabase
+        .from('item_addon_categories')
+        .select('item_id, category_id')
+        .eq('shop_id', shop.id)
+
+      const countMap = new Map<string, number>()
+      for (const row of addonCats || []) {
+        countMap.set(row.item_id, (countMap.get(row.item_id) ?? 0) + 1)
+      }
+      setAddonCatCounts(countMap)
 
       if (shop.feature_shifts) {
         const { data: shift } = await supabase
@@ -782,37 +860,48 @@ export default function POSPage() {
     setPickerLoading(true)
     setPickerItem(item)
     setPickerVariants([])
-    setPickerAddons([])
+    setPickerAddonCategories([])
 
     const [variantRes, addonCatRes] = await Promise.all([
       item.has_variants
         ? supabase.from('item_variants').select('id, name, price, cost').eq('item_id', item.id).eq('is_active', true).order('sort_order')
         : Promise.resolve({ data: [] }),
       item.offer_addons
-        ? supabase.from('item_addon_categories').select('category_id').eq('item_id', item.id)
+        ? supabase.from('item_addon_categories').select('category_id, categories(id, name)').eq('item_id', item.id)
         : Promise.resolve({ data: [] }),
     ])
 
     setPickerVariants((variantRes as any).data || [])
 
-    // Fetch addon items from all assigned categories
-    const catIds = ((addonCatRes as any).data || []).map((r: any) => r.category_id)
-    console.log('addonCatRes data:', (addonCatRes as any).data)
-    console.log('catIds:', catIds)
-    let addonItems: AddonItem[] = []
-    if (catIds.length > 0) {
-      const { data } = await supabase
+    // Fetch addon items grouped by category
+    const catRows: { category_id: string; categories: { id: string; name: string } }[] = (addonCatRes as any).data || []
+    if (catRows.length > 0) {
+      const catIds = catRows.map(r => r.category_id)
+      const { data: addonItemsData } = await supabase
         .from('items')
-        .select('id, name, price')
+        .select('id, name, price, category_id')
         .in('category_id', catIds)
         .eq('shop_id', shopId)
         .eq('is_active', true)
         .order('name')
-        console.log('addon items fetched:', data)
-      addonItems = (data || []).map((a: any) => ({ id: a.id, name: a.name, price: Number(a.price), selected: false, quantity: 1 }))
+
+      const itemsByCat = new Map<string, AddonItem[]>()
+      for (const a of addonItemsData || []) {
+        if (!itemsByCat.has(a.category_id)) itemsByCat.set(a.category_id, [])
+        itemsByCat.get(a.category_id)!.push({ id: a.id, name: a.name, price: Number(a.price), selected: false, quantity: 1 })
+      }
+
+      const grouped: AddonCategory[] = catRows
+        .map(r => ({
+          id: r.category_id,
+          name: r.categories?.name ?? r.category_id,
+          items: itemsByCat.get(r.category_id) || [],
+        }))
+        .filter(cat => cat.items.length > 0)
+
+      setPickerAddonCategories(grouped)
     }
 
-    setPickerAddons(addonItems)
     setPickerLoading(false)
   }
 
@@ -848,7 +937,7 @@ export default function POSPage() {
     toast.success(`${baseName} added${addonCount > 0 ? ` + ${addonCount} add-on${addonCount > 1 ? 's' : ''}` : ''}`)
     setPickerItem(null)
     setPickerVariants([])
-    setPickerAddons([])
+    setPickerAddonCategories([])
   }
 
   const itemsByCategory = useMemo(() => {
@@ -888,10 +977,10 @@ export default function POSPage() {
       {/* ── Modals ── */}
       {pickerItem && !pickerLoading && (
         <VariantPickerModal
-          item={pickerItem} variants={pickerVariants} addonItems={pickerAddons}
+          item={pickerItem} variants={pickerVariants} addonCategories={pickerAddonCategories}
           currencySymbol={currencySymbol}
           onConfirm={handlePickerConfirm}
-          onClose={() => { setPickerItem(null); setPickerVariants([]); setPickerAddons([]) }}
+          onClose={() => { setPickerItem(null); setPickerVariants([]); setPickerAddonCategories([]) }}
         />
       )}
       {pickerLoading && (
@@ -1152,7 +1241,11 @@ export default function POSPage() {
                       ) : (
                         <p className="text-sm font-semibold text-indigo-600 mt-1">{currencySymbol}{Number(item.price).toFixed(2)}</p>
                       )}
-                      {item.offer_addons && <p className="text-xs text-emerald-500 mt-0.5 font-medium">+ Add-ons</p>}
+                      {item.offer_addons && (
+                        <p className="text-xs text-emerald-500 mt-0.5 font-medium">
+                          + {addonCatCounts.get(item.id) ?? 0} Add-on {(addonCatCounts.get(item.id) ?? 0) === 1 ? 'category' : 'categories'}
+                        </p>
+                      )}
                       {/* Availability badge */}
                       {hasIngredients && (
                         <div className={`mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
@@ -1194,7 +1287,11 @@ export default function POSPage() {
                       <div className="w-2 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: selectedCategory.color || '#6366f1' }} />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
-                        {item.offer_addons && <p className="text-xs text-emerald-500 font-medium">+ Add-ons available</p>}
+                        {item.offer_addons && (
+                          <p className="text-xs text-emerald-500 font-medium">
+                            + {addonCatCounts.get(item.id) ?? 0} Add-on {(addonCatCounts.get(item.id) ?? 0) === 1 ? 'category' : 'categories'}
+                          </p>
+                        )}
                         {hasIngredients && (
                           <div className={`mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                             outOfStock
