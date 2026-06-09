@@ -784,35 +784,17 @@ export default function POSPage() {
     setPickerVariants([])
     setPickerAddons([])
 
-    const [variantRes, addonCatRes] = await Promise.all([
+    const [variantRes, addonRes] = await Promise.all([
       item.has_variants
         ? supabase.from('item_variants').select('id, name, price, cost').eq('item_id', item.id).eq('is_active', true).order('sort_order')
         : Promise.resolve({ data: [] }),
-      item.offer_addons
-        ? supabase.from('item_addon_categories').select('category_id').eq('item_id', item.id)
+      item.offer_addons && item.addon_category_id
+        ? supabase.from('items').select('id, name, price').eq('category_id', item.addon_category_id).eq('is_active', true).order('name')
         : Promise.resolve({ data: [] }),
     ])
 
     setPickerVariants((variantRes as any).data || [])
-
-    // Fetch addon items from all assigned categories
-    const catIds = ((addonCatRes as any).data || []).map((r: any) => r.category_id)
-    console.log('addonCatRes data:', (addonCatRes as any).data)
-    console.log('catIds:', catIds)
-    let addonItems: AddonItem[] = []
-    if (catIds.length > 0) {
-      const { data } = await supabase
-        .from('items')
-        .select('id, name, price')
-        .in('category_id', catIds)
-        .eq('shop_id', shopId)
-        .eq('is_active', true)
-        .order('name')
-        console.log('addon items fetched:', data)
-      addonItems = (data || []).map((a: any) => ({ id: a.id, name: a.name, price: Number(a.price), selected: false, quantity: 1 }))
-    }
-
-    setPickerAddons(addonItems)
+    setPickerAddons(((addonRes as any).data || []).map((a: any) => ({ id: a.id, name: a.name, price: Number(a.price), selected: false, quantity: 1 })))
     setPickerLoading(false)
   }
 
