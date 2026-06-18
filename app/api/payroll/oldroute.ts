@@ -186,11 +186,10 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // Fetch time_logs in range — include clock_in/clock_out so we can compute
-    // billable hours precisely against the shift window
+    // Fetch time_logs in range for each employee — work logs only, completed shifts
     const { data: timeLogs, error: tlError } = await admin
       .from('time_logs')
-      .select('employee_id, shift_schedule_id, clock_in, clock_out, total_hours, overtime_hours, late_minutes, break_minutes')
+      .select('employee_id, shift_schedule_id, total_hours, overtime_hours, late_minutes, break_minutes')
       .eq('shop_id', shop_id)
       .eq('log_type', 'work')
       .gte('date', period_start)
@@ -201,52 +200,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: tlError.message }, { status: 500 })
     }
 
-    // Fetch shift schedules so we can enforce the scheduled window
-    const { data: shiftSchedules } = await admin
-      .from('shift_schedules')
-      .select('id, start_time, end_time, is_overnight')
-      .eq('shop_id', shop_id)
-
-    const shiftMap: Record<string, { start_time: string; end_time: string; is_overnight: boolean }> = {}
-    for (const s of shiftSchedules ?? []) {
-      shiftMap[s.id] = {
-        start_time: s.start_time,
-        end_time: s.end_time,
-        is_overnight: s.is_overnight ?? false,
-      }
-    }
-
-    // Helper: "HH:mm" or "HH:mm:ss" → total minutes since midnight
-    function timeToMinutes(t: string): number {
-      const [h, m] = t.split(':').map(Number)
-      return h * 60 + m
-    }
-
-    // Extract HH:mm from a UTC ISO timestamp in the shop timezone
-    function isoToShopMinutes(iso: string, tz: string): number {
-      const parts = new Intl.DateTimeFormat('en-GB', {
-        timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
-      }).formatToParts(new Date(iso))
-      const h = parseInt(parts.find(p => p.type === 'hour')?.value ?? '0')
-      const m = parseInt(parts.find(p => p.type === 'minute')?.value ?? '0')
-      return h * 60 + m
-    }
-
-    // Break deduction per completed shift (from settings), converted to hours
-    const breakHoursPerShift = ((settings as any).break_duration_minutes ?? 0) / 60
-
-    // Fetch shop timezone for clock_in/clock_out conversion
-    const { data: shopRow } = await admin
-      .from('shops')
-      .select('timezone')
-      .eq('id', shop_id)
-      .single()
-    const shopTz = shopRow?.timezone ?? 'Asia/Manila'
-
-    // Aggregate hours per employee using precise shift-window capping:
-    //   pay starts at max(actual_clock_in, shift_start)
-    //   pay ends   at min(actual_clock_out, shift_end)
-    //   early clock-in = no bonus, late clock-out = no overtime
+    // Aggregate hours per employee
     const logsByEmployee: Record<string, {
       total_hours: number
       overtime_hours: number
@@ -263,44 +217,10 @@ export async function POST(req: NextRequest) {
           break_minutes: 0,
         }
       }
-
-      let billable = 0
-
-      if (log.shift_schedule_id && shiftMap[log.shift_schedule_id] && log.clock_in && log.clock_out) {
-        const shift = shiftMap[log.shift_schedule_id]
-        const shiftStartMin = timeToMinutes(shift.start_time)
-        const shiftEndMin   = timeToMinutes(shift.end_time)
-
-        // For overnight shifts end is next day — add 24h to end
-        const effectiveShiftEnd = shift.is_overnight ? shiftEndMin + 1440 : shiftEndMin
-
-        // Convert actual clock-in/out to minutes in shop timezone
-        let actualStartMin = isoToShopMinutes(log.clock_in, shopTz)
-        let actualEndMin   = isoToShopMinutes(log.clock_out, shopTz)
-
-        // For overnight: if clock_out is past midnight it reads as small number (e.g. 02:00 = 120)
-        // Add 24h so it sits correctly after shift start
-        if (shift.is_overnight && actualEndMin < shiftStartMin) {
-          actualEndMin += 1440
-        }
-
-        // Enforce shift window:
-        // - early clock-in: pay from shift start, not actual clock-in
-        // - late clock-out: pay until shift end, not actual clock-out
-        const payStart = Math.max(actualStartMin, shiftStartMin)
-        const payEnd   = Math.min(actualEndMin, effectiveShiftEnd)
-
-        const billableMinutes = Math.max(0, payEnd - payStart)
-        billable = Math.max(0, (billableMinutes / 60) - breakHoursPerShift)
-      } else {
-        // No shift linked — fall back to stored total_hours minus break
-        billable = Math.max(0, (log.total_hours ?? 0) - breakHoursPerShift)
-      }
-
-      logsByEmployee[log.employee_id].total_hours    += billable
-      logsByEmployee[log.employee_id].overtime_hours  = 0   // no overtime
-      logsByEmployee[log.employee_id].late_minutes   += log.late_minutes ?? 0
-      logsByEmployee[log.employee_id].break_minutes  += log.break_minutes ?? 0
+      logsByEmployee[log.employee_id].total_hours += log.total_hours ?? 0
+      logsByEmployee[log.employee_id].overtime_hours += log.overtime_hours ?? 0
+      logsByEmployee[log.employee_id].late_minutes += log.late_minutes ?? 0
+      logsByEmployee[log.employee_id].break_minutes += log.break_minutes ?? 0
     }
 
     // Build payslips
@@ -315,9 +235,11 @@ export async function POST(req: NextRequest) {
       const hourlyRate = emp.hourly_rate ?? 0
       const allowance = emp.allowance ?? 0
 
-      // total_hours is already capped at scheduled shift duration and break-deducted
-      const basic_pay    = logs.total_hours * hourlyRate
-      const overtime_pay = 0   // excess time beyond scheduled shift end is not paid
+      // Subtract break time — cap at 90% of worked time to avoid zeroing pay on short shifts
+      const breakHours = logs.break_minutes / 60
+      const billableHours = Math.max(logs.total_hours * 0.1, logs.total_hours - breakHours)
+      const basic_pay = billableHours * hourlyRate
+      const overtime_pay = logs.overtime_hours * (hourlyRate * (settings.overtime_multiplier || 1))
       // Late deduction: flat fee once per late occurrence, or per-minute rate
       const lateType = (settings as any).late_deduction_type ?? 'per_minute'
       const lateRate = settings.late_deduction_per_minute ?? 0
@@ -360,8 +282,8 @@ export async function POST(req: NextRequest) {
         status: 'draft',
         // Fix B: carry other_deductions from settings into each payslip
         other_deductions: otherDeductions,
-        total_hours:    parseFloat(logs.total_hours.toFixed(2)),  // capped at shift schedule, net of break
-        overtime_hours: 0,
+        total_hours:    parseFloat(billableHours.toFixed(2)),  // net of break
+        overtime_hours: parseFloat(logs.overtime_hours.toFixed(2)),
         late_minutes:   logs.late_minutes,
       }
 
