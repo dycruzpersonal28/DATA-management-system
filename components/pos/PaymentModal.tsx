@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button'
 import { X, Check, Printer } from 'lucide-react'
 import { toast } from 'sonner'
 import { useShop } from '@/lib/hooks/useShop'
+import { Capacitor } from '@capacitor/core'
+import { printToBlePrinter } from '@/lib/printing/blePrinter'
 
 import type { ItemDiscount } from './Cart'
 
@@ -157,7 +159,10 @@ const BT_CHAR_UUIDS = [
   '0000ffe1-0000-1000-8000-00805f9b34fb',
 ]
 
-async function sendToBluetoothPrinter(deviceName: string, data: Uint8Array): Promise<boolean> {
+// Web Bluetooth fallback — only used when running in a regular browser tab
+// (e.g. testing on desktop Chrome). Does NOT work inside the Capacitor
+// Android WebView, which is why the native path below exists.
+async function sendToBluetoothPrinterWeb(deviceName: string, data: Uint8Array): Promise<boolean> {
   try {
     const bt = (navigator as any).bluetooth
     if (!bt) return false
@@ -193,6 +198,18 @@ async function sendToBluetoothPrinter(deviceName: string, data: Uint8Array): Pro
     console.error('Bluetooth print error:', err)
     return false
   }
+}
+
+// Platform-aware entry point. `deviceIdentifier` is whatever is saved in
+// shop.receipt_printer_address — a BLE deviceId (paired via
+// BluetoothPrinterPicker) when running natively, or a device name when
+// falling back to Web Bluetooth in a browser. Works with any generic
+// BLE ESC/POS printer, not a specific brand.
+async function sendToBluetoothPrinter(deviceIdentifier: string, data: Uint8Array): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    return printToBlePrinter(deviceIdentifier, data)
+  }
+  return sendToBluetoothPrinterWeb(deviceIdentifier, data)
 }
 
 async function sendToNetworkPrinter(ip: string, text: string): Promise<boolean> {

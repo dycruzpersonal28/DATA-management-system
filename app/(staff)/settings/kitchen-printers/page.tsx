@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { Plus, Pencil, Trash2, Check, X, Printer, ChevronDown, ChevronUp, Wifi, Network, Bluetooth, ScanLine } from 'lucide-react'
+import { requestBlePrinter } from '@/lib/printing/blePrinter'
 
 type PrinterGroup = {
   id: string
@@ -21,29 +22,18 @@ type PrinterGroup = {
 }
 
 // ── Bluetooth scanner ─────────────────────────────────────────────────────────
+// Uses the native BLE plugin when running in the Android app (required —
+// Web Bluetooth doesn't work inside the Capacitor WebView), with a Web
+// Bluetooth fallback for desktop testing. Works with any generic ESC/POS
+// BLE thermal printer, not one specific brand.
 async function scanAndPairBluetooth(): Promise<string | null> {
   try {
-    const bt = (navigator as any).bluetooth
-    if (!bt) {
-      toast.error('Web Bluetooth not supported in this browser. Use Chrome on Android.')
-      return null
-    }
-
-    const device = await bt.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [
-        '000018f0-0000-1000-8000-00805f9b34fb',
-        '0000ff00-0000-1000-8000-00805f9b34fb',
-        '0000ffe0-0000-1000-8000-00805f9b34fb',
-      ],
-    })
-
-    toast.success(`Paired: ${device.name || device.id}`)
-    return device.name || device.id
+    const device = await requestBlePrinter()
+    if (!device) return null
+    toast.success(`Paired: ${device.name}`)
+    return device.deviceId
   } catch (err: any) {
-    if (err.name !== 'NotFoundError') {
-      toast.error('Bluetooth pairing failed')
-    }
+    toast.error(err?.message || 'Bluetooth pairing failed')
     return null
   }
 }
@@ -176,7 +166,7 @@ function PrinterGroupForm({
           <div className="mt-2 flex items-start gap-2 px-3 py-2.5 bg-blue-50 rounded-xl border border-blue-100">
             <Bluetooth className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
             <p className="text-xs text-blue-700">
-              Bluetooth printing requires Chrome on Android. Click <strong>Scan</strong> to pair your Xprinter or any ESC/POS thermal printer. Make sure it's powered on and discoverable.
+              Tap <strong>Scan</strong> to pair any Bluetooth ESC/POS thermal printer. Make sure it's powered on and discoverable nearby.
             </p>
           </div>
         )}

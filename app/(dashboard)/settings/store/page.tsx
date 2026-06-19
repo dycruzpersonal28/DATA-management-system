@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
-import { Save, Store, MapPin, Phone, Mail, DollarSign, Clock } from 'lucide-react'
+import { Save, Store, MapPin, Phone, Mail, DollarSign, Clock, Printer, Network, Bluetooth, ScanLine } from 'lucide-react'
+import { requestBlePrinter } from '@/lib/printing/blePrinter'
 
 const CURRENCIES = [
   { code: 'PHP', symbol: '₱', label: 'Philippine Peso' },
@@ -33,6 +34,22 @@ const TIMEZONES = [
   { value: 'Australia/Sydney',  label: 'Australia/Sydney (AEST, UTC+10)' },
 ]
 
+// ── Bluetooth scanner ─────────────────────────────────────────────────────────
+// Same single-pick flow used on the Printer Groups page: native device
+// picker in the Android app, Web Bluetooth fallback for desktop testing.
+// Works with any generic ESC/POS BLE thermal printer, not one brand.
+async function scanAndPairBluetooth(): Promise<string | null> {
+  try {
+    const device = await requestBlePrinter()
+    if (!device) return null
+    toast.success(`Paired: ${device.name}`)
+    return device.deviceId
+  } catch (err: any) {
+    toast.error(err?.message || 'Bluetooth pairing failed')
+    return null
+  }
+}
+
 export default function StoreSettingsPage({
   shop: shopProp,
   onShopUpdate,
@@ -51,7 +68,10 @@ export default function StoreSettingsPage({
     currency:        shopProp?.currency        ?? 'PHP',
     currency_symbol: shopProp?.currency_symbol ?? '₱',
     timezone:        shopProp?.timezone        ?? 'Asia/Manila',
+    receipt_printer_type:    shopProp?.receipt_printer_type    ?? 'none',
+    receipt_printer_address: shopProp?.receipt_printer_address ?? '',
   })
+  const [btScanning, setBtScanning] = useState(false)
 
   // Standalone fetch if not passed as prop
   useEffect(() => {
@@ -69,6 +89,8 @@ export default function StoreSettingsPage({
               currency:        data.currency        ?? 'PHP',
               currency_symbol: data.currency_symbol ?? '₱',
               timezone:        data.timezone        ?? 'Asia/Manila',
+              receipt_printer_type:    data.receipt_printer_type    ?? 'none',
+              receipt_printer_address: data.receipt_printer_address ?? '',
             })
           }
         })
@@ -89,9 +111,22 @@ export default function StoreSettingsPage({
     }))
   }
 
+  async function handleBtScan() {
+    setBtScanning(true)
+    const deviceId = await scanAndPairBluetooth()
+    if (deviceId) {
+      setForm(p => ({ ...p, receipt_printer_address: deviceId }))
+    }
+    setBtScanning(false)
+  }
+
   async function handleSave() {
     if (!shop?.id) return
     if (!form.name.trim()) { toast.error('Store name is required'); return }
+    if (form.receipt_printer_type !== 'none' && !form.receipt_printer_address.trim()) {
+      toast.error('Set a receipt printer address, or switch connection type to None')
+      return
+    }
     setSaving(true)
     const res = await fetch('/api/shop', {
       method: 'PATCH',
@@ -254,6 +289,81 @@ export default function StoreSettingsPage({
             ))}
           </select>
           <p className="text-xs text-gray-400 mt-2">Used for clock-in/out date calculations, late &amp; overtime tracking, and report grouping. All employees use this timezone regardless of their device location.</p>
+        </div>
+
+        {/* Receipt Printer */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Printer className="w-4 h-4 text-gray-400" />
+            <h3 className="text-sm font-semibold text-gray-700">Receipt Printer</h3>
+          </div>
+          <p className="text-xs text-gray-400 -mt-2">
+            Prints the customer-facing receipt at checkout. Works with any generic Bluetooth ESC/POS thermal printer.
+          </p>
+
+          <div className="flex gap-2">
+            {[
+              { v: 'none',      label: 'None' },
+              { v: 'network',   label: 'Network (LAN)', icon: Network },
+              { v: 'bluetooth', label: 'Bluetooth',     icon: Bluetooth },
+            ].map(opt => {
+              const Icon = (opt as any).icon
+              const active = form.receipt_printer_type === opt.v
+              return (
+                <button
+                  key={opt.v}
+                  type="button"
+                  onClick={() => setForm(p => ({ ...p, receipt_printer_type: opt.v }))}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-colors ${
+                    active
+                      ? 'bg-indigo-600 border-indigo-600 text-white'
+                      : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {Icon && <Icon className="w-3.5 h-3.5" />}
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+
+          {form.receipt_printer_type === 'network' && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">IP Address / Port</label>
+              <Input
+                value={form.receipt_printer_address}
+                onChange={e => setForm(p => ({ ...p, receipt_printer_address: e.target.value }))}
+                placeholder="e.g. 192.168.1.50:9100"
+              />
+            </div>
+          )}
+
+          {form.receipt_printer_type === 'bluetooth' && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Paired Device</label>
+              <div className="flex gap-2">
+                <Input
+                  value={form.receipt_printer_address}
+                  readOnly
+                  placeholder="No device paired yet"
+                  className="bg-gray-50 text-gray-500 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={handleBtScan}
+                  disabled={btScanning}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-60 transition-colors flex-shrink-0"
+                >
+                  {btScanning ? (
+                    <span className="animate-pulse">Scanning…</span>
+                  ) : (
+                    <><ScanLine className="w-3.5 h-3.5" /> Scan</>
+                  )}
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">Make sure your printer is powered on and in pairing mode</p>
+            </div>
+          )}
         </div>
 
       </div>

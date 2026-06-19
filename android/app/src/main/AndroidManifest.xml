@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -8,7 +7,6 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
-
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"
@@ -16,14 +14,11 @@
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
             android:exported="true">
-
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-
         </activity>
-
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -34,8 +29,30 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
     </application>
-
     <!-- Permissions -->
-
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Bluetooth — required for native BLE printer pairing/printing
+         (@capacitor-community/bluetooth-le). Web Bluetooth never needed
+         these since the browser handled its own prompts, but the native
+         plugin needs them declared here. -->
+
+    <!-- Android 12+ (API 31+) — granular Bluetooth runtime permissions.
+         neverForLocation matches androidNeverForLocation: true passed to
+         BleClient.initialize() in blePrinter.ts, so we don't need to also
+         declare ACCESS_FINE_LOCATION for scanning on these versions. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- Pre-Android 12 — legacy Bluetooth permissions. ACCESS_FINE_LOCATION
+         is required on these versions for BLE scanning to return results,
+         even though this app doesn't use location data itself. maxSdkVersion
+         keeps it from being requested as a runtime permission on Android 12+. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+
+    <!-- Declares the app uses BLE hardware but doesn't strictly require it,
+         so it still installs on devices without BLE (e.g. some tablets). -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 </manifest>

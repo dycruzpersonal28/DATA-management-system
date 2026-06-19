@@ -60,10 +60,23 @@ export async function PATCH(req: NextRequest) {
     currency,
     currency_symbol,
     timezone,
+    receipt_printer_type,
+    receipt_printer_address,
   } = body
 
   if (!name?.trim()) {
     return NextResponse.json({ error: 'Store name is required' }, { status: 400 })
+  }
+
+  const VALID_PRINTER_TYPES = ['none', 'network', 'bluetooth']
+  if (receipt_printer_type !== undefined && !VALID_PRINTER_TYPES.includes(receipt_printer_type)) {
+    return NextResponse.json({ error: 'Invalid receipt printer type' }, { status: 400 })
+  }
+  if (
+    (receipt_printer_type === 'network' || receipt_printer_type === 'bluetooth') &&
+    !receipt_printer_address?.trim()
+  ) {
+    return NextResponse.json({ error: 'Receipt printer address is required for the selected connection type' }, { status: 400 })
   }
 
   const { data: shop, error } = await admin
@@ -76,6 +89,8 @@ export async function PATCH(req: NextRequest) {
       currency:        currency ?? 'PHP',
       currency_symbol: currency_symbol ?? '₱',
       timezone:        timezone ?? 'Asia/Manila',
+      receipt_printer_type:    receipt_printer_type ?? 'none',
+      receipt_printer_address: receipt_printer_type === 'none' ? '' : (receipt_printer_address?.trim() ?? ''),
     })
     .eq('id', appUser.shop_id)
     .select()
