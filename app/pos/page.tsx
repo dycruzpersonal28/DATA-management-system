@@ -480,7 +480,7 @@ function CartBottomSheet({
           fixed bottom-0 left-0 right-0 z-40 bg-white rounded-t-2xl shadow-2xl border-t border-gray-200
           transition-transform duration-300 ease-in-out
           lg:hidden
-          flex flex-col
+          flex flex-col overflow-hidden
           ${open ? 'translate-y-0' : 'translate-y-full'}
         `}
         style={{ maxHeight: '80vh' }}
@@ -1324,7 +1324,7 @@ export default function POSPage() {
       </div>
 
       {/* ── Desktop: side cart panel (hidden on tablet/mobile) ── */}
-      <div className="hidden lg:flex w-80 xl:w-96 bg-white border-l border-gray-200 flex-col flex-shrink-0">
+      <div className="hidden lg:flex w-80 xl:w-96 bg-white border-l border-gray-200 flex-col flex-shrink-0 overflow-hidden">
         <Cart
           diningOption={selectedDiningOption}
           activeShiftId={activeShift?.id || null}

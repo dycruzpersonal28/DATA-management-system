@@ -430,7 +430,7 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
       </div>
 
       {/* Items */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto min-h-0">
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-300 gap-2">
             <ShoppingCart className="w-8 h-8" />
