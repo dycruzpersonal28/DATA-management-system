@@ -6,12 +6,33 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+// ── Server-side cache ──────────────────────────────────────────────────────────
+// Keyed by auth user id. Avoids repeat DB hits when multiple tabs or rapid
+// navigations call /api/me within the same window.
+const SERVER_CACHE_TTL_MS = 30_000 // 30 seconds
+
+type CacheEntry = {
+  data: { name: string; permissions: string[] }
+  expires: number
+}
+
+const meCache = new Map<string, CacheEntry>()
+
+// ── Route ──────────────────────────────────────────────────────────────────────
 export async function GET() {
   try {
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Return from server cache if still fresh
+    const cached = meCache.get(user.id)
+    if (cached && cached.expires > Date.now()) {
+      return NextResponse.json(cached.data, {
+        headers: { 'Cache-Control': 'private, max-age=30' },
+      })
     }
 
     const admin = createAdminClient()
@@ -27,29 +48,28 @@ export async function GET() {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
-    // Get employee record for permissions
+    // Get employee record + permissions in parallel
+    // (employees query needs email from appUser, but permissions needs employee.id,
+    //  so we collapse the last two queries into one join instead)
     const { data: employee } = await admin
       .from('employees')
-      .select('id')
+      .select('id, employee_permissions(permissions(name))')
       .eq('email', appUser.email)
       .single()
 
-    let permissions: string[] = []
+    const permissions: string[] = (employee?.employee_permissions ?? [])
+      .map((p: any) => p.permissions?.name)
+      .filter(Boolean)
 
-    if (employee?.id) {
-      const { data: perms } = await admin
-        .from('employee_permissions')
-        .select('permissions(name)')
-        .eq('employee_id', employee.id)
+    const responseData = { name: appUser.name, permissions }
 
-      permissions = (perms ?? [])
-        .map((p: any) => p.permissions?.name)
-        .filter(Boolean)
-    }
+    // Populate server cache
+    meCache.set(user.id, { data: responseData, expires: Date.now() + SERVER_CACHE_TTL_MS })
 
-    return NextResponse.json({
-      name: appUser.name,
-      permissions,
+    // Cache-Control tells the browser to reuse this response for 30s,
+    // eliminating the request entirely on repeat navigations
+    return NextResponse.json(responseData, {
+      headers: { 'Cache-Control': 'private, max-age=30' },
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })

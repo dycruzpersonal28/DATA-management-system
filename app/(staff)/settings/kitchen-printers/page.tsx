@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -263,6 +264,7 @@ function PrinterGroupForm({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function KitchenPrintersPage() {
   const supabase = createClient()
+  const router = useRouter()
   const [groups, setGroups] = useState<PrinterGroup[]>([])
   const [categories, setCategories] = useState<any[]>([])
   const [shopId, setShopId] = useState('')
@@ -377,6 +379,15 @@ export default function KitchenPrintersPage() {
   return (
     <div className="h-full overflow-y-auto p-4 max-w-2xl">
       <div className="mb-6">
+        <button
+          onClick={() => router.push('/staff')}
+          className="flex items-center gap-1.5 mb-4 px-3 sm:px-4 py-2 rounded-xl border border-gray-200 text-xs sm:text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+          </svg>
+          <span className="hidden sm:inline">Dashboard</span>
+        </button>
         <h2 className="text-xl font-semibold text-gray-900">Kitchen Printers</h2>
         <p className="text-sm text-gray-500 mt-1">
           Set up printer groups and assign categories. Items will print to their assigned printer after each sale, including ingredients.

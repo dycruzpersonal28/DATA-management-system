@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import {
   ShoppingCart, Package, Receipt, Clock,
-  Printer, Sun, Moon, Sunset, Monitor, History,
+  Printer, Sun, Moon, Sunset,
 } from 'lucide-react'
 
 const STAFF_TILES = [
@@ -44,24 +44,6 @@ const STAFF_TILES = [
     color: 'bg-amber-500',
     light: 'bg-amber-50',
     text: 'text-amber-600',
-  },
-  {
-    permission: 'page_kds',
-    href: '/kds',
-    label: 'Kitchen Display',
-    icon: Monitor,
-    color: 'bg-rose-500',
-    light: 'bg-rose-50',
-    text: 'text-rose-600',
-  },
-  {
-    permission: 'page_kds_logs',
-    href: '/kds/logs',
-    label: 'KDS Logs',
-    icon: History,
-    color: 'bg-orange-500',
-    light: 'bg-orange-50',
-    text: 'text-orange-600',
   },
   {
     permission: 'page_kitchen_printers',

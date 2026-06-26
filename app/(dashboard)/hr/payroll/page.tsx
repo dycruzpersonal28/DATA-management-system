@@ -2541,7 +2541,14 @@ function QuickPayslipGenerator() {
             // Overnight: if clock_out reads past midnight as a small number, add 24h
             if (isOvernight && actualEnd < shiftStartMin) actualEnd += 1440
 
-            const payStart       = Math.max(actualStart, shiftStartMin)
+            // When late deduction is a flat fee, the employee is already being
+            // penalized via the flat fee — don't also shrink their paid hours
+            // for the minutes they were late. Pay as if they clocked in on time.
+            // (Early clock-in still gives no bonus either way.)
+            const payStart = s.late_deduction_type === 'flat'
+              ? shiftStartMin
+              : Math.max(actualStart, shiftStartMin)
+
             const payEnd         = Math.min(actualEnd, effectiveEnd)
             const billableMins   = Math.max(0, payEnd - payStart)
             netHours = Math.max(0, (billableMins / 60) - breakDeductionHours)

@@ -28,7 +28,6 @@ type PickerProps = {
   onConfirm: (variant: Variant | null, note: string, addons: AddonItem[]) => void
   onClose: () => void
   currencySymbol: string
-  variantAvailability?: Map<string, number | null>
 }
 
 // availability: how many of this item can be made; null = no ingredient tracking
@@ -40,7 +39,7 @@ type AvailabilityInfo = {
 type AvailabilityMap = Map<string, AvailabilityInfo>
 
 // ── Variant Picker Modal ──────────────────────────────────────────────────────
-function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClose, currencySymbol, variantAvailability }: PickerProps) {
+function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClose, currencySymbol }: PickerProps) {
   const [selected, setSelected] = useState<Variant | null>(null)
   const [note, setNote] = useState('')
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
@@ -87,10 +86,6 @@ function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClos
   }
   function handleConfirm() {
     if (hasVariants && !selected) { toast.error('Please select a variant'); return }
-    if (selected) {
-      const canMake = variantAvailability?.get(selected.id)
-      if (canMake === 0) { toast.error(`"${selected.name}" is out of stock`); return }
-    }
     onConfirm(selected, note, allSelectedAddons)
   }
 
@@ -109,43 +104,12 @@ function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClos
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Variants</p>
               <div className="space-y-2">
-                {variants.map(v => {
-                  const canMake = variantAvailability?.get(v.id)
-                  const outOfStock = canMake === 0
-                  const lowStock = canMake !== undefined && canMake !== null && canMake > 0 && canMake <= 3
-                  const hasIngredients = canMake !== undefined
-                  return (
-                    <button
-                      key={v.id}
-                      onClick={() => { if (!outOfStock) setSelected(v) }}
-                      disabled={outOfStock}
-                      className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all text-left ${
-                        outOfStock
-                          ? 'border-red-200 opacity-50 cursor-not-allowed'
-                          : selected?.id === v.id
-                          ? 'border-indigo-500 bg-indigo-50'
-                          : 'border-gray-200 hover:border-indigo-200 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex flex-col gap-1 min-w-0">
-                        <span className="text-sm font-medium text-gray-800">{v.name}</span>
-                        {hasIngredients && (
-                          <span className={`inline-flex items-center gap-1 self-start px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                            outOfStock
-                              ? 'bg-red-100 text-red-600'
-                              : lowStock
-                              ? 'bg-amber-100 text-amber-700'
-                              : 'bg-emerald-100 text-emerald-700'
-                          }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${outOfStock ? 'bg-red-500' : lowStock ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                            {outOfStock ? 'Out of stock' : canMake === null ? 'In stock' : `${canMake} available`}
-                          </span>
-                        )}
-                      </div>
-                      <span className={`text-sm font-semibold flex-shrink-0 ${selected?.id === v.id ? 'text-indigo-600' : 'text-gray-600'}`}>{currencySymbol}{Number(v.price).toFixed(2)}</span>
-                    </button>
-                  )
-                })}
+                {variants.map(v => (
+                  <button key={v.id} onClick={() => setSelected(v)} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all text-left ${selected?.id === v.id ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-indigo-200 hover:bg-gray-50'}`}>
+                    <span className="text-sm font-medium text-gray-800">{v.name}</span>
+                    <span className={`text-sm font-semibold ${selected?.id === v.id ? 'text-indigo-600' : 'text-gray-600'}`}>{currencySymbol}{Number(v.price).toFixed(2)}</span>
+                  </button>
+                ))}
               </div>
             </div>
           )}
@@ -598,10 +562,6 @@ export default function POSPage() {
 
   // Inventory availability
   const [availabilityMap, setAvailabilityMap] = useState<AvailabilityMap>(new Map())
-  // Per-variant availability (variant_id -> canMake). Kept separate from the
-  // item-level map above, which collapses multiple variants down to "best variant
-  // wins" for the grid badge — the picker needs the un-collapsed per-variant numbers.
-  const [variantAvailabilityMap, setVariantAvailabilityMap] = useState<Map<string, number | null>>(new Map())
 
   // Addon category counts per item
   const [addonCatCounts, setAddonCatCounts] = useState<Map<string, number>>(new Map())
@@ -707,17 +667,12 @@ export default function POSPage() {
       }
 
       // ── Inventory availability ─────────────────────────────────────────────
-      // item_ingredients links a non-variant item -> ingredient + quantity needed
-      // item_variant_ingredients links a variant -> ingredient + quantity needed
-      // inventory_levels tracks current stock per ingredient item
-      const [ingredientsRes, variantIngredientsRes, inventoryRes] = await Promise.all([
+      // item_ingredients links a sellable item -> ingredient item + quantity needed
+      // inventory_levels tracks current stock per item (item_id = the ingredient item)
+      const [ingredientsRes, inventoryRes] = await Promise.all([
         supabase
           .from('item_ingredients')
           .select('item_id, ingredient_id, quantity, items!item_ingredients_ingredient_id_fkey(name)')
-          .eq('shop_id', shop.id),
-        supabase
-          .from('item_variant_ingredients')
-          .select('variant_id, ingredient_id, quantity, items!item_variant_ingredients_ingredient_id_fkey(name), item_variants!item_variant_ingredients_variant_id_fkey(item_id)')
           .eq('shop_id', shop.id),
         supabase
           .from('inventory_levels')
@@ -726,7 +681,6 @@ export default function POSPage() {
       ])
 
       const ingredients: any[] = ingredientsRes.data || []
-      const variantIngredients: any[] = variantIngredientsRes.data || []
       const inventory: any[] = inventoryRes.data || []
 
       // Build a lookup: ingredient item_id -> current stock quantity
@@ -735,46 +689,15 @@ export default function POSPage() {
         stockMap.set(inv.item_id, Number(inv.quantity ?? 0))
       }
 
-      // Group non-variant ingredients by sellable item_id
+      // Group ingredients by the sellable item_id
       const ingredientsByItem = new Map<string, any[]>()
       for (const ing of ingredients) {
         if (!ingredientsByItem.has(ing.item_id)) ingredientsByItem.set(ing.item_id, [])
         ingredientsByItem.get(ing.item_id)!.push(ing)
       }
 
-      // Group variant ingredients by variant_id
-      const variantIngByVariant = new Map<string, any[]>()
-      for (const ing of variantIngredients) {
-        if (!variantIngByVariant.has(ing.variant_id)) variantIngByVariant.set(ing.variant_id, [])
-        variantIngByVariant.get(ing.variant_id)!.push(ing)
-      }
-
-      // For each parent item, compute the best canMake across all its variants
-      // (the item is available if at least one variant can be made)
-      const variantAvailByItem = new Map<string, number>()
-      const variantCanMakeById = new Map<string, number | null>()
-      for (const [variantId, ings] of variantIngByVariant.entries()) {
-        const itemId = ings[0]?.item_variants?.item_id
-        const canMake = Math.min(
-          ...ings.map((ing: any) => {
-            const have = stockMap.get(ing.ingredient_id) ?? 0
-            const need = Number(ing.quantity)
-            return need > 0 ? Math.floor(have / need) : Infinity
-          })
-        )
-        variantCanMakeById.set(variantId, canMake === Infinity ? null : canMake)
-
-        if (!itemId) continue
-        // Best variant wins: item is available if any variant is makeable
-        const prev = variantAvailByItem.get(itemId) ?? 0
-        variantAvailByItem.set(itemId, Math.max(prev, canMake))
-      }
-      setVariantAvailabilityMap(variantCanMakeById)
-
       // Compute availability for each sellable item
       const newAvailMap: AvailabilityMap = new Map()
-
-      // Non-variant items (keyed directly by item_id in item_ingredients)
       for (const [itemId, ings] of ingredientsByItem.entries()) {
         const shortages: AvailabilityInfo['shortages'] = []
         let canMake = Infinity
@@ -797,17 +720,6 @@ export default function POSPage() {
         newAvailMap.set(itemId, {
           canMake: canMake === Infinity ? null : canMake,
           shortages,
-        })
-      }
-
-      // Variant items (resolved via item_variant_ingredients → item_variants.item_id)
-      for (const [itemId, canMake] of variantAvailByItem.entries()) {
-        if (newAvailMap.has(itemId)) continue // non-variant recipe takes precedence
-        newAvailMap.set(itemId, {
-          canMake: canMake === Infinity ? null : canMake,
-          shortages: canMake === 0
-            ? [{ ingredient: 'variant ingredients', have: 0, need: 1, unit: '' }]
-            : [],
         })
       }
 
@@ -1067,7 +979,6 @@ export default function POSPage() {
         <VariantPickerModal
           item={pickerItem} variants={pickerVariants} addonCategories={pickerAddonCategories}
           currencySymbol={currencySymbol}
-          variantAvailability={variantAvailabilityMap}
           onConfirm={handlePickerConfirm}
           onClose={() => { setPickerItem(null); setPickerVariants([]); setPickerAddonCategories([]) }}
         />

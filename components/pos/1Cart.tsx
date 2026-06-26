@@ -177,81 +177,46 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
       if (!appUser?.shop_id) return
 
       const productIds = [...new Set(items.map(i => i.itemId))]
-      const variantIds = [...new Set(items.filter(i => i.variantId).map(i => i.variantId as string))]
 
-      // Fetch recipes from both item_ingredients and item_variant_ingredients in parallel
-      const [{ data: itemRecipes }, { data: variantRecipes }] = await Promise.all([
-        supabase
-          .from('item_ingredients')
-          .select('item_id, ingredient_id, quantity')
-          .in('item_id', productIds),
-        variantIds.length > 0
-          ? supabase
-              .from('item_variant_ingredients')
-              .select('variant_id, ingredient_id, quantity')
-              .in('variant_id', variantIds)
-          : Promise.resolve({ data: [] as any[] }),
-      ])
+      // Fetch recipes (item_ingredients) for these products
+      const { data: recipes } = await supabase
+        .from('item_ingredients')
+        .select('item_id, ingredient_id, quantity')
+        .in('item_id', productIds)
 
-      const allIngredientIds = [
-        ...new Set([
-          ...(itemRecipes || []).map((r: any) => r.ingredient_id),
-          ...(variantRecipes || []).map((r: any) => r.ingredient_id),
-        ])
-      ]
-
-      if (allIngredientIds.length === 0) {
-        // No recipes anywhere = no ingredient restriction for any cart line
-        const unlimited = new Map(items.map(i => [i.id, Infinity]))
+      if (!recipes || recipes.length === 0) {
+        // No recipes = no ingredient restriction
+        const unlimited = new Map(productIds.map(id => [id, Infinity]))
         setStockLimits(unlimited)
         return
       }
 
       // Fetch current stock for all involved ingredients from inventory_levels
+      const ingredientIds = [...new Set(recipes.map((r: any) => r.ingredient_id))]
       const { data: stocks } = await supabase
         .from('inventory_levels')
         .select('item_id, quantity')
-        .in('item_id', allIngredientIds)
+        .in('item_id', ingredientIds)
         .eq('shop_id', appUser.shop_id)
         .is('variant_id', null)
 
-      const stockMap = new Map((stocks || []).map((s: any) => [s.item_id, Number(s.quantity)]))
+      const stockMap = new Map((stocks || []).map((s: any) => [s.item_id, s.quantity]))
 
-      // Group recipes for lookup: variant_id -> rows, item_id -> rows
-      const variantRecipeMap = new Map<string, any[]>()
-      for (const r of variantRecipes || []) {
-        if (!variantRecipeMap.has(r.variant_id)) variantRecipeMap.set(r.variant_id, [])
-        variantRecipeMap.get(r.variant_id)!.push(r)
-      }
-      const itemRecipeMap = new Map<string, any[]>()
-      for (const r of itemRecipes || []) {
-        if (!itemRecipeMap.has(r.item_id)) itemRecipeMap.set(r.item_id, [])
-        itemRecipeMap.get(r.item_id)!.push(r)
-      }
-
-      // Each cart line gets its own limit, keyed by the unique cart line id (item.id),
-      // not the product/variant id. This way two different variants of the same
-      // item — or two separate lines of the same variant — each see an accurate
-      // "how many more can I make" number, computed against the same shared
-      // ingredient stock (so adding one reduces the live headroom for the other).
+      // For each product, compute max makeable qty
       const limits = new Map<string, number>()
-      for (const cartItem of items) {
-        const recipe = cartItem.variantId
-          ? (variantRecipeMap.get(cartItem.variantId) ?? itemRecipeMap.get(cartItem.itemId) ?? [])
-          : (itemRecipeMap.get(cartItem.itemId) ?? [])
-
-        if (recipe.length === 0) {
-          limits.set(cartItem.id, Infinity)
+      for (const productId of productIds) {
+        const productRecipe = recipes.filter((r: any) => r.item_id === productId)
+        if (productRecipe.length === 0) {
+          limits.set(productId, Infinity)
           continue
         }
-
         const max = Math.min(
-          ...recipe.map((r: any) => {
+          ...productRecipe.map((r: any) => {
             const available = stockMap.get(r.ingredient_id) ?? 0
             return r.quantity > 0 ? Math.floor(available / r.quantity) : Infinity
           })
         )
-        limits.set(cartItem.id, max)
+        limits.set(productId, max)
       }
       setStockLimits(limits)
     }
@@ -331,7 +296,7 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
   const tot = Math.max(0, sub + taxAmount - computedDiscount)
 
   function handleIncrement(item: any) {
-    const max = stockLimits.get(item.id)
+    const max = stockLimits.get(item.itemId)
     if (max === undefined) {
       // Limits not loaded yet — allow
       updateQuantity(item.id, item.quantity + 1)
@@ -534,7 +499,7 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
                       <span className="text-sm font-medium w-6 text-center">{item.quantity}</span>
                       <button
                         onClick={() => handleIncrement(item)}
-                        disabled={(() => { const m = stockLimits.get(item.id); return m !== undefined && m !== Infinity && item.quantity >= m })()} 
+                        disabled={(() => { const m = stockLimits.get(item.itemId); return m !== undefined && m !== Infinity && item.quantity >= m })()} 
                         className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <Plus className="w-3 h-3" />

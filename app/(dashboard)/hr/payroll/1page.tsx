@@ -2499,23 +2499,59 @@ function QuickPayslipGenerator() {
         if (d.error) { setLogsError(d.error); setLogs([]); return }
         const raw = d.logs ?? []
 
-        // ── Resolve break deduction once, applied at parse time to every completed log ──
-        // This means ALL consumers (daily card UI, shift breakdown, print, pay calc)
-        // always show/use break-deducted hours — whether the log was created via
-        // clock-in/out or manually added by an admin.
-        // In 'auto' mode: deduct fixed break per completed shift.
-        // In 'manual' mode: breaks are clocked separately, total_hours already excludes them.
         const s = settings ?? loadPayrollSettings()
         const breakDeductionHours =
           s.break_mode !== 'manual' ? (s.break_duration_minutes ?? 0) / 60 : 0
 
+        // Helper: convert ISO timestamp to minutes since midnight in shop timezone
+        function isoToMinutes(iso: string, tz: string): number {
+          const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+          }).formatToParts(new Date(iso))
+          const h = parseInt(parts.find(p => p.type === 'hour')?.value ?? '0')
+          const m = parseInt(parts.find(p => p.type === 'minute')?.value ?? '0')
+          return h * 60 + m
+        }
+
+        // Helper: "HH:mm" or "HH:mm:ss" → minutes since midnight
+        function timeStrToMinutes(t: string): number {
+          const [h, m] = t.split(':').map(Number)
+          return h * 60 + m
+        }
+
         const parsed: AttendanceLog[] = raw.map((l: any) => {
-          const rawHours = l.total_hours != null ? Number(l.total_hours) : null
-          // Deduct break on every completed log (clock_out present), regardless of
-          // whether it was created via clock-in/out or manually by an admin.
-          const netHours = rawHours != null && l.clock_out
-            ? Math.max(0, rawHours - breakDeductionHours)
-            : rawHours
+          // Compute billable hours using the shift window:
+          //   pay starts at max(actual_clock_in, shift_start)
+          //   pay ends   at min(actual_clock_out, shift_end)
+          //   early clock-in = no bonus, late clock-out = no overtime
+          let netHours: number | null = null
+
+          const shiftStart: string | undefined = l.shift_schedules?.start_time
+          const shiftEnd: string | undefined   = l.shift_schedules?.end_time
+          const isOvernight: boolean           = l.shift_schedules?.is_overnight ?? false
+
+          if (l.clock_in && l.clock_out && shiftStart && shiftEnd) {
+            const shiftStartMin  = timeStrToMinutes(shiftStart)
+            const shiftEndMin    = timeStrToMinutes(shiftEnd)
+            const effectiveEnd   = isOvernight ? shiftEndMin + 1440 : shiftEndMin
+
+            let actualStart = isoToMinutes(l.clock_in, shopTimezone)
+            let actualEnd   = isoToMinutes(l.clock_out, shopTimezone)
+
+            // Overnight: if clock_out reads past midnight as a small number, add 24h
+            if (isOvernight && actualEnd < shiftStartMin) actualEnd += 1440
+
+            const payStart       = Math.max(actualStart, shiftStartMin)
+            const payEnd         = Math.min(actualEnd, effectiveEnd)
+            const billableMins   = Math.max(0, payEnd - payStart)
+            netHours = Math.max(0, (billableMins / 60) - breakDeductionHours)
+          } else if (l.total_hours != null && l.clock_out) {
+            // No shift info — fall back to stored hours minus break
+            netHours = Math.max(0, Number(l.total_hours) - breakDeductionHours)
+          } else if (l.total_hours != null) {
+            netHours = Number(l.total_hours)
+          }
+
           return {
             date: l.date ?? l.clock_in?.split('T')[0],
             shift_name: l.shift_schedules?.name ?? l.shift_name ?? null,
@@ -2523,7 +2559,7 @@ function QuickPayslipGenerator() {
             clock_out: l.clock_out ?? null,
             total_hours: netHours,
             late_minutes: l.late_minutes != null ? Number(l.late_minutes) : null,
-            overtime_hours: l.overtime_hours != null ? Number(l.overtime_hours) : null,
+            overtime_hours: 0,
             advances: Array.isArray(l.advances) ? l.advances : [],
           }
         }).sort((a: AttendanceLog, b: AttendanceLog) => a.date.localeCompare(b.date))
@@ -2533,17 +2569,13 @@ function QuickPayslipGenerator() {
         const emp = employees.find(e => e.id === employeeId)
         const rate = emp?.hourly_rate ?? 0
 
-        // total_hours already has break deducted (done at parse time above)
-        const totalRegularHours = parsed.reduce((sum, l) => {
-          const h = l.total_hours ?? 0
-          const ot = l.overtime_hours ?? 0
-          return sum + Math.max(0, h - ot)
-        }, 0)
-        const totalOTHours = parsed.reduce((sum, l) => sum + (l.overtime_hours ?? 0), 0)
+        // total_hours per log is already shift-window capped and break-deducted above
+        const totalRegularHours = parsed.reduce((sum, l) => sum + (l.total_hours ?? 0), 0)
+        const totalOTHours = 0
         const totalLateMin = parsed.reduce((sum, l) => sum + (l.late_minutes ?? 0), 0)
 
         const computedBasic = Math.round(totalRegularHours * rate * 100) / 100
-        const computedOT = Math.round(totalOTHours * rate * (s.overtime_multiplier ?? 1.25) * 100) / 100
+        const computedOT = 0
 
         // Late deduction
         let computedLate = 0
