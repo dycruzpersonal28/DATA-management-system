@@ -979,8 +979,8 @@ function ItemDrawer({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          cost:  cost  !== '' ? parseFloat(cost)  : null,
-          price: price !== '' ? parseFloat(price) : null,
+          cost:  cost  !== '' ? parseFloat(cost)  : 0,
+          price: price !== '' ? parseFloat(price) : 0,
         }),
       })
       const json = await res.json()

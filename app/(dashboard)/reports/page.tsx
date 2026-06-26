@@ -8,7 +8,7 @@ import {
   Receipt, Ban, ShoppingBag, BarChart2, RefreshCw,
   Clock, LogIn, LogOut, User, Calendar, Package,
   ChevronDown, CheckCircle2, Banknote, Smartphone,
-  CreditCard, Search, X, ChevronLeft, ChevronRight,
+  CreditCard, Search, X, ChevronLeft, ChevronRight, Trash2,
 } from 'lucide-react'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -526,18 +526,27 @@ function ShiftDetailPanel({
 // ─────────────────────────────────────────────────────────────────────────────
 function ShiftGridCard({
   shift, isSelected, onSelect, detail, loadingDetail, currencySymbol, shopTimezone,
+  onCloseShift, onDeleteShift, deleteShiftId, deletingShiftId, onCancelDelete,
 }: {
   shift: ShiftCard; isSelected: boolean; onSelect: (id: string) => void
   detail: ShiftDetail | null; loadingDetail: boolean; currencySymbol: string; shopTimezone: string
+  onCloseShift: (id: string) => void
+  onDeleteShift: (id: string) => void
+  deleteShiftId: string | null
+  deletingShiftId: string | null
+  onCancelDelete: () => void
 }) {
   const sym = currencySymbol || '₱'
   const isOpen = shift.status === 'open'
+  const isConfirmingDelete = deleteShiftId === shift.id
+  const isDeleting = deletingShiftId === shift.id
 
   return (
     <div className={`rounded-2xl border transition-all duration-200 overflow-hidden ${
       isSelected ? 'border-indigo-400 shadow-lg shadow-indigo-100/50 ring-2 ring-indigo-200' : 'border-gray-200 hover:border-indigo-300 hover:shadow-md'
     } bg-white`}>
-      <button onClick={() => onSelect(shift.id)} className="w-full text-left p-5 focus:outline-none">
+      {/* Clickable card body */}
+      <div onClick={() => onSelect(shift.id)} className="w-full text-left p-5 cursor-pointer">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 text-base font-bold ${isOpen ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
@@ -548,10 +557,20 @@ function ShiftGridCard({
               <p className="text-xs text-gray-400 capitalize">{shift.cashier_role}</p>
             </div>
           </div>
+          {/* Status badge + Close Shift button + chevron */}
           <div className="flex items-center gap-2 flex-shrink-0">
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${isOpen ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
               {isOpen ? <><span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />Active</> : <><CheckCircle2 className="w-3 h-3" />Closed</>}
             </span>
+            {isOpen && (
+              <button
+                onClick={e => { e.stopPropagation(); onCloseShift(shift.id) }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 hover:bg-amber-500 hover:text-white transition-colors"
+                title="Close shift"
+              >
+                <LogOut className="w-3 h-3" />Close
+              </button>
+            )}
             <ChevronDown className={`w-4 h-4 text-gray-300 transition-transform duration-200 ${isSelected ? 'rotate-180 text-indigo-400' : ''}`} />
           </div>
         </div>
@@ -581,7 +600,37 @@ function ShiftGridCard({
             </div>
           </div>
         )}
-      </button>
+      </div>
+
+      {/* Delete row — sits below card content, never overlaps */}
+      <div className="px-5 pb-3 flex justify-end">
+        {isConfirmingDelete ? (
+          <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+            <span className="text-[10px] text-red-600 font-medium">Delete this shift?</span>
+            <button
+              onClick={e => { e.stopPropagation(); onDeleteShift(shift.id) }}
+              disabled={isDeleting}
+              className="px-2 py-0.5 rounded bg-red-500 text-white text-[10px] font-semibold hover:bg-red-600 disabled:opacity-40"
+            >
+              {isDeleting ? '…' : 'Yes, delete'}
+            </button>
+            <button
+              onClick={e => { e.stopPropagation(); onCancelDelete() }}
+              className="px-2 py-0.5 rounded bg-white border border-gray-200 text-gray-600 text-[10px] font-semibold hover:bg-gray-100"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={e => { e.stopPropagation(); onDeleteShift(shift.id) }}
+            className="flex items-center gap-1 p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+            title="Delete shift"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
 
       {isSelected && (
         <ShiftDetailPanel shift={shift} detail={detail} loadingDetail={loadingDetail} currencySymbol={currencySymbol} shopTimezone={shopTimezone} />
@@ -604,6 +653,12 @@ function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'open' | 'closed'>('all')
   const [filterDays, setFilterDays] = useState(30)
+  const [deleteShiftId, setDeleteShiftId] = useState<string | null>(null)
+  const [deletingShiftId, setDeletingShiftId] = useState<string | null>(null)
+  const [closeShiftId, setCloseShiftId] = useState<string | null>(null)
+  const [closingShiftId, setClosingShiftId] = useState<string | null>(null)
+  const [closingCash, setClosingCash] = useState<string>('')
+  const [closeNote, setCloseNote] = useState<string>('')
 
   const loadShifts = useCallback(async () => {
     setLoading(true)
@@ -724,6 +779,57 @@ function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string
     }
   }, [detailCache])
 
+  async function handleDeleteShift(shiftId: string) {
+    setDeletingShiftId(shiftId)
+    try {
+      // Delete related data first, then the shift
+      const receiptRes = await supabase.from('receipts').select('id').eq('shift_id', shiftId)
+      const receiptIds = (receiptRes.data || []).map((r: any) => r.id)
+      if (receiptIds.length > 0) {
+        await supabase.from('receipt_items').delete().in('receipt_id', receiptIds)
+        await supabase.from('financial_entries').delete().in('reference_id', receiptIds)
+        await supabase.from('stock_movements').delete().in('reference_id', receiptIds)
+        await supabase.from('receipts').delete().in('id', receiptIds)
+      }
+      await supabase.from('shift_cash_movements').delete().eq('shift_id', shiftId)
+      await supabase.from('shifts').delete().eq('id', shiftId)
+      setDeleteShiftId(null)
+      if (selectedId === shiftId) setSelectedId(null)
+      loadShifts()
+    } catch (e: any) {
+      setError(e.message || 'Failed to delete shift')
+    } finally {
+      setDeletingShiftId(null)
+    }
+  }
+
+  async function handleCloseShift(shiftId: string) {
+    setClosingShiftId(shiftId)
+    try {
+      const closing = parseFloat(closingCash)
+      const { error: updateErr } = await supabase
+        .from('shifts')
+        .update({
+          status: 'closed',
+          clock_out: new Date().toISOString(),
+          closing_cash: isNaN(closing) ? null : closing,
+          note: closeNote.trim() || null,
+        })
+        .eq('id', shiftId)
+      if (updateErr) throw updateErr
+      setCloseShiftId(null)
+      setClosingCash('')
+      setCloseNote('')
+      // Bust detail cache so the panel refreshes
+      setDetailCache(prev => { const next = { ...prev }; delete next[shiftId]; return next })
+      loadShifts()
+    } catch (e: any) {
+      setError(e.message || 'Failed to close shift')
+    } finally {
+      setClosingShiftId(null)
+    }
+  }
+
   function handleSelect(id: string) {
     if (selectedId === id) { setSelectedId(null) } else { setSelectedId(id); loadDetail(id) }
   }
@@ -797,11 +903,17 @@ function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
           {visibleShifts.map(shift => (
             <ShiftGridCard
-              key={shift.id} shift={shift} isSelected={selectedId === shift.id}
+              key={shift.id}
+              shift={shift} isSelected={selectedId === shift.id}
               onSelect={handleSelect} detail={detailCache[shift.id] || null}
               loadingDetail={loadingDetail && selectedId === shift.id}
               currencySymbol={currencySymbol}
               shopTimezone={shopTimezone}
+              onCloseShift={id => { setCloseShiftId(id); loadDetail(id) }}
+              onDeleteShift={id => deleteShiftId === id ? handleDeleteShift(id) : setDeleteShiftId(id)}
+              deleteShiftId={deleteShiftId}
+              deletingShiftId={deletingShiftId}
+              onCancelDelete={() => setDeleteShiftId(null)}
             />
           ))}
         </div>
@@ -813,6 +925,133 @@ function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string
           {filterStatus !== 'all' ? ` (${filterStatus})` : ''} · last {filterDays} days
         </p>
       )}
+
+      {/* ── Close Shift Modal ───────────────────────────────────────────── */}
+      {closeShiftId && (() => {
+        const shift = shifts.find(s => s.id === closeShiftId)
+        if (!shift) return null
+        const sym = currencySymbol || '₱'
+        const detail = detailCache[closeShiftId]
+        const cashSales = detail
+          ? detail.receipts.filter(r => r.status !== 'voided' && r.payment_name?.toLowerCase() === 'cash').reduce((s, r) => s + r.total, 0)
+          : null
+        const cashIn = detail ? detail.cashMovements.filter(m => m.type === 'cash_in').reduce((s, m) => s + m.amount, 0) : null
+        const cashOut = detail ? detail.cashMovements.filter(m => m.type === 'cash_out').reduce((s, m) => s + m.amount, 0) : null
+        const expectedCash = detail ? shift.opening_cash + (cashIn ?? 0) - (cashOut ?? 0) + (cashSales ?? 0) : null
+        const enteredCash = parseFloat(closingCash)
+        const variance = expectedCash !== null && !isNaN(enteredCash) ? enteredCash - expectedCash : null
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-amber-100 rounded-xl flex items-center justify-center">
+                    <LogOut className="w-4 h-4 text-amber-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-gray-900">Close Shift</p>
+                    <p className="text-xs text-gray-400">{shift.cashier} · opened {fmtTime(shift.clock_in, shopTimezone)}</p>
+                  </div>
+                </div>
+                <button onClick={() => { setCloseShiftId(null); setClosingCash(''); setCloseNote('') }} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="px-6 py-5 space-y-5">
+                {/* Expected cash summary */}
+                {expectedCash !== null && (
+                  <div className="bg-gray-50 rounded-xl border border-gray-200 divide-y divide-gray-100 text-sm">
+                    <div className="flex justify-between px-4 py-2.5">
+                      <span className="text-gray-500">Opening cash</span>
+                      <span className="font-semibold text-gray-800">{fmt(shift.opening_cash, sym)}</span>
+                    </div>
+                    {(cashIn ?? 0) > 0 && (
+                      <div className="flex justify-between px-4 py-2.5">
+                        <span className="flex items-center gap-1.5 text-blue-600"><ArrowDownCircle className="w-3.5 h-3.5" />Cash in</span>
+                        <span className="font-semibold text-blue-700">+{fmt(cashIn!, sym)}</span>
+                      </div>
+                    )}
+                    {(cashOut ?? 0) > 0 && (
+                      <div className="flex justify-between px-4 py-2.5">
+                        <span className="flex items-center gap-1.5 text-orange-600"><ArrowUpCircle className="w-3.5 h-3.5" />Cash out</span>
+                        <span className="font-semibold text-red-600">−{fmt(cashOut!, sym)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between px-4 py-2.5">
+                      <span className="flex items-center gap-1.5 text-gray-500"><Banknote className="w-3.5 h-3.5" />Cash sales</span>
+                      <span className="font-semibold text-gray-800">+{fmt(cashSales!, sym)}</span>
+                    </div>
+                    <div className="flex justify-between px-4 py-2.5 bg-white rounded-b-xl">
+                      <span className="font-semibold text-gray-700">Expected in drawer</span>
+                      <span className="font-bold text-emerald-700">{fmt(expectedCash, sym)}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Closing cash input */}
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block mb-1.5">
+                    Closing Cash <span className="text-gray-400 font-normal">(actual amount counted)</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">{sym}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={closingCash}
+                      onChange={e => setClosingCash(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full pl-8 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-800 font-semibold focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 transition-colors"
+                    />
+                  </div>
+                  {/* Live variance */}
+                  {variance !== null && (
+                    <div className={`mt-2 flex items-center justify-between rounded-lg px-3 py-2 text-xs font-medium ${Math.abs(variance) < 0.01 ? 'bg-emerald-50 text-emerald-700' : variance > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-600'}`}>
+                      <span>{Math.abs(variance) < 0.01 ? '✓ Balanced' : variance > 0 ? '↑ Overage' : '↓ Shortage'}</span>
+                      <span className="font-bold">{variance >= 0 ? '+' : ''}{fmt(variance, sym)}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Optional note */}
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block mb-1.5">Note <span className="text-gray-400 font-normal">(optional)</span></label>
+                  <textarea
+                    value={closeNote}
+                    onChange={e => setCloseNote(e.target.value)}
+                    placeholder="Any notes about this shift…"
+                    rows={2}
+                    className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-700 resize-none focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 transition-colors"
+                  />
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex gap-2 px-6 pb-5">
+                <button
+                  onClick={() => { setCloseShiftId(null); setClosingCash(''); setCloseNote('') }}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleCloseShift(closeShiftId)}
+                  disabled={closingShiftId === closeShiftId}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
+                >
+                  {closingShiftId === closeShiftId
+                    ? <><RefreshCw className="w-4 h-4 animate-spin" /> Closing…</>
+                    : <><LogOut className="w-4 h-4" /> Close Shift</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -836,6 +1075,8 @@ export default function ReportsPage() {
   const [receipts, setReceipts] = useState<any[]>([])
   const [cashMovements, setCashMovements] = useState<any[]>([])
   const [receiptItems, setReceiptItems] = useState<Record<string, any[]>>({})
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     setIsLoading(true)
@@ -883,6 +1124,29 @@ export default function ReportsPage() {
   const cashOutTotal = useMemo(() => cashMovements.filter(m => m.type === 'cash_out').reduce((s, m) => s + Number(m.amount), 0), [cashMovements])
   const totalTxCount = activeReceipts.length
   const avgSale      = totalTxCount > 0 ? netSales / totalTxCount : 0
+
+  async function handleDeleteTransaction(tx: UnifiedTx) {
+    setDeletingId(tx.id)
+    try {
+      const supabaseClient = createClient()
+      if (tx._type === 'sale' || tx._type === 'refund') {
+        // Delete receipt items first, then the receipt
+        await supabaseClient.from('receipt_items').delete().eq('receipt_id', tx.id)
+        await supabaseClient.from('financial_entries').delete().eq('reference_id', tx.id)
+        await supabaseClient.from('stock_movements').delete().eq('reference_id', tx.id)
+        await supabaseClient.from('receipts').delete().eq('id', tx.id)
+      } else {
+        // Cash in / cash out movement
+        await supabaseClient.from('shift_cash_movements').delete().eq('id', tx.id)
+      }
+      setDeleteConfirmId(null)
+      loadData()
+    } catch (e: any) {
+      alert(e.message || 'Failed to delete')
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   const allTransactions = useMemo<UnifiedTx[]>(() => {
     const sorted = [...receipts].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
@@ -966,21 +1230,21 @@ export default function ReportsPage() {
                 <table className="w-full text-xs min-w-[700px]">
                   <thead>
                     <tr className="border-b border-gray-200 bg-gray-50">
-                      {['Date & Time', 'Ref #', 'Type', 'Items / Note', 'Payment', 'Staff', 'Amount'].map((h, i) => (
-                        <th key={h} className={`sticky top-0 z-20 bg-gray-50 px-3 py-2.5 font-semibold text-gray-500 whitespace-nowrap border-b border-gray-200 ${i === 6 ? 'text-right' : 'text-left'} ${i === 4 ? 'hidden sm:table-cell' : ''} ${i === 5 ? 'hidden md:table-cell' : ''}`}>{h}</th>
+                      {['Date & Time', 'Ref #', 'Type', 'Items / Note', 'Payment', 'Staff', 'Amount', ''].map((h, i) => (
+                        <th key={i} className={`sticky top-0 z-20 bg-gray-50 px-3 py-2.5 font-semibold text-gray-500 whitespace-nowrap border-b border-gray-200 ${i === 6 ? 'text-right' : 'text-left'} ${i === 4 ? 'hidden sm:table-cell' : ''} ${i === 5 ? 'hidden md:table-cell' : ''}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {isLoading && Array.from({ length: 6 }).map((_, i) => (
                       <tr key={i} className="border-b border-gray-50">
-                        {Array.from({ length: 7 }).map((_, j) => (
+                        {Array.from({ length: 8 }).map((_, j) => (
                           <td key={j} className="px-3 py-2.5"><div className="h-3 bg-gray-100 rounded animate-pulse" /></td>
                         ))}
                       </tr>
                     ))}
                     {!isLoading && allTransactions.length === 0 && (
-                      <tr><td colSpan={7} className="text-center py-16 text-gray-400"><Receipt className="w-8 h-8 mx-auto mb-2 opacity-30" />No transactions in this date range</td></tr>
+                      <tr><td colSpan={8} className="text-center py-16 text-gray-400"><Receipt className="w-8 h-8 mx-auto mb-2 opacity-30" />No transactions in this date range</td></tr>
                     )}
                     {!isLoading && allTransactions.map((tx) => {
                       const isSale = tx._type === 'sale'
@@ -988,6 +1252,8 @@ export default function ReportsPage() {
                       const isCashIn = tx._type === 'cash_in'
                       const isPositive = isSale || isCashIn
                       const amountValue = Number(tx.total ?? tx.amount ?? 0)
+                      const isConfirming = deleteConfirmId === tx.id
+                      const isDeleting = deletingId === tx.id
                       return (
                         <tr key={`${tx._type}-${tx.id}`} className="border-b border-gray-50 hover:bg-gray-50/70 transition-colors">
                           <td className="px-3 py-2.5 whitespace-nowrap">
@@ -1010,6 +1276,33 @@ export default function ReportsPage() {
                           <td className={`px-3 py-2.5 text-right font-semibold whitespace-nowrap ${isPositive ? 'text-green-600' : 'text-red-500'}`}>
                             {isPositive ? '+' : '−'}{currencySymbol}{amountValue.toFixed(2)}
                           </td>
+                          <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                            {isConfirming ? (
+                              <div className="flex items-center gap-1 justify-end">
+                                <button
+                                  onClick={() => handleDeleteTransaction(tx)}
+                                  disabled={isDeleting}
+                                  className="px-2 py-1 rounded-lg bg-red-500 text-white text-[10px] font-semibold hover:bg-red-600 disabled:opacity-40"
+                                >
+                                  {isDeleting ? '…' : 'Confirm'}
+                                </button>
+                                <button
+                                  onClick={() => setDeleteConfirmId(null)}
+                                  className="px-2 py-1 rounded-lg bg-gray-100 text-gray-600 text-[10px] font-semibold hover:bg-gray-200"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setDeleteConfirmId(tx.id)}
+                                className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       )
                     })}
@@ -1017,7 +1310,7 @@ export default function ReportsPage() {
                   {!isLoading && allTransactions.length > 0 && (
                     <tfoot>
                       <tr className="bg-gray-50 border-t-2 border-gray-200 sticky bottom-0">
-                        <td colSpan={6} className="px-3 py-2.5 text-xs font-semibold text-gray-600 text-right">Net Sales Total</td>
+                        <td colSpan={7} className="px-3 py-2.5 text-xs font-semibold text-gray-600 text-right">Net Sales Total</td>
                         <td className="px-3 py-2.5 text-right text-xs font-bold text-emerald-700">{currencySymbol}{netSales.toFixed(2)}</td>
                       </tr>
                     </tfoot>

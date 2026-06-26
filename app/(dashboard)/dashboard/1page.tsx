@@ -1018,7 +1018,7 @@ export default function DashboardPage() {
       const { data: cogsEntries, error: cogsErr } = await cogsQuery
       const cogs = (cogsEntries || []).reduce((s, e) => s + Number(e.amount), 0)
 
-      // netSales is recalculated after wastageTotal is known (see below)
+      const netSales = grossSales - cogs - cashoutTotal - discounts - taxes
       const netAfterCogs = grossSales - cogs - discounts - taxes
 
       // ── Wastage — only receipts voided as wastage, valued at ingredient cost ──
@@ -1037,9 +1037,6 @@ export default function DashboardPage() {
 
       // Total wastage cost = sum of ingredient COGS from wastage voids
       const wastageTotal = (wastageEntries || []).reduce((s, e) => s + Number(e.amount), 0)
-
-      // Net Sales = Gross − COGS − Wastage − Expenses − Discounts − Taxes
-      const netSales = grossSales - cogs - wastageTotal - cashoutTotal - discounts - taxes
 
       // Build per-item wastage breakdown — only receipts that have a wastage COGS entry
       const wastageReceiptIds = new Set((wastageEntries || []).map(e => e.reference_id))
@@ -1300,7 +1297,7 @@ export default function DashboardPage() {
             (summary?.netSales ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-600'
           }`}>{fmt(summary?.netSales ?? 0)}</p>
           <p className="text-xs font-medium text-gray-500 mt-1">Net Sales</p>
-          <p className="text-xs text-gray-400 mt-0.5">After COGS, wastages, expenses & discounts</p>
+          <p className="text-xs text-gray-400 mt-0.5">After COGS, expenses & discounts</p>
         </div>
         {/* Stock Value at Cost — Raw Stocks category */}
         <button

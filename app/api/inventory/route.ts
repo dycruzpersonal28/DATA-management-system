@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
   let query = admin
     .from('items')
     .select(`
-      id, name, sku, category_id, track_stock,
+      id, name, sku, category_id, track_stock, cost, price,
       stock_unit, consumption_unit, unit_conversion,
       categories!items_category_id_fkey(name, color),
       inventory_levels(id, quantity, low_stock_alert, variant_id)
