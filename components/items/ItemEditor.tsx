@@ -669,7 +669,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                     <tbody className="divide-y divide-gray-50">
                       {form.ingredients.map(ing => {
                         const ingItem = allItems.find(i => i.id === ing.ingredient_id)
-                        const lineCost = (ingItem?.cost ?? 0) * ing.quantity
+                        const lineCost = (ingItem?.cost ?? 0) * Number(ing.quantity)
                         return (
                           <tr key={ing.ingredient_id}>
                             <td className="py-2">
@@ -826,7 +826,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                               <tbody className="divide-y divide-gray-50">
                                 {v.ingredients.map(ing => {
                                   const ingItem = allItems.find(i => i.id === ing.ingredient_id)
-                                  const lineCost = (ingItem?.cost ?? 0) * ing.quantity
+                                  const lineCost = (ingItem?.cost ?? 0) * Number(ing.quantity)
                                   return (
                                     <tr key={ing.ingredient_id}>
                                       <td className="py-2">
