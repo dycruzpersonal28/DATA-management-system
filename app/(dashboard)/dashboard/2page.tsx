@@ -8,7 +8,7 @@ import {
   RefreshCw, X, Receipt, Package, Eye,
   Printer, Trash2, AlertTriangle, ChevronRight,
   BarChart2, ArrowUpCircle, CreditCard,
-  Banknote, Smartphone, ArrowDownCircle, Lock, Flame, Warehouse, RotateCcw,
+  Banknote, Smartphone, ArrowDownCircle, Lock, Flame, Warehouse,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -683,12 +683,16 @@ function WastageModal({ items, receipts, total, onClose }: {
                     {isOpen && (
                       <div className="bg-white divide-y divide-gray-50">
                         {r.items.map((item, i) => (
-                          <div key={i} className="flex items-center gap-2 px-4 py-2.5">
-                            <span className="w-6 h-6 rounded-full bg-red-100 text-red-500 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
-                              ×{item.qty}
+                          <div key={i} className="flex items-center justify-between px-4 py-2.5">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="w-5 h-5 rounded-full bg-red-100 text-red-500 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                                ×{item.qty}
+                              </span>
+                              <span className="text-sm text-gray-700 truncate">{item.name}</span>
+                            </div>
+                            <span className="text-xs font-semibold text-gray-500 flex-shrink-0 ml-2">
+                              {fmt(item.lineTotal)}
                             </span>
-                            <span className="text-sm text-gray-700">{item.name}</span>
-                            <span className="ml-auto text-[10px] text-orange-400 font-medium">wasted</span>
                           </div>
                         ))}
                       </div>
@@ -731,95 +735,6 @@ function WastageModal({ items, receipts, total, onClose }: {
           </div>
           <span className="text-base font-bold text-red-600">−{fmt(total)}</span>
         </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Revert Void Confirm Modal ─────────────────────────────────────────────────
-function RevertVoidModal({ receipt, onConfirm, onCancel, reverting }: {
-  receipt: ReceiptRow
-  onConfirm: () => void
-  onCancel: () => void
-  reverting: boolean
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
-
-        {/* Header */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-indigo-50">
-          <div className="w-9 h-9 bg-indigo-100 rounded-xl flex items-center justify-center">
-            <RotateCcw className="w-5 h-5 text-indigo-600" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">Revert Void</h3>
-            <p className="text-xs text-gray-500">{receipt.receipt_number}</p>
-          </div>
-          <button onClick={onCancel} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Details */}
-        <div className="px-5 pt-5 pb-2 space-y-3">
-          <div className="bg-indigo-50 rounded-xl p-3.5 space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="text-xs text-gray-500">Receipt</span>
-              <span className="text-sm font-semibold text-indigo-700">{receipt.receipt_number}</span>
-            </div>
-            <div className="flex justify-between items-center border-t border-indigo-100 pt-2">
-              <span className="text-xs text-gray-500">Amount</span>
-              <span className="text-sm font-bold text-gray-900">{fmt(receipt.total)}</span>
-            </div>
-            <div className="flex justify-between items-center border-t border-indigo-100 pt-2">
-              <span className="text-xs text-gray-500">Cashier</span>
-              <span className="text-sm text-gray-700">{receipt.cashier}</span>
-            </div>
-          </div>
-
-          {/* Items preview */}
-          <div className="rounded-xl border border-gray-100 overflow-hidden">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-3 py-2 bg-gray-50 border-b border-gray-100">
-              Items to restore ({receipt.items.length})
-            </p>
-            <div className="divide-y divide-gray-50 max-h-32 overflow-y-auto">
-              {receipt.items.map((item, i) => (
-                <div key={i} className="flex items-center justify-between px-3 py-2">
-                  <span className="text-xs text-gray-700 truncate pr-2">{item.item_name}</span>
-                  <span className="text-xs text-gray-400 flex-shrink-0">×{item.quantity}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Warning */}
-          <div className="flex items-start gap-2.5 p-3 bg-amber-50 rounded-xl border border-amber-100">
-            <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-amber-700 leading-relaxed">
-              This will restore the transaction to <span className="font-semibold">completed</span> status and re-add it to your sales figures. Stock adjustments from the original void may need to be reviewed manually.
-            </p>
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="flex gap-2 px-5 py-4 border-t border-gray-100">
-          <button onClick={onCancel} disabled={reverting}
-            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={reverting}
-            className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2 transition-colors"
-          >
-            {reverting
-              ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              : <RotateCcw className="w-3.5 h-3.5" />}
-            {reverting ? 'Reverting…' : 'Revert to Active'}
-          </button>
-        </div>
-
       </div>
     </div>
   )
@@ -977,8 +892,6 @@ export default function DashboardPage() {
   const [cashDetail, setCashDetail] = useState<CashMovementRow | null>(null)
   const [voidTarget, setVoidTarget] = useState<ReceiptRow | null>(null)
   const [voiding, setVoiding] = useState(false)
-  const [revertVoidTarget, setRevertVoidTarget] = useState<ReceiptRow | null>(null)
-  const [reverting, setReverting] = useState(false)
 
   // Fetch user role on mount — guard page access
   useEffect(() => {
@@ -1236,105 +1149,56 @@ export default function DashboardPage() {
       // netSales is recalculated after wastageTotal is known (see below)
       const netAfterCogs = grossSales - cashoutTotal - discounts - taxes
 
-      // ── Wastage ───────────────────────────────────────────────────────────
-      // Source of truth: stock_movements rows written by the void route when
-      // void_type='wastage'. Notes start with 'POS Wastage:' (BOM items) or
-      // 'Wastage:' (non-BOM items). quantity=0 on all of them.
-      const { data: wastageMovements } = await supabase
-        .from('stock_movements')
-        .select('id, item_id, note, created_at, reference_id')
-        .eq('shop_id', shopId)
-        .eq('type', 'loss')
-        .eq('reference_type', 'receipt')
-        .or('note.ilike.POS Wastage:%,note.ilike.Wastage:%')
-        .gte('created_at', fromTs)
-        .lte('created_at', toTs)
-
-      const wastagemovs = wastageMovements || []
-
-      // Parse item name + qty from the note.
-      // BOM path:     "POS Wastage: {item_name} x{qty} — {ingQty} units..."
-      // Non-BOM path: "Wastage: {item_name} x{qty} — dispensed at sale..."
-      function parseWastageNote(note: string): { itemName: string; qty: number } {
-        const body = note.replace(/^(POS Wastage|Wastage):\s*/i, '')
-        const match = body.match(/^(.+?)\s+x(\d+(?:\.\d+)?)\s*[—\-]/)
-        if (match) return { itemName: match[1].trim(), qty: Number(match[2]) }
-        return { itemName: body.split(' x')[0].trim(), qty: 1 }
-      }
-
-      // Group movements by receipt_id, deduplicate by itemName within each receipt
-      // (BOM items produce one stock_movement row per ingredient, but the item name
-      // in the note is the same sold item — we only want to show it once per receipt)
-      const wastageByReceipt: Record<string, {
-        date: string
-        items: Record<string, number>  // itemName → qty
-      }> = {}
-      for (const m of wastagemovs) {
-        const rid = m.reference_id
-        if (!rid) continue
-        if (!wastageByReceipt[rid]) wastageByReceipt[rid] = { date: m.created_at, items: {} }
-        const { itemName, qty } = parseWastageNote(m.note)
-        // Only set qty once per item name per receipt (first occurrence wins)
-        if (!wastageByReceipt[rid].items[itemName]) {
-          wastageByReceipt[rid].items[itemName] = qty
-        }
-      }
-
-      // Fetch receipt numbers for all wastage receipt IDs
-      const wastageReceiptIds = Object.keys(wastageByReceipt)
-      const receiptNumberMap: Record<string, string> = {}
-      if (wastageReceiptIds.length > 0) {
-        const { data: rNums } = await supabase
-          .from('receipts')
-          .select('id, receipt_number')
-          .in('id', wastageReceiptIds)
-        for (const r of (rNums || [])) receiptNumberMap[r.id] = r.receipt_number
-      }
-
-      // COGS cost from financial_entries — used for the total ₱ amount on the card
-      let wastageCogsQuery = supabase
+      // ── Wastage — only receipts voided as wastage, valued at ingredient cost ──
+      // The void route writes a COGS entry with reference_type='receipt_void' when
+      // void_type='wastage' (stock stays consumed, COGS kept). We sum those entries
+      // for the true ingredient-cost-based wastage total.
+      let wastageQuery = supabase
         .from('financial_entries')
         .select('amount, reference_id')
         .eq('type', 'cogs')
-        .eq('reference_type', 'receipt_void')
+        .eq('reference_type', 'receipt_void')  // only wastage voids keep a COGS entry
         .gte('entry_date', dateFrom)
         .lte('entry_date', dateTo)
-      if (shopId) wastageCogsQuery = wastageCogsQuery.eq('shop_id', shopId)
-      const { data: wastageCogsEntries } = await wastageCogsQuery
+      if (shopId) wastageQuery = wastageQuery.eq('shop_id', shopId)
+      const { data: wastageEntries } = await wastageQuery
 
-      const cogsPerReceipt: Record<string, number> = {}
-      for (const e of (wastageCogsEntries || [])) {
-        if (e.reference_id) {
-          cogsPerReceipt[e.reference_id] = (cogsPerReceipt[e.reference_id] || 0) + Number(e.amount)
-        }
-      }
-      const wastageTotal = Object.values(cogsPerReceipt).reduce((s, v) => s + v, 0)
+      // Total wastage cost = sum of ingredient COGS from wastage voids
+      const wastageTotal = (wastageEntries || []).reduce((s, e) => s + Number(e.amount), 0)
 
       // Net Sales = Gross − COGS − Wastage − Expenses − Discounts − Taxes
       const netSales = grossSales - cogs - wastageTotal - cashoutTotal - discounts - taxes
 
-      // Build per-item summary (aggregated across all wastage receipts)
-      const wastageAgg: Record<string, number> = {}
-      for (const { items: wItems } of Object.values(wastageByReceipt)) {
-        for (const [name, qty] of Object.entries(wItems)) {
-          wastageAgg[name] = (wastageAgg[name] || 0) + qty
+      // Build per-item wastage breakdown — only receipts that have a wastage COGS entry
+      const wastageReceiptIds = new Set((wastageEntries || []).map(e => e.reference_id))
+      const wastageRows = rows.filter(r => wastageReceiptIds.has(r.id))
+      const wastageAgg: Record<string, { qty: number; total: number }> = {}
+      for (const r of wastageRows) {
+        for (const item of r.items) {
+          if (!wastageAgg[item.item_name]) wastageAgg[item.item_name] = { qty: 0, total: 0 }
+          wastageAgg[item.item_name].qty += item.quantity
+          wastageAgg[item.item_name].total += item.line_total
         }
       }
       const wastageItems = Object.entries(wastageAgg)
-        .map(([name, qty]) => ({ name, qty, total: 0 }))
-        .sort((a, b) => b.qty - a.qty)
+        .map(([name, v]) => ({ name, ...v }))
+        .sort((a, b) => b.total - a.total)
 
-      // Build per-receipt breakdown for the modal
-      const wastageReceipts = wastageReceiptIds
-        .sort((a, b) => new Date(wastageByReceipt[b].date).getTime() - new Date(wastageByReceipt[a].date).getTime())
-        .map(rid => ({
-          receipt_number: receiptNumberMap[rid] || rid.slice(0, 8),
-          date: wastageByReceipt[rid].date,
-          cogsAmount: cogsPerReceipt[rid] || 0,
-          items: Object.entries(wastageByReceipt[rid].items).map(([name, qty]) => ({
-            name,
-            qty,
-            lineTotal: 0,
+      // Per-receipt wastage detail — each voided receipt with its items + COGS cost
+      const cogsPerReceipt: Record<string, number> = {}
+      for (const e of (wastageEntries || [])) {
+        cogsPerReceipt[e.reference_id] = (cogsPerReceipt[e.reference_id] || 0) + Number(e.amount)
+      }
+      const wastageReceipts = wastageRows
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .map(r => ({
+          receipt_number: r.receipt_number,
+          date: r.created_at,
+          cogsAmount: cogsPerReceipt[r.id] || 0,
+          items: r.items.map(item => ({
+            name: item.item_name,
+            qty: item.quantity,
+            lineTotal: item.line_total,
           })),
         }))
 
@@ -1442,28 +1306,6 @@ export default function DashboardPage() {
       setError(e.message || 'Failed to void transaction')
     } finally {
       setVoiding(false)
-    }
-  }
-
-  async function handleRevertVoid() {
-    if (!revertVoidTarget) return
-    setReverting(true)
-    try {
-      const res = await fetch(`/api/transactions/${revertVoidTarget.id}/revert-void`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: 'Void reverted from dashboard' }),
-      })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || 'Failed to revert void')
-      }
-      setRevertVoidTarget(null)
-      load()
-    } catch (e: any) {
-      setError(e.message || 'Failed to revert void')
-    } finally {
-      setReverting(false)
     }
   }
 
@@ -1915,12 +1757,6 @@ export default function DashboardPage() {
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             )}
-                            {r.status === 'voided' && (
-                              <button onClick={() => setRevertVoidTarget(r)} title="Revert Void"
-                                className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
-                                <RotateCcw className="w-3.5 h-3.5" />
-                              </button>
-                            )}
                           </div>
                         </td>
                       </tr>
@@ -2056,14 +1892,6 @@ export default function DashboardPage() {
       )}
       {voidTarget && (
         <VoidModal receipt={voidTarget} onConfirm={(voidType) => handleVoid(voidType)} onCancel={() => setVoidTarget(null)} voiding={voiding} />
-      )}
-      {revertVoidTarget && (
-        <RevertVoidModal
-          receipt={revertVoidTarget}
-          onConfirm={handleRevertVoid}
-          onCancel={() => setRevertVoidTarget(null)}
-          reverting={reverting}
-        />
       )}
       {modal === 'stockvalue' && (
         <StockValueModal items={stockValueItems} total={stockValue ?? 0} onClose={() => setModal(null)} />

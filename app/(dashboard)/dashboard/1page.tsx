@@ -24,6 +24,12 @@ type Summary = {
   netAfterCogs: number
   wastageTotal: number
   wastageItems: { name: string; qty: number; total: number }[]
+  wastageReceipts: {
+    receipt_number: string
+    date: string
+    cogsAmount: number
+    items: { name: string; qty: number; lineTotal: number }[]
+  }[]
   paymentBreakdown: { name: string; amount: number; count: number }[]
   cashoutBreakdown: { note: string; amount: number; date: string; shift: string }[]
   discountBreakdown: { receipt_number: string; amount: number; date: string }[]
@@ -571,47 +577,159 @@ function CashDetailModal({ movement, onClose }: {
 }
 
 // ── Wastage Modal ─────────────────────────────────────────────────────────────
-function WastageModal({ items, total, onClose }: {
+function WastageModal({ items, receipts, total, onClose }: {
   items: { name: string; qty: number; total: number }[]
-  total: number; onClose: () => void
+  receipts: {
+    receipt_number: string
+    date: string
+    cogsAmount: number
+    items: { name: string; qty: number; lineTotal: number }[]
+  }[]
+  total: number
+  onClose: () => void
 }) {
+  const [tab, setTab] = useState<'receipts' | 'items'>('receipts')
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  function toggleExpand(rn: string) {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      next.has(rn) ? next.delete(rn) : next.add(rn)
+      return next
+    })
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+
+        {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-orange-50">
           <div className="w-9 h-9 bg-orange-100 rounded-xl flex items-center justify-center">
             <Flame className="w-5 h-5 text-orange-600" />
           </div>
           <div>
             <h3 className="text-sm font-semibold text-gray-900">Wastage Summary</h3>
-            <p className="text-xs text-gray-500">Items voided without returning stock</p>
+            <p className="text-xs text-gray-500">Voided receipts — stock stays consumed</p>
           </div>
           <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="p-5 space-y-2 max-h-[60vh] overflow-y-auto">
-          {items.length === 0 && (
-            <p className="text-sm text-gray-400 text-center py-4">No wastage recorded in this period</p>
-          )}
-          {items.map((item, i) => (
-            <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
-              <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                <Flame className="w-4 h-4 text-orange-500" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex justify-between items-center">
-                  <p className="text-sm font-medium text-gray-800 truncate pr-2">{item.name}</p>
-                  <span className="text-sm font-bold text-orange-600 flex-shrink-0">{fmt(item.total)}</span>
-                </div>
-                <p className="text-xs text-gray-400 mt-0.5">{item.qty} unit{item.qty !== 1 ? 's' : ''} wasted</p>
-              </div>
-            </div>
-          ))}
+
+        {/* Tabs */}
+        <div className="flex border-b border-gray-100">
+          <button
+            onClick={() => setTab('receipts')}
+            className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${
+              tab === 'receipts'
+                ? 'text-orange-600 border-b-2 border-orange-500 bg-orange-50/50'
+                : 'text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            By Receipt ({receipts.length})
+          </button>
+          <button
+            onClick={() => setTab('items')}
+            className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${
+              tab === 'items'
+                ? 'text-orange-600 border-b-2 border-orange-500 bg-orange-50/50'
+                : 'text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            By Item ({items.length})
+          </button>
         </div>
-        <div className="px-5 py-4 border-t border-gray-100 flex justify-between items-center">
-          <span className="text-sm font-semibold text-gray-700">Total Wastage</span>
-          <span className="text-base font-bold text-orange-600">{fmt(total)}</span>
+
+        {/* Body */}
+        <div className="p-4 space-y-2 max-h-[55vh] overflow-y-auto">
+
+          {/* ── Receipts tab ── */}
+          {tab === 'receipts' && (
+            <>
+              {receipts.length === 0 && (
+                <p className="text-sm text-gray-400 text-center py-6">No wastage recorded in this period</p>
+              )}
+              {receipts.map(r => {
+                const isOpen = expanded.has(r.receipt_number)
+                return (
+                  <div key={r.receipt_number} className="border border-orange-100 rounded-xl overflow-hidden">
+                    {/* Receipt header row — click to expand */}
+                    <button
+                      onClick={() => toggleExpand(r.receipt_number)}
+                      className="w-full flex items-center gap-3 p-3 bg-orange-50/60 hover:bg-orange-50 transition-colors text-left"
+                    >
+                      <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Flame className="w-4 h-4 text-orange-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm font-semibold text-orange-700">{r.receipt_number}</span>
+                          <span className="text-sm font-bold text-red-600 flex-shrink-0 ml-2">
+                            {r.cogsAmount > 0 ? `−${fmt(r.cogsAmount)} cost` : `${r.items.length} item${r.items.length !== 1 ? 's' : ''}`}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between mt-0.5">
+                          <p className="text-xs text-gray-400">{fmtDateTime(r.date)}</p>
+                          <p className="text-[10px] text-orange-400 font-medium">
+                            {r.items.length} item{r.items.length !== 1 ? 's' : ''} · tap to {isOpen ? 'collapse' : 'expand'}
+                          </p>
+                        </div>
+                      </div>
+                      <ChevronRight className={`w-4 h-4 text-orange-300 flex-shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                    </button>
+
+                    {/* Expanded item list */}
+                    {isOpen && (
+                      <div className="bg-white divide-y divide-gray-50">
+                        {r.items.map((item, i) => (
+                          <div key={i} className="flex items-center gap-2 px-4 py-2.5">
+                            <span className="w-6 h-6 rounded-full bg-red-100 text-red-500 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                              ×{item.qty}
+                            </span>
+                            <span className="text-sm text-gray-700">{item.name}</span>
+                            <span className="ml-auto text-[10px] text-orange-400 font-medium">wasted</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </>
+          )}
+
+          {/* ── Items tab ── */}
+          {tab === 'items' && (
+            <>
+              {items.length === 0 && (
+                <p className="text-sm text-gray-400 text-center py-6">No wastage recorded in this period</p>
+              )}
+              {items.map((item, i) => (
+                <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                  <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Flame className="w-4 h-4 text-orange-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex justify-between items-center">
+                      <p className="text-sm font-medium text-gray-800 truncate pr-2">{item.name}</p>
+                      <span className="text-sm font-bold text-orange-600 flex-shrink-0">{fmt(item.total)}</span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-0.5">{item.qty} unit{item.qty !== 1 ? 's' : ''} wasted</p>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-gray-100 flex justify-between items-center bg-gray-50/50">
+          <div>
+            <span className="text-sm font-semibold text-gray-700">Total Wastage Cost</span>
+            <p className="text-[10px] text-gray-400 mt-0.5">Based on ingredient COGS</p>
+          </div>
+          <span className="text-base font-bold text-red-600">−{fmt(total)}</span>
         </div>
       </div>
     </div>
@@ -949,7 +1067,9 @@ export default function DashboardPage() {
         discount_amount: Number(r.discount_amount || 0),
         tax_amount: Number(r.tax_amount || 0),
         total: Number(r.total),
-        payment_name: r.payment_types?.name || '—',
+        // Normalise payment name: trim + lower-compare so 'cash'/'Cash'/'CASH' all
+        // resolve consistently. Store with original capitalisation for display.
+        payment_name: r.payment_types?.name?.trim() || '—',
         status: r.status,
         items: (r.receipt_items || []).map((ri: any) => ({
           id: ri.id,
@@ -986,16 +1106,20 @@ export default function DashboardPage() {
       setReceipts(rowsWithRefs)
 
       // ── Payment breakdown — completed only ────────────────────────────────
+      // Group by normalised (lowercase-trimmed) key so 'Cash'/'cash'/'CASH'
+      // all land in the same bucket. Preserves original casing for display.
       const completedRows = rows.filter(r => r.status === 'completed')
-      const payMap: Record<string, { amount: number; count: number }> = {}
+      const payMap: Record<string, { amount: number; count: number; displayName: string }> = {}
       for (const r of completedRows) {
-        const pn = r.payment_name
-        if (!payMap[pn]) payMap[pn] = { amount: 0, count: 0 }
-        payMap[pn].amount += r.total
-        payMap[pn].count += 1
+        const rawName = r.payment_name
+        const key = rawName?.toLowerCase().trim() || '—'
+        if (!payMap[key]) payMap[key] = { amount: 0, count: 0, displayName: rawName }
+        payMap[key].amount += r.total
+        payMap[key].count += 1
       }
-      const paymentBreakdown = Object.entries(payMap).map(([name, v]) => ({ name, ...v }))
-        .sort((a, b) => b.amount - a.amount)
+      const paymentBreakdown = Object.entries(payMap).map(([, v]) => ({
+        name: v.displayName, amount: v.amount, count: v.count,
+      })).sort((a, b) => b.amount - a.amount)
 
       // ── Totals — completed only (voided rows stay visible but don't count) ─
       const grossSales = completedRows.reduce((s, r) => s + r.subtotal, 0)
@@ -1018,40 +1142,110 @@ export default function DashboardPage() {
       const { data: cogsEntries, error: cogsErr } = await cogsQuery
       const cogs = (cogsEntries || []).reduce((s, e) => s + Number(e.amount), 0)
 
-      const netSales = grossSales - cogs - cashoutTotal - discounts - taxes
-      const netAfterCogs = grossSales - cogs - discounts - taxes
+      // netSales is recalculated after wastageTotal is known (see below)
+      const netAfterCogs = grossSales - cashoutTotal - discounts - taxes
 
-      // ── Wastage — only receipts voided as wastage, valued at ingredient cost ──
-      // The void route writes a COGS entry with reference_type='receipt_void' when
-      // void_type='wastage' (stock stays consumed, COGS kept). We sum those entries
-      // for the true ingredient-cost-based wastage total.
-      let wastageQuery = supabase
+      // ── Wastage ───────────────────────────────────────────────────────────
+      // Source of truth: stock_movements rows written by the void route when
+      // void_type='wastage'. Notes start with 'POS Wastage:' (BOM items) or
+      // 'Wastage:' (non-BOM items). quantity=0 on all of them.
+      const { data: wastageMovements } = await supabase
+        .from('stock_movements')
+        .select('id, item_id, note, created_at, reference_id')
+        .eq('shop_id', shopId)
+        .eq('type', 'loss')
+        .eq('reference_type', 'receipt')
+        .or('note.ilike.POS Wastage:%,note.ilike.Wastage:%')
+        .gte('created_at', fromTs)
+        .lte('created_at', toTs)
+
+      const wastagemovs = wastageMovements || []
+
+      // Parse item name + qty from the note.
+      // BOM path:     "POS Wastage: {item_name} x{qty} — {ingQty} units..."
+      // Non-BOM path: "Wastage: {item_name} x{qty} — dispensed at sale..."
+      function parseWastageNote(note: string): { itemName: string; qty: number } {
+        const body = note.replace(/^(POS Wastage|Wastage):\s*/i, '')
+        const match = body.match(/^(.+?)\s+x(\d+(?:\.\d+)?)\s*[—\-]/)
+        if (match) return { itemName: match[1].trim(), qty: Number(match[2]) }
+        return { itemName: body.split(' x')[0].trim(), qty: 1 }
+      }
+
+      // Group movements by receipt_id, deduplicate by itemName within each receipt
+      // (BOM items produce one stock_movement row per ingredient, but the item name
+      // in the note is the same sold item — we only want to show it once per receipt)
+      const wastageByReceipt: Record<string, {
+        date: string
+        items: Record<string, number>  // itemName → qty
+      }> = {}
+      for (const m of wastagemovs) {
+        const rid = m.reference_id
+        if (!rid) continue
+        if (!wastageByReceipt[rid]) wastageByReceipt[rid] = { date: m.created_at, items: {} }
+        const { itemName, qty } = parseWastageNote(m.note)
+        // Only set qty once per item name per receipt (first occurrence wins)
+        if (!wastageByReceipt[rid].items[itemName]) {
+          wastageByReceipt[rid].items[itemName] = qty
+        }
+      }
+
+      // Fetch receipt numbers for all wastage receipt IDs
+      const wastageReceiptIds = Object.keys(wastageByReceipt)
+      const receiptNumberMap: Record<string, string> = {}
+      if (wastageReceiptIds.length > 0) {
+        const { data: rNums } = await supabase
+          .from('receipts')
+          .select('id, receipt_number')
+          .in('id', wastageReceiptIds)
+        for (const r of (rNums || [])) receiptNumberMap[r.id] = r.receipt_number
+      }
+
+      // COGS cost from financial_entries — used for the total ₱ amount on the card
+      let wastageCogsQuery = supabase
         .from('financial_entries')
         .select('amount, reference_id')
         .eq('type', 'cogs')
-        .eq('reference_type', 'receipt_void')  // only wastage voids keep a COGS entry
+        .eq('reference_type', 'receipt_void')
         .gte('entry_date', dateFrom)
         .lte('entry_date', dateTo)
-      if (shopId) wastageQuery = wastageQuery.eq('shop_id', shopId)
-      const { data: wastageEntries } = await wastageQuery
+      if (shopId) wastageCogsQuery = wastageCogsQuery.eq('shop_id', shopId)
+      const { data: wastageCogsEntries } = await wastageCogsQuery
 
-      // Total wastage cost = sum of ingredient COGS from wastage voids
-      const wastageTotal = (wastageEntries || []).reduce((s, e) => s + Number(e.amount), 0)
+      const cogsPerReceipt: Record<string, number> = {}
+      for (const e of (wastageCogsEntries || [])) {
+        if (e.reference_id) {
+          cogsPerReceipt[e.reference_id] = (cogsPerReceipt[e.reference_id] || 0) + Number(e.amount)
+        }
+      }
+      const wastageTotal = Object.values(cogsPerReceipt).reduce((s, v) => s + v, 0)
 
-      // Build per-item wastage breakdown — only receipts that have a wastage COGS entry
-      const wastageReceiptIds = new Set((wastageEntries || []).map(e => e.reference_id))
-      const wastageRows = rows.filter(r => wastageReceiptIds.has(r.id))
-      const wastageAgg: Record<string, { qty: number; total: number }> = {}
-      for (const r of wastageRows) {
-        for (const item of r.items) {
-          if (!wastageAgg[item.item_name]) wastageAgg[item.item_name] = { qty: 0, total: 0 }
-          wastageAgg[item.item_name].qty += item.quantity
-          wastageAgg[item.item_name].total += item.line_total
+      // Net Sales = Gross − COGS − Wastage − Expenses − Discounts − Taxes
+      const netSales = grossSales - cogs - wastageTotal - cashoutTotal - discounts - taxes
+
+      // Build per-item summary (aggregated across all wastage receipts)
+      const wastageAgg: Record<string, number> = {}
+      for (const { items: wItems } of Object.values(wastageByReceipt)) {
+        for (const [name, qty] of Object.entries(wItems)) {
+          wastageAgg[name] = (wastageAgg[name] || 0) + qty
         }
       }
       const wastageItems = Object.entries(wastageAgg)
-        .map(([name, v]) => ({ name, ...v }))
-        .sort((a, b) => b.total - a.total)
+        .map(([name, qty]) => ({ name, qty, total: 0 }))
+        .sort((a, b) => b.qty - a.qty)
+
+      // Build per-receipt breakdown for the modal
+      const wastageReceipts = wastageReceiptIds
+        .sort((a, b) => new Date(wastageByReceipt[b].date).getTime() - new Date(wastageByReceipt[a].date).getTime())
+        .map(rid => ({
+          receipt_number: receiptNumberMap[rid] || rid.slice(0, 8),
+          date: wastageByReceipt[rid].date,
+          cogsAmount: cogsPerReceipt[rid] || 0,
+          items: Object.entries(wastageByReceipt[rid].items).map(([name, qty]) => ({
+            name,
+            qty,
+            lineTotal: 0,
+          })),
+        }))
 
       // ── Cashout breakdown ─────────────────────────────────────────────────
       const cashoutBreakdown = (rawCashMovements || [])
@@ -1088,7 +1282,7 @@ export default function DashboardPage() {
 
       setSummary({
         grossSales, cogs, cashouts: cashoutTotal, discounts, taxes,
-        netSales, netAfterCogs, wastageTotal, wastageItems,
+        netSales, netAfterCogs, wastageTotal, wastageItems, wastageReceipts,
         paymentBreakdown, cashoutBreakdown, discountBreakdown,
       })
 
@@ -1174,6 +1368,16 @@ export default function DashboardPage() {
   // Cash movement totals for the table header
   const cashInTotal = cashMovements.filter(m => m.type === 'cash_in').reduce((s, m) => s + m.amount, 0)
   const cashOutTotal = cashMovements.filter(m => m.type === 'cash_out').reduce((s, m) => s + m.amount, 0)
+
+  // ── Cash-on-hand: only cash-method sales minus cashouts ───────────────────
+  // Cashouts always come out of the physical cash drawer, never out of GCash/Card
+  // balances, so this is computed from cash-method sales only — not the blended
+  // netAfterCogs figure, which nets cashouts against ALL payment methods combined.
+  // Use case-insensitive match so 'cash', 'Cash', 'CASH' all resolve correctly.
+  const cashSalesAmount = summary?.paymentBreakdown.find(
+    b => b.name?.toLowerCase() === 'cash'
+  )?.amount ?? 0
+  const cashOnHand = cashSalesAmount - (summary?.cashouts ?? 0)
 
   // Don't render anything until role is confirmed — prevents flash of locked state
   if (roleLoading) {
@@ -1277,8 +1481,27 @@ export default function DashboardPage() {
           <p className={`text-2xl font-bold tracking-tight ${
             (summary?.netAfterCogs ?? 0) >= 0 ? 'text-blue-700' : 'text-red-600'
           }`}>{fmt(summary?.netAfterCogs ?? 0)}</p>
-          <p className="text-xs font-medium text-gray-500 mt-1">Net after COGS</p>
-          <p className="text-xs text-gray-400 mt-0.5">Gross − COGS − disc/taxes</p>
+          <p className="text-xs font-medium text-gray-500 mt-1">Net after cashout discount/taxes</p>
+          <p className="text-xs text-gray-400 mt-0.5">Gross − expenses − disc/taxes (all payment methods)</p>
+
+          {/* Cash-on-hand breakdown — cash-method sales only, since cashouts come from the drawer */}
+          <div className="mt-3 pt-3 border-t border-blue-100 space-y-1">
+            <p className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider mb-1.5">Cash on hand</p>
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">Cash sales</span>
+              <span className="font-medium text-gray-700">{fmt(cashSalesAmount)}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">− Cash outs</span>
+              <span className="font-medium text-red-600">−{fmt(summary?.cashouts ?? 0)}</span>
+            </div>
+            <div className={`flex justify-between text-sm font-bold pt-1 border-t border-blue-100 ${
+              cashOnHand >= 0 ? 'text-emerald-700' : 'text-red-600'
+            }`}>
+              <span>Remaining cash</span>
+              <span>{fmt(cashOnHand)}</span>
+            </div>
+          </div>
         </div>
         {/* Net Sales */}
         <div className={`rounded-2xl border-2 p-5 ${
@@ -1297,7 +1520,7 @@ export default function DashboardPage() {
             (summary?.netSales ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-600'
           }`}>{fmt(summary?.netSales ?? 0)}</p>
           <p className="text-xs font-medium text-gray-500 mt-1">Net Sales</p>
-          <p className="text-xs text-gray-400 mt-0.5">After COGS, expenses & discounts</p>
+          <p className="text-xs text-gray-400 mt-0.5">After COGS, wastages, expenses & discounts</p>
         </div>
         {/* Stock Value at Cost — Raw Stocks category */}
         <button
@@ -1699,7 +1922,12 @@ export default function DashboardPage() {
         <DiscountModal breakdown={summary.discountBreakdown} total={summary.discounts} taxes={summary.taxes} onClose={() => setModal(null)} />
       )}
       {modal === 'wastage' && summary && (
-        <WastageModal items={summary.wastageItems} total={summary.wastageTotal} onClose={() => setModal(null)} />
+        <WastageModal
+          items={summary.wastageItems}
+          receipts={summary.wastageReceipts}
+          total={summary.wastageTotal}
+          onClose={() => setModal(null)}
+        />
       )}
       {receiptDetail && (
         <ReceiptModal receipt={receiptDetail} onClose={() => setReceiptDetail(null)} currencySymbol={currencySymbol} />
