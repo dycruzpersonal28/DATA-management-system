@@ -73,14 +73,32 @@ export async function POST(req: NextRequest) {
     if (receiptError) throw receiptError
 
     // ── 2. Insert receipt items ────────────────────────────────────────────────
-    const receiptItems = items.map((item: any) => ({
-      receipt_id: receipt.id, item_id: item.itemId, variant_id: item.variantId || null,
-      item_name: item.name, unit_price: item.price, quantity: item.quantity,
-      discount_amount: 0, tax_amount: 0, line_total: item.lineTotal,
-      modifiers: item.modifiers || [],
-      addons: (item.addons || []).map((a: any) => ({ id: a.id, name: a.name, price: a.price, quantity: a.quantity })),
-      note: item.note || null,
-    }))
+    const receiptItems = items.map((item: any) => {
+      // Build modifiers: preserve any existing modifiers, then append discount + PWD ID ref
+      const baseModifiers: any[] = Array.isArray(item.modifiers) ? item.modifiers : []
+      const discountModifiers: any[] = []
+      if (item.discount_name) {
+        discountModifiers.push({ type: 'discount', value: item.discount_name, amount: item.discount_amount ?? 0 })
+      }
+      if (item.discount_id_ref) {
+        discountModifiers.push({ type: 'discount_id', value: item.discount_id_ref })
+      }
+
+      return {
+        receipt_id: receipt.id,
+        item_id: item.itemId,
+        variant_id: item.variantId || null,
+        item_name: item.name,
+        unit_price: item.price,
+        quantity: item.quantity,
+        discount_amount: item.discount_amount ?? 0,
+        tax_amount: 0,
+        line_total: item.lineTotal,
+        modifiers: [...baseModifiers, ...discountModifiers],
+        addons: (item.addons || []).map((a: any) => ({ id: a.id, name: a.name, price: a.price, quantity: a.quantity })),
+        note: item.note || null,
+      }
+    })
     await supabase.from('receipt_items').insert(receiptItems)
 
     // ── 3. Stock deduction + COGS per item ────────────────────────────────────
@@ -201,6 +219,81 @@ export async function POST(req: NextRequest) {
           }
         }
       }
+
+      // ── 3b. Addon ingredient deduction ──────────────────────────────────────
+      for (const addon of (item.addons || [])) {
+        if (!addon.id) continue
+
+        // Addons are never variants — always look up by item_id only.
+        // Check item_ingredients first (has shop_id), then item_bom (no shop_id).
+        let addonBom: { ingredient_id: string; quantity: number }[] = []
+
+        const { data: ingRows } = await supabase
+          .from('item_ingredients')
+          .select('ingredient_id, quantity')
+          .eq('item_id', addon.id)
+          .eq('shop_id', shop_id)
+
+        if (ingRows && ingRows.length > 0) {
+          addonBom = ingRows
+        } else {
+          const { data: bomRows } = await supabase
+            .from('item_bom')
+            .select('ingredient_id, quantity')
+            .eq('item_id', addon.id)
+          addonBom = bomRows ?? []
+        }
+
+        for (const bom of addonBom) {
+          // bom qty per unit × addon quantity × parent item quantity
+          const ingredientQtyNeeded = bom.quantity * addon.quantity * item.quantity
+
+          const { data: invRow } = await supabase
+            .from('inventory_levels')
+            .select('id, quantity')
+            .eq('item_id', bom.ingredient_id)
+            .eq('shop_id', shop_id)
+            .is('variant_id', null)
+            .maybeSingle()
+
+          const beforeQty = invRow ? Number(invRow.quantity) : null
+          const afterQty  = beforeQty !== null ? Math.max(0, beforeQty - ingredientQtyNeeded) : null
+
+          if (invRow && afterQty !== null) {
+            await supabase.from('inventory_levels')
+              .update({ quantity: afterQty, updated_at: new Date().toISOString() })
+              .eq('id', invRow.id)
+          }
+
+          stockMovements.push({
+            shop_id,
+            item_id: bom.ingredient_id,
+            type: 'sale',
+            quantity: -ingredientQtyNeeded,
+            before_qty: beforeQty,
+            after_qty: afterQty,
+            reference_type: 'receipt',
+            reference_id: receipt.id,
+            note: `Sale (addon): ${addon.name} x${addon.quantity} (on ${item.name} x${item.quantity})`,
+          })
+
+          // COGS for addon ingredient
+          const { data: ingCostRow } = await supabase
+            .from('items').select('cost').eq('id', bom.ingredient_id).maybeSingle()
+          const addonCogs = ingCostRow?.cost
+            ? Number(ingCostRow.cost) * ingredientQtyNeeded
+            : 0
+          if (addonCogs > 0) {
+            financialEntries.push({
+              shop_id, entry_date: entryDate, type: 'cogs', category: 'ingredient_cost',
+              amount: addonCogs, direction: 'out', reference_type: 'receipt',
+              reference_id: receipt.id,
+              note: `COGS (addon): ${addon.name} x${addon.quantity} on ${item.name}`,
+            })
+          }
+        }
+      }
+      // ── End addon ingredient deduction ──────────────────────────────────────
     }
 
     if (stockMovements.length > 0) {
@@ -269,7 +362,7 @@ export async function PATCH(req: NextRequest) {
     // ── 2. Load the line items that were sold ─────────────────────────────────
     const { data: soldItems, error: itemsError } = await supabase
       .from('receipt_items')
-      .select('item_id, variant_id, quantity, item_name')
+      .select('item_id, variant_id, quantity, item_name, addons')
       .eq('receipt_id', receipt_id)
 
     if (itemsError) throw itemsError
@@ -338,6 +431,64 @@ export async function PATCH(req: NextRequest) {
           note: `Void: ${soldItem.item_name} x${soldItem.quantity}`,
         })
       }
+
+      // ── Restore addon ingredients ──────────────────────────────────────────
+      const addonList = Array.isArray(soldItem.addons) ? soldItem.addons : []
+      for (const addon of addonList) {
+        if (!addon.id) continue
+
+        let addonBom: { ingredient_id: string; quantity: number }[] = []
+
+        const { data: ingRows } = await supabase
+          .from('item_ingredients')
+          .select('ingredient_id, quantity')
+          .eq('item_id', addon.id)
+          .eq('shop_id', shop_id)
+
+        if (ingRows && ingRows.length > 0) {
+          addonBom = ingRows
+        } else {
+          const { data: bomRows } = await supabase
+            .from('item_bom')
+            .select('ingredient_id, quantity')
+            .eq('item_id', addon.id)
+          addonBom = bomRows ?? []
+        }
+
+        for (const bom of addonBom) {
+          const ingredientQtyToRestore = bom.quantity * addon.quantity * soldItem.quantity
+
+          const { data: invRow } = await supabase
+            .from('inventory_levels')
+            .select('id, quantity')
+            .eq('shop_id', shop_id)
+            .eq('item_id', bom.ingredient_id)
+            .is('variant_id', null)
+            .maybeSingle()
+
+          const beforeQty = invRow ? Number(invRow.quantity) : null
+          const afterQty  = beforeQty !== null ? beforeQty + ingredientQtyToRestore : null
+
+          if (invRow && afterQty !== null) {
+            await supabase.from('inventory_levels')
+              .update({ quantity: afterQty, updated_at: new Date().toISOString() })
+              .eq('id', invRow.id)
+          }
+
+          stockMovements.push({
+            shop_id,
+            item_id: bom.ingredient_id,
+            type: 'void',
+            quantity: ingredientQtyToRestore,
+            before_qty: beforeQty,
+            after_qty: afterQty,
+            reference_type: 'receipt',
+            reference_id: receipt_id,
+            note: `Void (addon): ${addon.name} x${addon.quantity} (on ${soldItem.item_name} x${soldItem.quantity}) — ingredient restored`,
+          })
+        }
+      }
+      // ── End addon restore ──────────────────────────────────────────────────
     }
 
     if (stockMovements.length > 0) {

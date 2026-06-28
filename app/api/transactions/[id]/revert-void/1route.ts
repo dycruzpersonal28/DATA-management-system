@@ -93,7 +93,7 @@ export async function POST(
     // ── 2. Load receipt items ───────────────────────────────────────────────
     const { data: items } = await admin
       .from('receipt_items')
-      .select('id, item_id, variant_id, quantity, item_name, addons')
+      .select('id, item_id, variant_id, quantity, item_name')
       .eq('receipt_id', receipt_id)
     const receiptItems = items ?? []
 
@@ -313,38 +313,6 @@ async function recreateCogsFromBom(
       const cost  = Number((ingItem as any)?.cost ?? 0)
       totalCogs  += cost * Number(bom.quantity) * Number(ri.quantity)
     }
-
-    // Addon ingredient COGS
-    const addonList = Array.isArray(ri.addons) ? ri.addons : []
-    for (const addon of addonList) {
-      if (!addon.id) continue
-
-      let addonBom: { ingredient_id: string; quantity: number }[] = []
-      const { data: ingRows } = await admin
-        .from('item_ingredients')
-        .select('ingredient_id, quantity')
-        .eq('item_id', addon.id)
-        .eq('shop_id', shop_id)
-      if (ingRows && ingRows.length > 0) {
-        addonBom = ingRows
-      } else {
-        const { data: bomRows } = await admin
-          .from('item_bom')
-          .select('ingredient_id, quantity')
-          .eq('item_id', addon.id)
-        addonBom = bomRows ?? []
-      }
-
-      for (const bom of addonBom) {
-        const { data: ingItem } = await admin
-          .from('items')
-          .select('cost')
-          .eq('id', bom.ingredient_id)
-          .maybeSingle()
-        const cost = Number((ingItem as any)?.cost ?? 0)
-        totalCogs += cost * Number(bom.quantity) * addon.quantity * Number(ri.quantity)
-      }
-    }
   }
 
   if (totalCogs > 0) {
@@ -451,63 +419,5 @@ async function deductInventoryFromBom(
         note: `Sale (void reverted): ${ri.item_name} x${qty}`,
       })
     }
-
-    // ── Re-consume addon ingredients ─────────────────────────────────────────
-    const addonList = Array.isArray(ri.addons) ? ri.addons : []
-    for (const addon of addonList) {
-      if (!addon.id) continue
-
-      let addonBom: { ingredient_id: string; quantity: number }[] = []
-      const { data: ingRows } = await admin
-        .from('item_ingredients')
-        .select('ingredient_id, quantity')
-        .eq('item_id', addon.id)
-        .eq('shop_id', shop_id)
-      if (ingRows && ingRows.length > 0) {
-        addonBom = ingRows
-      } else {
-        const { data: bomRows } = await admin
-          .from('item_bom')
-          .select('ingredient_id, quantity')
-          .eq('item_id', addon.id)
-        addonBom = bomRows ?? []
-      }
-
-      for (const bom of addonBom) {
-        const ingQty = bom.quantity * addon.quantity * qty
-
-        const { data: level } = await admin
-          .from('inventory_levels')
-          .select('id, quantity')
-          .eq('shop_id', shop_id)
-          .eq('item_id', bom.ingredient_id)
-          .is('variant_id', null)
-          .maybeSingle()
-
-        const beforeQty = level ? Number(level.quantity) : 0
-        const afterQty  = Math.max(0, beforeQty - ingQty)
-
-        if (level) {
-          await admin
-            .from('inventory_levels')
-            .update({ quantity: afterQty, updated_at: new Date().toISOString() })
-            .eq('id', level.id)
-        }
-
-        await admin.from('stock_movements').insert({
-          shop_id,
-          item_id:        bom.ingredient_id,
-          type:           'sale',
-          quantity:       ingQty,
-          before_qty:     beforeQty,
-          after_qty:      afterQty,
-          created_by:     createdByName,
-          reference_type: 'receipt',
-          reference_id:   receipt_id,
-          note: `Sale (void reverted, addon): ${addon.name} x${addon.quantity} on ${ri.item_name} x${qty}`,
-        })
-      }
-    }
-    // ── End addon re-consumption ─────────────────────────────────────────────
   }
 }

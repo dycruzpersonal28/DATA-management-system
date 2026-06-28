@@ -34,6 +34,7 @@ interface CartState {
   clearCart: () => void
   setCustomer: (id: string | null) => void
   setDiscount: (amount: number) => void
+  updateItem: (id: string, changes: Partial<Pick<CartItem, 'name' | 'price' | 'variantId' | 'addons' | 'note'>>) => void
   loadItems: (items: CartItem[]) => void
   subtotal: () => number
   total: () => number
@@ -66,6 +67,15 @@ export const useCart = create<CartState>((set, get) => ({
       )
     }))
   },
+
+  updateItem: (id, changes) => set(s => ({
+    items: s.items.map(i => {
+      if (i.id !== id) return i
+      const merged = { ...i, ...changes }
+      const addonsTotal = (merged.addons || []).reduce((sum, a) => sum + a.price * a.quantity, 0)
+      return { ...merged, lineTotal: (merged.price + addonsTotal) * merged.quantity }
+    })
+  })),
 
   loadItems: (items) => set({ items }),
   clearCart: () => set({ items: [], customerId: null, discountAmount: 0 }),

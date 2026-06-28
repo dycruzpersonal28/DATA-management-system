@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -19,7 +19,7 @@ interface ShiftSchedule {
   end_time: string
 }
 
-type KioskStep = 'select' | 'pin_first' | 'pin_first_confirm' | 'employee_pin' | 'manager_pin' | 'success' | 'error'
+type KioskStep = 'select' | 'pin_first' | 'pin_first_confirm' | 'employee_pin' | 'manager_pin' | 'photo' | 'success' | 'error'
 
 // ─── Teal avatar shades — cycles for visual variety ──────────────────────────
 const TEAL_SHADES = [
@@ -181,6 +181,14 @@ export default function KioskPage() {
   const [pinFirstError, setPinFirstError] = useState('')
   const [pinFirstLoading, setPinFirstLoading] = useState(false)
 
+  // Camera / photo state
+  const videoRef        = useRef<HTMLVideoElement | null>(null)
+  const streamRef       = useRef<MediaStream | null>(null)
+  const [capturedPhoto, setCapturedPhoto]         = useState<string | null>(null)
+  const [cameraReady, setCameraReady]             = useState(false)
+  const [cameraError, setCameraError]             = useState(false)
+  const [pendingSubmitAction, setPendingSubmitAction] = useState<string>('')
+
   useEffect(() => {
     setTime(new Date())
     const t = setInterval(() => setTime(new Date()), 1000)
@@ -245,7 +253,14 @@ export default function KioskPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  const stopCamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current = null
+    setCameraReady(false)
+  }, [])
+
   const resetKiosk = () => {
+    stopCamera()
     setStep(kioskMode === 'pin_first' ? 'pin_first' : 'select')
     setSelected(null)
     setSelectedShift('')
@@ -257,6 +272,10 @@ export default function KioskPage() {
     setPendingAction('clock_in')
     setPinFirstPin('')
     setPinFirstError('')
+    setCapturedPhoto(null)
+    setCameraReady(false)
+    setCameraError(false)
+    setPendingSubmitAction('')
   }
 
   // After data loads, set initial step based on kiosk mode
@@ -265,6 +284,68 @@ export default function KioskPage() {
       setStep(kioskMode === 'pin_first' ? 'pin_first' : 'select')
     }
   }, [loading, kioskMode])
+
+  const startCamera = useCallback(async () => {
+    setCameraReady(false)
+    setCameraError(false)
+    setCapturedPhoto(null)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      })
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play()
+          setCameraReady(true)
+        }
+      }
+    } catch (err) {
+      console.warn('Camera unavailable:', err)
+      setCameraError(true)
+    }
+  }, [])
+
+  const takeSnapshot = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+    const canvas = document.createElement('canvas')
+    canvas.width  = video.videoWidth  || 640
+    canvas.height = video.videoHeight || 480
+    canvas.getContext('2d')?.drawImage(video, 0, 0)
+    setCapturedPhoto(canvas.toDataURL('image/jpeg', 0.85))
+    stopCamera()
+  }, [stopCamera])
+
+  const retakePhoto = useCallback(() => {
+    setCapturedPhoto(null)
+    startCamera()
+  }, [startCamera])
+
+  const uploadPhotoToDrive = useCallback((photo: string, name: string, action: string) => {
+    fetch('/api/kiosk-photo', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ imageBase64: photo, employeeName: name, action }),
+    })
+      .then(async res => {
+        const data = await res.json()
+        if (!res.ok) {
+          console.error('Drive upload failed:', data.error)
+        } else {
+          console.log('Drive upload success:', data.name)
+        }
+      })
+      .catch(err => console.error('Drive upload error:', err))
+  }, [])
+
+  const goToPhoto = useCallback((action: string) => {
+    setPendingSubmitAction(action)
+    setStep('photo')
+    startCamera()
+  }, [startCamera])
 
   const handleLogout = async () => {
     await fetch('/api/auth/signout', { method: 'POST' })
@@ -332,7 +413,13 @@ export default function KioskPage() {
   const confirmEmployeePin = () => {
     if (employeePin.length < 6) return
     if (selected && !selected.require_manager_approval) {
-      handleSubmit(true)
+      const isClockedIn = clockedInIds.has(selected.id)
+      const isOnBreak   = onBreakIds.has(selected.id)
+      let action: string
+      if (!isClockedIn && !isOnBreak) action = 'clock_in'
+      else if (isOnBreak) action = 'back_to_work'
+      else action = pendingAction
+      goToPhoto(action)
     } else {
       setStep('manager_pin')
     }
@@ -344,22 +431,22 @@ export default function KioskPage() {
     if (selected.require_manager_approval) {
       setStep('manager_pin')
     } else {
-      handleSubmitPinFirst()
+      const isClockedIn = clockedInIds.has(selected.id)
+      const isOnBreak   = onBreakIds.has(selected.id)
+      let action: string
+      if (!isClockedIn && !isOnBreak) action = 'clock_in'
+      else if (isOnBreak) action = 'back_to_work'
+      else action = pendingAction
+      goToPhoto(action)
     }
   }
 
-  const handleSubmitPinFirst = async () => {
+  // ─── Final submit — called after photo confirmed ────────────────────────────
+  const finalSubmit = async (photo: string | null) => {
     if (!selected || !shopId) return
     setSubmitting(true)
-
-    const isClockedIn = clockedInIds.has(selected.id)
-    const isOnBreak   = onBreakIds.has(selected.id)
-
-    let action: string
-    if (!isClockedIn && !isOnBreak) action = 'clock_in'
-    else if (isOnBreak) action = 'back_to_work'
-    else action = pendingAction
-
+    const action  = pendingSubmitAction
+    const empPin  = kioskMode === 'pin_first' ? pinFirstPin : employeePin
     try {
       const res = await fetch('/api/time-logs', {
         method: 'POST',
@@ -367,7 +454,7 @@ export default function KioskPage() {
         body: JSON.stringify({
           action,
           employee_id:       selected.id,
-          employee_pin:      pinFirstPin,
+          employee_pin:      empPin,
           manager_pin:       managerPin,
           shift_schedule_id: selectedShift || null,
           shop_id:           shopId,
@@ -375,6 +462,9 @@ export default function KioskPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
+
+      // Upload photo to Drive (non-blocking, after time-log succeeds)
+      if (photo) uploadPhotoToDrive(photo, selected.name, action)
 
       const messages: Record<string, string> = {
         clock_in:     `Welcome, ${firstName(selected.name)}! You're clocked in.`,
@@ -393,50 +483,16 @@ export default function KioskPage() {
     }
   }
 
-  const handleSubmit = async (skipManagerPin = false) => {
-    if (!skipManagerPin && managerPin.length < 6) return
-    if (!selected || !shopId) return
-    setSubmitting(true)
-
+  // After manager approves, go to photo step
+  const handleManagerPinConfirm = () => {
+    if (!selected || managerPin.length < 6) return
     const isClockedIn = clockedInIds.has(selected.id)
     const isOnBreak   = onBreakIds.has(selected.id)
-
     let action: string
     if (!isClockedIn && !isOnBreak) action = 'clock_in'
     else if (isOnBreak) action = 'back_to_work'
     else action = pendingAction
-
-    try {
-      const res = await fetch('/api/time-logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action,
-          employee_id:       selected.id,
-          employee_pin:      employeePin,
-          manager_pin:       managerPin,
-          shift_schedule_id: selectedShift || null,
-          shop_id:           shopId,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
-
-      const messages: Record<string, string> = {
-        clock_in:     `Welcome, ${firstName(selected.name)}! You're clocked in.`,
-        clock_out:    `See you, ${firstName(selected.name)}! You've clocked out.`,
-        break_out:    `Enjoy your break, ${firstName(selected.name)}!`,
-        back_to_work: `Welcome back, ${firstName(selected.name)}!`,
-      }
-      setResultMsg(messages[action] ?? 'Done!')
-      setStep('success')
-      fetchData()
-    } catch (err: any) {
-      setErrorMsg(err.message ?? 'Something went wrong')
-      setStep('error')
-    } finally {
-      setSubmitting(false)
-    }
+    goToPhoto(action)
   }
 
   const fmt = (d: Date | null) =>
@@ -957,13 +1013,130 @@ export default function KioskPage() {
               Back
             </button>
             <button
-              onClick={() => kioskMode === 'pin_first' ? handleSubmitPinFirst() : handleSubmit(false)}
+              onClick={handleManagerPinConfirm}
               disabled={managerPin.length < 6 || submitting}
               className="flex-1 py-2.5 rounded-xl text-white text-sm font-medium disabled:opacity-40 transition-all"
               style={{ background: '#0F6E56' }}
             >
               {submitting ? 'Verifying...' : 'Confirm'}
             </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ─── STEP: Photo capture ────────────────────────────────────────────────────
+  if (step === 'photo' && selected) {
+    const shade = avatarShade(selected.name)
+    const fName = firstName(selected.name)
+    const actionLabels: Record<string, string> = {
+      clock_in:     'Clocking In',
+      clock_out:    'Clocking Out',
+      break_out:    'Going on Break',
+      back_to_work: 'Back to Work',
+    }
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-4" style={{ background: '#f4f7f6', fontFamily: "'DM Sans', sans-serif" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-lg w-full max-w-sm overflow-hidden">
+
+          {/* Header */}
+          <div className="px-5 pt-5 pb-4 flex items-center gap-3 border-b border-gray-100">
+            <div
+              className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold text-white flex-shrink-0"
+              style={{ background: shade.bg, boxShadow: `0 0 0 3px ${shade.ring}` }}
+            >
+              {fName}
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-gray-900">{selected.name}</div>
+              <div className="text-xs font-medium" style={{ color: '#1D9E75' }}>
+                {actionLabels[pendingSubmitAction] ?? 'Clock event'}
+              </div>
+            </div>
+          </div>
+
+          {/* Camera / preview */}
+          <div className="relative bg-gray-900" style={{ aspectRatio: '4/3' }}>
+            {!capturedPhoto ? (
+              <>
+                <video
+                  ref={videoRef}
+                  className="w-full h-full object-cover"
+                  muted
+                  playsInline
+                  style={{ transform: 'scaleX(-1)' }}
+                />
+                {!cameraReady && !cameraError && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                    <div className="w-8 h-8 rounded-full border-2 animate-spin" style={{ borderColor: '#1D9E75', borderTopColor: 'transparent' }} />
+                    <span className="text-xs text-gray-300">Starting camera...</span>
+                  </div>
+                )}
+                {cameraError && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
+                    <div className="text-4xl">📷</div>
+                    <div className="text-sm text-white font-medium">Camera unavailable</div>
+                    <div className="text-xs text-gray-400">Allow camera access in your browser, or skip the photo</div>
+                  </div>
+                )}
+                {cameraReady && (
+                  <div className="absolute inset-0 pointer-events-none">
+                    {[['top-4 left-4', 'border-t-2 border-l-2'],['top-4 right-4', 'border-t-2 border-r-2'],['bottom-4 left-4', 'border-b-2 border-l-2'],['bottom-4 right-4', 'border-b-2 border-r-2']].map(([pos, borders], i) => (
+                      <div key={i} className={`absolute ${pos} w-6 h-6 ${borders}`} style={{ borderColor: '#1D9E75' }} />
+                    ))}
+                    <div className="absolute bottom-3 left-0 right-0 text-center text-xs text-white/60">Look at the camera</div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <img src={capturedPhoto} alt="Captured" className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
+            )}
+          </div>
+
+          {/* Buttons */}
+          <div className="p-4 flex flex-col gap-2">
+            {!capturedPhoto ? (
+              <>
+                <button
+                  onClick={takeSnapshot}
+                  disabled={!cameraReady && !cameraError}
+                  className="w-full py-3 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+                  style={{ background: '#0F6E56' }}
+                >
+                  <span>📷</span> Take Photo
+                </button>
+                {cameraError && (
+                  <button
+                    onClick={() => finalSubmit(null)}
+                    disabled={submitting}
+                    className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                  >
+                    {submitting ? 'Submitting...' : 'Skip photo & Submit'}
+                  </button>
+                )}
+                <button onClick={resetKiosk} className="w-full py-2 text-xs text-gray-400 hover:text-gray-600">
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => finalSubmit(capturedPhoto)}
+                  disabled={submitting}
+                  className="w-full py-3 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+                  style={{ background: '#0F6E56' }}
+                >
+                  {submitting
+                    ? <><div className="w-4 h-4 rounded-full border-2 animate-spin" style={{ borderColor: 'white', borderTopColor: 'transparent' }} /> Submitting...</>
+                    : <>✓ Submit Photo</>}
+                </button>
+                <button onClick={retakePhoto} disabled={submitting} className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40">
+                  Retake
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

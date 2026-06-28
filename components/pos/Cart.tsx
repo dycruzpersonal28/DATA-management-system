@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useCart } from '@/lib/hooks/useCart'
-import { Trash2, Plus, Minus, ShoppingCart, Tag, Percent, ChevronDown, X, Check, FileText } from 'lucide-react'
+import { Trash2, Plus, Minus, ShoppingCart, Tag, Percent, ChevronDown, X, Check, FileText, Pencil, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useShop } from '@/lib/hooks/useShop'
 import { createClient } from '@/lib/supabase/client'
@@ -13,11 +13,158 @@ interface CartProps {
   activeShiftId?: string | null
   cashierName?: string
   onPaymentComplete?: () => void
+  onEditItem?: (cartItemId: string) => void
 }
 
 type TaxRate = { id: string; name: string; rate: number; is_active: boolean }
 export type Discount = { id: string; name: string; type: 'percent' | 'fixed'; value: number; is_active: boolean }
-export type ItemDiscount = { discount: Discount; amount: number }
+export type ItemDiscount = { discount: Discount; amount: number; idRef?: string }
+
+// ── Discount Picker Modal ─────────────────────────────────────────────────────
+function DiscountPickerModal({
+  discounts,
+  currentDiscount,
+  currencySymbol,
+  lineTotal,
+  onSelect,
+  onClose,
+}: {
+  discounts: Discount[]
+  currentDiscount: ItemDiscount | null
+  currencySymbol: string
+  lineTotal: number
+  onSelect: (discount: Discount | null, idRef?: string) => void
+  onClose: () => void
+}) {
+  const [selected, setSelected] = useState<Discount | null>(currentDiscount?.discount || null)
+  const [pwdId, setPwdId] = useState(currentDiscount?.idRef || '')
+  const [pwdError, setPwdError] = useState(false)
+
+  const isPwd = (d: Discount | null) =>
+    d?.name?.toLowerCase().includes('pwd') ?? false
+
+  function handleApply() {
+    if (!selected) {
+      onSelect(null)
+      return
+    }
+    if (isPwd(selected)) {
+      if (!pwdId.trim()) {
+        setPwdError(true)
+        return
+      }
+      onSelect(selected, pwdId.trim())
+    } else {
+      onSelect(selected)
+    }
+  }
+
+  function handlePickDiscount(d: Discount) {
+    const picking = selected?.id === d.id ? null : d
+    setSelected(picking)
+    setPwdError(false)
+    // Reset PWD id when switching away from a PWD discount
+    if (!isPwd(picking)) setPwdId('')
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <p className="text-sm font-semibold text-gray-900">Select Discount</p>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-3 space-y-2 max-h-[60vh] overflow-y-auto">
+          {/* Clear option */}
+          <button
+            onClick={() => setSelected(null)}
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-xl border transition-all text-left ${
+              selected === null
+                ? 'border-gray-400 bg-gray-50'
+                : 'border-gray-200 hover:bg-gray-50'
+            }`}
+          >
+            <p className="text-sm text-gray-500">No discount</p>
+            {selected === null && <Check className="w-4 h-4 text-gray-500 flex-shrink-0" />}
+          </button>
+
+          {discounts.map(d => {
+            const isSelected = selected?.id === d.id
+            const previewAmt = d.type === 'percent'
+              ? Math.min(lineTotal * (d.value / 100), lineTotal)
+              : Math.min(d.value, lineTotal)
+            return (
+              <button
+                key={d.id}
+                onClick={() => handlePickDiscount(d)}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl border transition-all text-left ${
+                  isSelected
+                    ? 'border-green-400 bg-green-50'
+                    : 'border-gray-200 hover:border-green-200 hover:bg-gray-50'
+                }`}
+              >
+                <div>
+                  <p className={`text-sm font-medium ${isSelected ? 'text-green-800' : 'text-gray-800'}`}>
+                    {d.name}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {d.type === 'percent' ? `${d.value}%` : `${currencySymbol}${d.value.toFixed(2)}`}
+                    {' '}— saves {currencySymbol}{previewAmt.toFixed(2)}
+                  </p>
+                </div>
+                {isSelected && <Check className="w-4 h-4 text-green-600 flex-shrink-0" />}
+              </button>
+            )
+          })}
+
+          {/* PWD ID field — shown when a PWD discount is selected */}
+          {isPwd(selected) && (
+            <div className="pt-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1.5">
+                PWD ID Number <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={pwdId}
+                onChange={e => { setPwdId(e.target.value); setPwdError(false) }}
+                placeholder="Enter PWD ID number"
+                className={`w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-300 ${
+                  pwdError ? 'border-red-400 bg-red-50' : 'border-gray-200'
+                }`}
+              />
+              {pwdError && (
+                <p className="text-xs text-red-500 mt-1">PWD ID number is required</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="px-3 pb-4 flex gap-2 pt-2 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleApply}
+            disabled={isPwd(selected) && !pwdId.trim()}
+            className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // ── Item Edit Modal (discount + note) ────────────────────────────────────────
 function ItemEditModal({
@@ -29,111 +176,153 @@ function ItemEditModal({
   onApply,
   onRemove,
   onClose,
+  onEditVariants,
 }: {
   item: any
   discounts: Discount[]
   currentDiscount: ItemDiscount | null
   currentNote: string
   currencySymbol: string
-  onApply: (discount: Discount | null, note: string) => void
+  onApply: (discount: Discount | null, note: string, idRef?: string) => void
   onRemove: () => void
   onClose: () => void
+  onEditVariants?: () => void
 }) {
-  const [selected, setSelected] = useState<Discount | null>(currentDiscount?.discount || null)
+  const [selectedDiscount, setSelectedDiscount] = useState<ItemDiscount | null>(currentDiscount)
   const [note, setNote] = useState(currentNote)
+  const [showDiscountPicker, setShowDiscountPicker] = useState(false)
+
+  function handleDiscountSelect(discount: Discount | null, idRef?: string) {
+    if (!discount) {
+      setSelectedDiscount(null)
+    } else {
+      const amount = discount.type === 'percent'
+        ? Math.min(item.lineTotal * (discount.value / 100), item.lineTotal)
+        : Math.min(discount.value, item.lineTotal)
+      setSelectedDiscount({ discount, amount, idRef })
+    }
+    setShowDiscountPicker(false)
+  }
+
+  const hasVariantsOrAddons = item.variantId || (item.addons && item.addons.length > 0)
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-          <div>
-            <p className="text-sm font-semibold text-gray-900">Edit Item</p>
-            <p className="text-xs text-gray-400 truncate max-w-[180px]">{item.name}</p>
+    <>
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        onClick={e => { if (e.target === e.currentTarget) onClose() }}
+      >
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+            <div>
+              <p className="text-sm font-semibold text-gray-900">Edit Item</p>
+              <p className="text-xs text-gray-400 truncate max-w-[180px]">{item.name}</p>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+              <X className="w-4 h-4" />
+            </button>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
 
-        <div className="p-3 space-y-3">
-          {/* Discount section */}
-          {discounts.length > 0 && (
+          <div className="p-3 space-y-3">
+            {/* Edit variants/addons button (Feature 1) */}
+            {onEditVariants && (
+              <button
+                onClick={() => { onClose(); onEditVariants() }}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 transition-colors text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <Pencil className="w-4 h-4 text-indigo-500" />
+                  <span className="text-sm font-medium text-indigo-700">Edit Item</span>
+                </div>
+                <ChevronRight className="w-4 h-4 text-indigo-400" />
+              </button>
+            )}
+
+            {/* Discount row — opens DiscountPickerModal (Feature 2) */}
+            {discounts.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                  <Tag className="w-3 h-3" /> Discount
+                </p>
+                <button
+                  onClick={() => setShowDiscountPicker(true)}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all ${
+                    selectedDiscount
+                      ? 'border-green-400 bg-green-50'
+                      : 'border-gray-200 hover:border-green-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="text-left">
+                    {selectedDiscount ? (
+                      <>
+                        <p className="text-sm font-medium text-green-800">{selectedDiscount.discount.name}</p>
+                        <p className="text-xs text-green-600">
+                          −{currencySymbol}{selectedDiscount.amount.toFixed(2)}
+                          {selectedDiscount.idRef && (
+                            <span className="text-gray-400"> · ID: {selectedDiscount.idRef}</span>
+                          )}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-sm text-gray-400">Tap to select a discount…</p>
+                    )}
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-gray-300 flex-shrink-0" />
+                </button>
+              </div>
+            )}
+
+            {/* Note section */}
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                <Tag className="w-3 h-3" /> Discount
+                <FileText className="w-3 h-3" /> Note
               </p>
-              <div className="space-y-1.5">
-                {discounts.map(d => {
-                  const isSelected = selected?.id === d.id
-                  const previewAmt = d.type === 'percent'
-                    ? Math.min(item.lineTotal * (d.value / 100), item.lineTotal)
-                    : Math.min(d.value, item.lineTotal)
-                  return (
-                    <button
-                      key={d.id}
-                      onClick={() => setSelected(isSelected ? null : d)}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl border transition-all text-left ${
-                        isSelected
-                          ? 'border-green-400 bg-green-50'
-                          : 'border-gray-200 hover:border-green-200 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div>
-                        <p className={`text-sm font-medium ${isSelected ? 'text-green-800' : 'text-gray-800'}`}>{d.name}</p>
-                        <p className="text-xs text-gray-400">
-                          {d.type === 'percent' ? `${d.value}%` : `${currencySymbol}${d.value.toFixed(2)}`}
-                          {' '}— saves {currencySymbol}{previewAmt.toFixed(2)}
-                        </p>
-                      </div>
-                      {isSelected && <Check className="w-4 h-4 text-green-600 flex-shrink-0" />}
-                    </button>
-                  )
-                })}
-              </div>
+              <textarea
+                rows={2}
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                placeholder="e.g. No onions, extra sauce…"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-300"
+              />
             </div>
-          )}
+          </div>
 
-          {/* Note section */}
-          <div>
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-              <FileText className="w-3 h-3" /> Note
-            </p>
-            <textarea
-              rows={2}
-              value={note}
-              onChange={e => setNote(e.target.value)}
-              placeholder="e.g. No onions, extra sauce…"
-              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-300"
-            />
+          <div className="px-3 pb-4 flex gap-2">
+            {(currentDiscount || currentNote) && (
+              <button
+                onClick={onRemove}
+                className="flex-1 py-2.5 rounded-xl border border-red-200 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              onClick={() => onApply(selectedDiscount?.discount ?? null, note.trim(), selectedDiscount?.idRef)}
+              className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all"
+            >
+              Save
+            </button>
           </div>
         </div>
-
-        <div className="px-3 pb-4 flex gap-2">
-          {(currentDiscount || currentNote) && (
-            <button
-              onClick={onRemove}
-              className="flex-1 py-2.5 rounded-xl border border-red-200 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors"
-            >
-              Clear
-            </button>
-          )}
-          <button
-            onClick={() => onApply(selected, note.trim())}
-            className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all"
-          >
-            Save
-          </button>
-        </div>
       </div>
-    </div>
+
+      {/* Discount picker overlay (Feature 2 + 3) */}
+      {showDiscountPicker && (
+        <DiscountPickerModal
+          discounts={discounts}
+          currentDiscount={selectedDiscount}
+          currencySymbol={currencySymbol}
+          lineTotal={item.lineTotal}
+          onSelect={handleDiscountSelect}
+          onClose={() => setShowDiscountPicker(false)}
+        />
+      )}
+    </>
   )
 }
 
-export default function Cart({ diningOption, activeShiftId, cashierName, onPaymentComplete }: CartProps) {
+export default function Cart({ diningOption, activeShiftId, cashierName, onPaymentComplete, onEditItem }: CartProps) {
   const supabase = createClient()
   const { items, removeItem, updateQuantity, subtotal, discountAmount, setDiscount, clearCart } = useCart()
   const { currencySymbol } = useShop()
@@ -229,11 +418,6 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
         itemRecipeMap.get(r.item_id)!.push(r)
       }
 
-      // Each cart line gets its own limit, keyed by the unique cart line id (item.id),
-      // not the product/variant id. This way two different variants of the same
-      // item — or two separate lines of the same variant — each see an accurate
-      // "how many more can I make" number, computed against the same shared
-      // ingredient stock (so adding one reduces the live headroom for the other).
       const limits = new Map<string, number>()
       for (const cartItem of items) {
         const recipe = cartItem.variantId
@@ -369,12 +553,12 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
     setShowDiscountDropdown(false)
   }
 
-  function handleApplyItemEdit(itemId: string, lineTotal: number, discount: Discount | null, note: string) {
+  function handleApplyItemEdit(itemId: string, lineTotal: number, discount: Discount | null, note: string, idRef?: string) {
     if (discount) {
       const amount = discount.type === 'percent'
         ? Math.min(lineTotal * (discount.value / 100), lineTotal)
         : Math.min(discount.value, lineTotal)
-      setItemDiscounts(prev => new Map(prev).set(itemId, { discount, amount }))
+      setItemDiscounts(prev => new Map(prev).set(itemId, { discount, amount, idRef }))
     } else {
       setItemDiscounts(prev => { const next = new Map(prev); next.delete(itemId); return next })
     }
@@ -440,9 +624,10 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
           currentDiscount={itemDiscounts.get(editingItem.id) || null}
           currentNote={itemNotes.get(editingItem.id) || editingItem.note || ''}
           currencySymbol={currencySymbol}
-          onApply={(discount, note) => handleApplyItemEdit(editingItem.id, editingItem.lineTotal, discount, note)}
+          onApply={(discount, note, idRef) => handleApplyItemEdit(editingItem.id, editingItem.lineTotal, discount, note, idRef)}
           onRemove={() => handleRemoveItemEdit(editingItem.id)}
           onClose={() => setEditingItemId(null)}
+          onEditVariants={onEditItem ? () => onEditItem(editingItem.id) : undefined}
         />
       )}
 
@@ -513,6 +698,9 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
                         <p className="text-xs text-green-600 font-medium mt-0.5">
                           <Tag className="w-3 h-3 inline mr-0.5" />
                           {itemDisc.discount.name} −{currencySymbol}{itemDisc.amount.toFixed(2)}
+                          {itemDisc.idRef && (
+                            <span className="text-gray-400"> · ID: {itemDisc.idRef}</span>
+                          )}
                         </p>
                       )}
                     </div>
@@ -719,7 +907,8 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
           itemDiscounts={itemDiscounts}
           employeeId={currentUserId ?? undefined}
           cashierName={cashierName}
-          onClose={() => {
+          onClose={() => setShowPayment(false)}
+          onPaymentComplete={() => {
             setShowPayment(false)
             onPaymentComplete?.()
           }}

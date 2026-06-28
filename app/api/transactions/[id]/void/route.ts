@@ -86,7 +86,7 @@ export async function POST(
   // ── Fetch receipt items ───────────────────────────────────────────────────
   const { data: items, error: itemsErr } = await admin
     .from('receipt_items')
-    .select('id, item_id, variant_id, quantity, item_name')
+    .select('id, item_id, variant_id, quantity, item_name, addons')
     .eq('receipt_id', receipt_id)
 
   if (itemsErr) {
@@ -248,6 +248,87 @@ export async function POST(
         console.log('[VOID DEBUG] wastage stock_movement insert error:', wastageMovErr)
       }
     }
+
+    // ── Restore addon ingredients ────────────────────────────────────────────
+    const addonList = Array.isArray(item.addons) ? item.addons : []
+    for (const addon of addonList) {
+      if (!addon.id) continue
+
+      // Addons are never variants — look up by item_id only.
+      // item_ingredients has shop_id; item_bom does not.
+      let addonBom: { ingredient_id: string; quantity: number }[] = []
+
+      const { data: ingRows } = await admin
+        .from('item_ingredients')
+        .select('ingredient_id, quantity')
+        .eq('item_id', addon.id)
+        .eq('shop_id', shop_id)
+
+      if (ingRows && ingRows.length > 0) {
+        addonBom = ingRows
+      } else {
+        const { data: bomRows } = await admin
+          .from('item_bom')
+          .select('ingredient_id, quantity')
+          .eq('item_id', addon.id)
+        addonBom = bomRows ?? []
+      }
+
+      for (const bom of addonBom) {
+        // bom qty per unit × addon quantity × parent item quantity
+        const ingredientQtyToRestore = bom.quantity * addon.quantity * qty
+
+        const { data: ingLevel } = await admin
+          .from('inventory_levels')
+          .select('id, quantity')
+          .eq('shop_id', shop_id)
+          .eq('item_id', bom.ingredient_id)
+          .is('variant_id', null)
+          .maybeSingle()
+
+        const beforeQty = ingLevel ? Number(ingLevel.quantity) : 0
+
+        if (void_type === 'return_stock') {
+          const afterQty = beforeQty + ingredientQtyToRestore
+
+          if (ingLevel) {
+            await admin
+              .from('inventory_levels')
+              .update({ quantity: afterQty, updated_at: new Date().toISOString() })
+              .eq('id', ingLevel.id)
+          }
+
+          await admin.from('stock_movements').insert({
+            shop_id,
+            item_id:        bom.ingredient_id,
+            type:           'void',
+            quantity:       ingredientQtyToRestore,
+            before_qty:     beforeQty,
+            after_qty:      afterQty,
+            created_by:     createdByName,
+            reference_type: 'receipt',
+            reference_id:   receipt_id,
+            note: `Void (addon): ${addon.name} x${addon.quantity} (on ${item.item_name} x${qty}) — ingredient restored`,
+          })
+
+        } else {
+          // Wastage — stock was already deducted at sale time; log only, no restock.
+          await admin.from('stock_movements').insert({
+            shop_id,
+            item_id:        bom.ingredient_id,
+            type:           'loss',
+            quantity:       0,
+            before_qty:     beforeQty,
+            after_qty:      beforeQty,
+            created_by:     createdByName,
+            reference_type: 'receipt',
+            reference_id:   receipt_id,
+            note: `Wastage (addon): ${addon.name} x${addon.quantity} — dispensed at sale, marked as waste`,
+          })
+        }
+      }
+    }
+    // ── End addon restore ────────────────────────────────────────────────────
   }
 
   // ── Handle financial entries ──────────────────────────────────────────────

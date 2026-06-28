@@ -250,16 +250,57 @@ export async function POST(
     }
   }
 
-  // ── Delete financial entries tied to this receipt ─────────────────────────
+  // ── Handle financial entries ──────────────────────────────────────────────
   if (void_type === 'wastage') {
+    // For wastage: revenue/tax/discount entries are removed (sale is voided),
+    // but COGS is re-written with reference_type='receipt_void' so the dashboard
+    // Wastage card can sum it separately from regular sale COGS.
+
+    // 1. Fetch the original COGS entries for this receipt
+    const { data: cogsEntries } = await admin
+      .from('financial_entries')
+      .select('type, category, amount, direction')
+      .eq('reference_type', 'receipt')
+      .eq('reference_id', receipt_id)
+      .eq('shop_id', shop_id)
+      .eq('type', 'cogs')
+
+    // 2. Re-insert under reference_type='receipt_void' so they show on
+    //    the Wastage card instead of the COGS card
+    if (cogsEntries && cogsEntries.length > 0) {
+      const { data: shopRow } = await admin
+        .from('shops')
+        .select('timezone')
+        .eq('id', shop_id)
+        .single()
+      const entryDate = new Intl.DateTimeFormat('en-CA', {
+        timeZone: shopRow?.timezone ?? 'Asia/Manila',
+      }).format(new Date())
+
+      const wastageEntries = cogsEntries.map((e: any) => ({
+        shop_id,
+        entry_date:     entryDate,
+        type:           e.type,
+        category:       e.category,
+        amount:         e.amount,
+        direction:      e.direction,
+        reference_type: 'receipt_void',
+        reference_id:   receipt_id,
+        note:           `Wastage COGS: voided receipt ${receipt_id}`,
+      }))
+      await admin.from('financial_entries').insert(wastageEntries)
+    }
+
+    // 3. Delete all original entries for this receipt
     await admin
       .from('financial_entries')
       .delete()
       .eq('reference_type', 'receipt')
       .eq('reference_id', receipt_id)
       .eq('shop_id', shop_id)
-      .in('type', ['revenue', 'discount', 'tax'])
+
   } else {
+    // Return to stock: remove all financial entries (sale fully reversed)
     await admin
       .from('financial_entries')
       .delete()

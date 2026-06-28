@@ -884,20 +884,35 @@ export default function TransactionsPage() {
     const tz = shopTimezone
 
     function toUtcBound(dateStr: string, endOfDay: boolean): string {
+      // Build the wall-clock time we want in the shop's timezone, then find
+      // its UTC equivalent — without touching new Date(string) which would
+      // interpret the string in the *browser's* local timezone instead of
+      // the shop's timezone, causing the wrong UTC offset on clients not in
+      // the same timezone as the shop.
       const time = endOfDay ? 'T23:59:59' : 'T00:00:00'
-      const localDate = new Date(`${dateStr}${time}`)
+
+      // 1. Use a known UTC epoch and ask Intl what the shop's local time is
+      //    at that moment, then compute the UTC↔shop offset from the delta.
+      //    We use the date itself as the probe point so DST is handled correctly.
+      const probeUtc = new Date(`${dateStr}${time}Z`) // treat as UTC first (probe only)
       const formatter = new Intl.DateTimeFormat('en-CA', {
         timeZone: tz,
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', second: '2-digit',
         hour12: false,
       })
-      const parts = formatter.formatToParts(localDate)
+      const parts = formatter.formatToParts(probeUtc)
       const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
-      const localIso = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`
-      const utcMs   = localDate.getTime()
-      const localMs = new Date(localIso + 'Z').getTime()
-      return new Date(utcMs - (localMs - utcMs)).toISOString()
+      // What the shop's local time reads when UTC is probeUtc
+      const shopLocalIso = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`
+      // Offset in ms: positive = shop is ahead of UTC (e.g. Asia/Manila = +8h)
+      const offsetMs = probeUtc.getTime() - new Date(shopLocalIso + 'Z').getTime()
+
+      // 2. The UTC moment that corresponds to dateStr+time in the shop timezone
+      //    is: treat dateStr+time as if it were UTC (gives us the wall-clock ms),
+      //    then add the shop's offset to shift it to true UTC.
+      const wallClockUtcMs = new Date(`${dateStr}${time}Z`).getTime()
+      return new Date(wallClockUtcMs + offsetMs).toISOString()
     }
 
     let receiptsQuery = supabase

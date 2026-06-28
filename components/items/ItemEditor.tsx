@@ -20,7 +20,7 @@ type Props = {
   onSaved: () => void
 }
 
-type Ingredient = { ingredient_id: string; quantity: number }
+type Ingredient = { ingredient_id: string; quantity: string }
 
 type ModifierGroup = {
   id: string
@@ -70,10 +70,16 @@ type FormState = {
   variants: Variant[]
 }
 
+// Display a number exactly as computed — no rounding, no fixed decimal places.
+// e.g. 1.3333... shows as-is; 10.5 shows as 10.5; 10 shows as 10.
+function fmt(n: number): string {
+  return Number.isFinite(n) ? String(n) : '0'
+}
+
 function calcCost(ingredients: Ingredient[], allItems: Item[]): number {
   return ingredients.reduce((sum, ing) => {
     const found = allItems.find(i => i.id === ing.ingredient_id)
-    return sum + (found ? (found.cost ?? 0) * ing.quantity : 0)
+    return sum + (found ? (found.cost ?? 0) * (parseFloat(ing.quantity) || 0) : 0)
   }, 0)
 }
 
@@ -174,7 +180,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
         addon_categories: variantAddonMap[v.id] ?? [],
         ingredients: (v.item_variant_ingredients ?? []).map((vi: any) => ({
           ingredient_id: vi.ingredient_id,
-          quantity: vi.quantity,
+          quantity: String(vi.quantity),
         })),
       }))
 
@@ -215,7 +221,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
         tax_rate: String(item!.tax_rate ?? 0),
         ingredients: (item!.ingredients ?? []).map(i => ({
           ingredient_id: i.ingredient_id,
-          quantity: i.quantity,
+          quantity: String(i.quantity),
         })),
         variants,
       })
@@ -268,7 +274,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
   )
 
   function addIngredient(ingredientId: string) {
-    set('ingredients', [...form.ingredients, { ingredient_id: ingredientId, quantity: 1 }])
+    set('ingredients', [...form.ingredients, { ingredient_id: ingredientId, quantity: '1' }])
     setIngSearch('')
     setShowIngSearch(false)
   }
@@ -277,7 +283,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
     set('ingredients', form.ingredients.filter(i => i.ingredient_id !== ingredientId))
   }
 
-  function updateQty(ingredientId: string, qty: number) {
+  function updateQty(ingredientId: string, qty: string) {
     set('ingredients', form.ingredients.map(i =>
       i.ingredient_id === ingredientId ? { ...i, quantity: qty } : i
     ))
@@ -306,7 +312,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
 
   function addVariantIngredient(variantIdx: number, ingredientId: string) {
     const v = form.variants[variantIdx]
-    const newIngs = [...v.ingredients, { ingredient_id: ingredientId, quantity: 1 }]
+    const newIngs = [...v.ingredients, { ingredient_id: ingredientId, quantity: '1' }]
     updateVariant(variantIdx, { ingredients: newIngs, ingSearch: '', showIngSearch: false })
   }
 
@@ -317,7 +323,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
     })
   }
 
-  function updateVariantQty(variantIdx: number, ingredientId: string, qty: number) {
+  function updateVariantQty(variantIdx: number, ingredientId: string, qty: string) {
     const v = form.variants[variantIdx]
     updateVariant(variantIdx, {
       ingredients: v.ingredients.map(i =>
@@ -385,8 +391,8 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
       await supabase.from('item_ingredients').delete().eq('item_id', itemId!)
       if (form.is_composite && form.ingredients.length > 0) {
         const rows = form.ingredients
-          .filter(i => i.ingredient_id && i.quantity > 0)
-          .map(i => ({ shop_id: shopId, item_id: itemId!, ingredient_id: i.ingredient_id, quantity: i.quantity }))
+          .filter(i => i.ingredient_id && parseFloat(i.quantity) > 0)
+          .map(i => ({ shop_id: shopId, item_id: itemId!, ingredient_id: i.ingredient_id, quantity: parseFloat(i.quantity) }))
         if (rows.length > 0) {
           const { error } = await supabase.from('item_ingredients').insert(rows)
           if (error) throw error
@@ -429,12 +435,12 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
           await supabase.from('item_variant_ingredients').delete().eq('variant_id', variantId!)
           if (v.ingredients.length > 0) {
             const ingRows = v.ingredients
-              .filter(ing => ing.ingredient_id && ing.quantity > 0)
+              .filter(ing => ing.ingredient_id && parseFloat(ing.quantity) > 0)
               .map(ing => ({
                 shop_id: shopId,
                 variant_id: variantId!,
                 ingredient_id: ing.ingredient_id,
-                quantity: ing.quantity,
+                quantity: parseFloat(ing.quantity),
               }))
             if (ingRows.length > 0) {
               const { error: ingError } = await supabase.from('item_variant_ingredients').insert(ingRows)
@@ -607,7 +613,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                 <Label className="text-xs text-gray-500 mb-1.5 block">
                   Price (₱){!isFinalProduct && <span className="text-gray-300 ml-1">Final Products only</span>}
                 </Label>
-                <Input type="number" min="0" step="0.01" value={form.price}
+                <Input type="number" min="0" step="any" value={form.price}
                   disabled={!isFinalProduct || form.has_variants}
                   onChange={e => set('price', e.target.value)}
                   className={(!isFinalProduct || form.has_variants) ? 'opacity-40 cursor-not-allowed' : ''}
@@ -620,8 +626,8 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                 <Label className="text-xs text-gray-500 mb-1.5 block">
                   Cost (₱){form.is_composite && <span className="text-gray-300 ml-1">auto from BOM</span>}
                 </Label>
-                <Input type="number" min="0" step="0.01"
-                  value={form.is_composite ? bomCost.toFixed(2) : form.cost}
+                <Input type="number" min="0" step="any"
+                  value={form.is_composite ? fmt(bomCost) : form.cost}
                   disabled={form.is_composite}
                   onChange={e => set('cost', e.target.value)}
                   className={form.is_composite ? 'opacity-40 cursor-not-allowed bg-gray-50' : ''}
@@ -671,11 +677,11 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                               <p className="text-xs text-gray-400">SKU: {ingItem?.sku ?? '—'}</p>
                             </td>
                             <td className="py-2 text-right">
-                              <input type="number" min="0.001" step="0.001" value={ing.quantity}
-                                onChange={e => updateQty(ing.ingredient_id, parseFloat(e.target.value) || 1)}
+                              <input type="number" min="0" step="any" value={ing.quantity}
+                                onChange={e => updateQty(ing.ingredient_id, e.target.value)}
                                 className="w-20 text-right border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                             </td>
-                            <td className="py-2 text-right text-gray-600 text-xs">₱{lineCost.toFixed(2)}</td>
+                            <td className="py-2 text-right text-gray-600 text-xs">₱{fmt(lineCost)}</td>
                             <td className="py-2 pl-2">
                               <button onClick={() => removeIngredient(ing.ingredient_id)}
                                 className="text-gray-300 hover:text-red-500 transition-colors">
@@ -689,7 +695,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                     <tfoot>
                       <tr className="border-t border-gray-100">
                         <td colSpan={2} className="pt-2 text-right text-xs text-gray-400">Total BOM cost</td>
-                        <td className="pt-2 text-right text-sm font-semibold text-gray-800">₱{bomCost.toFixed(2)}</td>
+                        <td className="pt-2 text-right text-sm font-semibold text-gray-800">₱{fmt(bomCost)}</td>
                         <td />
                       </tr>
                     </tfoot>
@@ -720,7 +726,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                                   <span className="text-sm font-medium text-gray-800">{i.name}</span>
                                   {i.sku && <span className="ml-2 text-xs text-gray-400">SKU: {i.sku}</span>}
                                 </span>
-                                <span className="text-xs text-gray-400">₱{(i.cost ?? 0).toFixed(2)}/unit</span>
+                                <span className="text-xs text-gray-400">₱{fmt(i.cost ?? 0)}/unit</span>
                               </button>
                             </li>
                           ))}
@@ -790,7 +796,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                             <div>
                               <Label className="text-xs text-gray-500 mb-1.5 block">Price (₱)</Label>
                               <Input
-                                type="number" min="0" step="0.01"
+                                type="number" min="0" step="any"
                                 placeholder="0.00"
                                 value={v.price}
                                 onChange={e => updateVariant(vi, { price: e.target.value })}
@@ -799,7 +805,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                             <div>
                               <Label className="text-xs text-gray-500 mb-1.5 block">Cost (₱) <span className="text-gray-300">auto from ingredients</span></Label>
                               <Input
-                                value={v.cost.toFixed(2)}
+                                value={fmt(v.cost)}
                                 disabled
                                 className="opacity-40 cursor-not-allowed bg-gray-50"
                               />
@@ -828,11 +834,11 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                                         <p className="text-xs text-gray-400">SKU: {ingItem?.sku ?? '—'}</p>
                                       </td>
                                       <td className="py-2 text-right">
-                                        <input type="number" min="0.001" step="0.001" value={ing.quantity}
-                                          onChange={e => updateVariantQty(vi, ing.ingredient_id, parseFloat(e.target.value) || 1)}
+                                        <input type="number" min="0" step="any" value={ing.quantity}
+                                          onChange={e => updateVariantQty(vi, ing.ingredient_id, e.target.value)}
                                           className="w-20 text-right border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                                       </td>
-                                      <td className="py-2 text-right text-gray-600 text-xs">₱{lineCost.toFixed(2)}</td>
+                                      <td className="py-2 text-right text-gray-600 text-xs">₱{fmt(lineCost)}</td>
                                       <td className="py-2 pl-2">
                                         <button onClick={() => removeVariantIngredient(vi, ing.ingredient_id)}
                                           className="text-gray-300 hover:text-red-500 transition-colors">
@@ -846,7 +852,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                               <tfoot>
                                 <tr className="border-t border-gray-100">
                                   <td colSpan={2} className="pt-2 text-right text-xs text-gray-400">Total cost</td>
-                                  <td className="pt-2 text-right text-sm font-semibold text-gray-800">₱{v.cost.toFixed(2)}</td>
+                                  <td className="pt-2 text-right text-sm font-semibold text-gray-800">₱{fmt(v.cost)}</td>
                                   <td />
                                 </tr>
                               </tfoot>
@@ -881,7 +887,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                                             <span className="text-sm font-medium text-gray-800">{i.name}</span>
                                             {i.sku && <span className="ml-2 text-xs text-gray-400">SKU: {i.sku}</span>}
                                           </span>
-                                          <span className="text-xs text-gray-400">₱{(i.cost ?? 0).toFixed(2)}/unit</span>
+                                          <span className="text-xs text-gray-400">₱{fmt(i.cost ?? 0)}/unit</span>
                                         </button>
                                       </li>
                                     ))}

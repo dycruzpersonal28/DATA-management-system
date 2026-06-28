@@ -7,7 +7,7 @@ import { useCart } from '@/lib/hooks/useCart'
 import { useShop } from '@/lib/hooks/useShop'
 import Cart from '@/components/pos/Cart'
 import {
-  ArrowLeft, Tag, ChevronLeft, Search, LayoutGrid, List, X,
+  ArrowLeft, Tag, ChevronLeft, Search, LayoutGrid, List, X, Monitor,
   ChevronRight, Plus, Minus, Clock, DollarSign, Ticket,
   UtensilsCrossed, LogIn, LogOut, ArrowDownCircle, ArrowUpCircle,
   Save, FolderOpen, Trash2, AlertTriangle, TrendingUp, ShoppingCart,
@@ -18,8 +18,24 @@ import { toast } from 'sonner'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Variant = { id: string; name: string; price: number; cost: number }
-type AddonItem = { id: string; name: string; price: number; selected: boolean; quantity: number }
+type AddonItem = {
+  id: string
+  name: string
+  price: number
+  selected: boolean
+  quantity: number
+  outOfStock?: boolean
+  canMake?: number | null
+}
 type AddonCategory = { id: string; name: string; items: AddonItem[] }
+
+// ── Expense categories (mirrors Finance/Journal page) ─────────────────────────
+const EXPENSE_CATEGORIES = [
+  'Rent', 'Utilities', 'Electricity', 'Water', 'Internet',
+  'Supplies', 'Repairs & Maintenance', 'Marketing', 'Transportation',
+  'Licenses & Permits', 'Insurance', 'Cleaning', 'Packaging',
+  'Equipment', 'Professional Fees', 'Other Expense',
+]
 
 type PickerProps = {
   item: any
@@ -29,6 +45,7 @@ type PickerProps = {
   onClose: () => void
   currencySymbol: string
   variantAvailability?: Map<string, number | null>
+  addonAvailability?: AvailabilityMap
 }
 
 // availability: how many of this item can be made; null = no ingredient tracking
@@ -40,13 +57,22 @@ type AvailabilityInfo = {
 type AvailabilityMap = Map<string, AvailabilityInfo>
 
 // ── Variant Picker Modal ──────────────────────────────────────────────────────
-function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClose, currencySymbol, variantAvailability }: PickerProps) {
+function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClose, currencySymbol, variantAvailability, addonAvailability }: PickerProps) {
   const [selected, setSelected] = useState<Variant | null>(null)
   const [note, setNote] = useState('')
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
   const [catItems, setCatItems] = useState<Map<string, AddonItem[]>>(() => {
     const m = new Map<string, AddonItem[]>()
-    for (const cat of addonCategories) m.set(cat.id, cat.items)
+    for (const cat of addonCategories) {
+      m.set(cat.id, cat.items.map(a => {
+        const avail = addonAvailability?.get(a.id)
+        return {
+          ...a,
+          outOfStock: avail ? avail.canMake === 0 : false,
+          canMake: avail ? avail.canMake : null,
+        }
+      }))
+    }
     return m
   })
 
@@ -68,9 +94,11 @@ function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClos
   function toggleAddon(catId: string, addonId: string) {
     setCatItems(prev => {
       const next = new Map(prev)
-      const items = (next.get(catId) || []).map(a =>
-        a.id === addonId ? { ...a, selected: !a.selected, quantity: !a.selected ? 1 : 0 } : a
-      )
+      const items = (next.get(catId) || []).map(a => {
+        if (a.id !== addonId) return a
+        if (a.outOfStock && !a.selected) return a // block selecting OOS addons
+        return { ...a, selected: !a.selected, quantity: !a.selected ? 1 : 0 }
+      })
       next.set(catId, items)
       return next
     })
@@ -188,16 +216,28 @@ function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClos
                       {isOpen && (
                         <div className="border-t border-gray-100 divide-y divide-gray-100">
                           {items.map(a => (
-                            <div key={a.id} className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${a.selected ? 'bg-indigo-50' : 'bg-white'}`}>
+                            <div key={a.id} className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${a.outOfStock ? 'opacity-50' : a.selected ? 'bg-indigo-50' : 'bg-white'}`}>
                               <button
-                                onClick={() => toggleAddon(cat.id, a.id)}
-                                className={`w-5 h-5 rounded-md border-2 flex-shrink-0 flex items-center justify-center transition-colors ${a.selected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300'}`}
+                                onClick={() => !a.outOfStock && toggleAddon(cat.id, a.id)}
+                                disabled={a.outOfStock}
+                                className={`w-5 h-5 rounded-md border-2 flex-shrink-0 flex items-center justify-center transition-colors ${a.outOfStock ? 'border-gray-200 cursor-not-allowed' : a.selected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300'}`}
                               >
                                 {a.selected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
                               </button>
-                              <div className="flex-1 min-w-0" onClick={() => toggleAddon(cat.id, a.id)}>
+                              <div className="flex-1 min-w-0" onClick={() => !a.outOfStock && toggleAddon(cat.id, a.id)}>
                                 <p className="text-sm font-medium text-gray-800 truncate">{a.name}</p>
-                                {a.price > 0 && <p className="text-xs text-indigo-600 font-semibold">+{currencySymbol}{Number(a.price).toFixed(2)}</p>}
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {a.price > 0 && <p className="text-xs text-indigo-600 font-semibold">+{currencySymbol}{Number(a.price).toFixed(2)}</p>}
+                                  {a.outOfStock ? (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-600">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" /> Out of stock
+                                    </span>
+                                  ) : a.canMake !== null && a.canMake !== undefined ? (
+                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${a.canMake <= 3 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                      <span className={`w-1.5 h-1.5 rounded-full ${a.canMake <= 3 ? 'bg-amber-500' : 'bg-emerald-500'}`} /> {a.canMake} available
+                                    </span>
+                                  ) : null}
+                                </div>
                               </div>
                               {a.selected && (
                                 <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -238,6 +278,51 @@ function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClos
   )
 }
 
+// ── POS Terminal Picker Modal ─────────────────────────────────────────────────
+function TerminalPickerModal({
+  terminals,
+  onSelect,
+  onClose,
+}: {
+  terminals: any[]
+  onSelect: (terminal: any) => void
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-9 h-9 bg-indigo-100 rounded-xl flex items-center justify-center">
+            <Monitor className="w-4 h-4 text-indigo-600" />
+          </div>
+          <h2 className="text-sm font-semibold text-gray-900">Select POS Terminal</h2>
+          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>
+        </div>
+        <p className="text-xs text-gray-500 mb-4">Choose which terminal this shift will run on.</p>
+        {terminals.length === 0 ? (
+          <div className="text-center py-6 text-gray-400 text-xs">
+            No active terminals found. Add terminals in Users & POS Settings.
+          </div>
+        ) : (
+          <div className="space-y-2 mb-4">
+            {terminals.map(t => (
+              <button
+                key={t.id}
+                onClick={() => onSelect(t)}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-gray-50 hover:bg-indigo-50 border border-gray-200 hover:border-indigo-300 rounded-xl text-left transition-all"
+              >
+                <Monitor className="w-4 h-4 text-indigo-500 flex-shrink-0" />
+                <span className="text-sm font-medium text-gray-800">{t.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <button onClick={onClose} className="w-full py-2 text-xs text-gray-400 hover:text-gray-600 transition-colors">Cancel</button>
+      </div>
+    </div>
+  )
+}
+
 // ── Shift Clock-In Modal ──────────────────────────────────────────────────────
 function ShiftModal({
   mode,
@@ -255,13 +340,14 @@ function ShiftModal({
   onClockIn: (openingCash: number) => void
   onClockOut: (shiftId: string, closingCash: number, note: string) => void
   onCashIn: (shiftId: string, amount: number, note: string) => void
-  onCashOut: (shiftId: string, amount: number, note: string) => void
+  onCashOut: (shiftId: string, amount: number, note: string, category: string) => void
   onClose: () => void
 }) {
   const [openingCash, setOpeningCash] = useState('')
   const [closingCash, setClosingCash] = useState('')
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
+  const [expenseCategory, setExpenseCategory] = useState('')
   const [activeShiftId, setActiveShiftId] = useState('')
   const supabase = createClient()
 
@@ -290,7 +376,8 @@ function ShiftModal({
       onCashIn(activeShiftId, parseFloat(amount), note)
     } else if (mode === 'cashout') {
       if (!amount || parseFloat(amount) <= 0) { toast.error('Enter an amount'); return }
-      onCashOut(activeShiftId, parseFloat(amount), note)
+      if (!expenseCategory) { toast.error('Select an expense category'); return }
+      onCashOut(activeShiftId, parseFloat(amount), note, expenseCategory)
     }
   }
 
@@ -340,6 +427,21 @@ function ShiftModal({
             <div>
               <label className="text-xs font-medium text-gray-500 block mb-1.5">Amount ({currencySymbol})</label>
               <input type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" autoFocus className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+          )}
+          {mode === 'cashout' && (
+            <div>
+              <label className="text-xs font-medium text-gray-500 block mb-1.5">Expense Category <span className="text-red-400">*</span></label>
+              <select
+                value={expenseCategory}
+                onChange={e => setExpenseCategory(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+              >
+                <option value="">Select category...</option>
+                {EXPENSE_CATEGORIES.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
             </div>
           )}
           {(mode === 'clockout' || mode === 'cashin' || mode === 'cashout') && (
@@ -488,6 +590,7 @@ function CartBottomSheet({
   diningOption,
   activeShiftId,
   cashierName,
+  onEditItem,
   onPaymentComplete,
 }: {
   open: boolean
@@ -498,6 +601,7 @@ function CartBottomSheet({
   diningOption?: any
   activeShiftId?: string | null
   cashierName?: string
+  onEditItem?: (cartItemId: string) => void
   onPaymentComplete?: () => void
 }) {
   return (
@@ -538,6 +642,7 @@ function CartBottomSheet({
             diningOption={diningOption}
             activeShiftId={activeShiftId}
             cashierName={cashierName}
+            onEditItem={onEditItem}
             onPaymentComplete={() => {
               onClose()
               onPaymentComplete?.()
@@ -553,7 +658,7 @@ function CartBottomSheet({
 export default function POSPage() {
   const supabase = createClient()
   const router = useRouter()
-  const { addItem, items: cartItems, clearCart, loadItems } = useCart()
+  const { addItem, updateItem, items: cartItems, clearCart, loadItems } = useCart()
   const { currencySymbol } = useShop()
 
   const [categories, setCategories] = useState<any[]>([])
@@ -587,11 +692,18 @@ export default function POSPage() {
   const [showTicketsModal, setShowTicketsModal] = useState(false)
   const [showSaveModal, setShowSaveModal] = useState(false)
 
+  // POS terminal
+  const [posTerminals, setPosTerminals] = useState<any[]>([])
+  const [showTerminalPicker, setShowTerminalPicker] = useState(false)
+  const [selectedTerminal, setSelectedTerminal] = useState<any | null>(null)
+
   // Picker
   const [pickerItem, setPickerItem] = useState<any | null>(null)
   const [pickerVariants, setPickerVariants] = useState<Variant[]>([])
   const [pickerAddonCategories, setPickerAddonCategories] = useState<AddonCategory[]>([])
   const [pickerLoading, setPickerLoading] = useState(false)
+  // When set, picker edits an existing cart item instead of adding a new one
+  const [editingCartItemId, setEditingCartItemId] = useState<string | null>(null)
 
   // Cart bottom sheet (tablet)
   const [cartSheetOpen, setCartSheetOpen] = useState(false)
@@ -697,6 +809,15 @@ export default function POSPage() {
         setDiningOptions(opts || [])
       }
 
+      // Load active POS terminals
+      const { data: terminals } = await supabase
+        .from('pos_terminals')
+        .select('*')
+        .eq('shop_id', shop.id)
+        .eq('is_active', true)
+        .order('created_at')
+      setPosTerminals(terminals || [])
+
       if (shop.feature_open_tickets) {
         const { data: tickets } = await supabase
           .from('open_tickets')
@@ -709,8 +830,9 @@ export default function POSPage() {
       // ── Inventory availability ─────────────────────────────────────────────
       // item_ingredients links a non-variant item -> ingredient + quantity needed
       // item_variant_ingredients links a variant -> ingredient + quantity needed
+      // item_bom is the BOM system (no shop_id) — same shape as item_ingredients
       // inventory_levels tracks current stock per ingredient item
-      const [ingredientsRes, variantIngredientsRes, inventoryRes] = await Promise.all([
+      const [ingredientsRes, variantIngredientsRes, inventoryRes, bomRes] = await Promise.all([
         supabase
           .from('item_ingredients')
           .select('item_id, ingredient_id, quantity, items!item_ingredients_ingredient_id_fkey(name)')
@@ -723,11 +845,15 @@ export default function POSPage() {
           .from('inventory_levels')
           .select('item_id, quantity')
           .eq('shop_id', shop.id),
+        supabase
+          .from('item_bom')
+          .select('item_id, ingredient_id, quantity, items!item_bom_ingredient_id_fkey(name)'),
       ])
 
       const ingredients: any[] = ingredientsRes.data || []
       const variantIngredients: any[] = variantIngredientsRes.data || []
       const inventory: any[] = inventoryRes.data || []
+      const bomIngredients: any[] = bomRes.data || []
 
       // Build a lookup: ingredient item_id -> current stock quantity
       const stockMap = new Map<string, number>()
@@ -735,9 +861,17 @@ export default function POSPage() {
         stockMap.set(inv.item_id, Number(inv.quantity ?? 0))
       }
 
+      // Merge item_bom rows into item_ingredients — BOM takes precedence if both
+      // exist for the same item (item_ingredients entry is skipped for BOM items).
+      const bomItemIds = new Set(bomIngredients.map((r: any) => r.item_id))
+      const mergedIngredients = [
+        ...ingredients.filter((r: any) => !bomItemIds.has(r.item_id)),
+        ...bomIngredients,
+      ]
+
       // Group non-variant ingredients by sellable item_id
       const ingredientsByItem = new Map<string, any[]>()
-      for (const ing of ingredients) {
+      for (const ing of mergedIngredients) {
         if (!ingredientsByItem.has(ing.item_id)) ingredientsByItem.set(ing.item_id, [])
         ingredientsByItem.get(ing.item_id)!.push(ing)
       }
@@ -817,6 +951,7 @@ export default function POSPage() {
   }, [])
 
   // ── Shift Handlers ─────────────────────────────────────────────────────────
+  // Called after terminal is selected and opening cash is entered
   async function handleClockIn(openingCash: number) {
     if (!currentUser) { toast.error('User not loaded'); return }
     const { data, error } = await supabase.from('shifts').insert({
@@ -826,12 +961,14 @@ export default function POSPage() {
       opening_cash: openingCash,
       status: 'open',
       clock_in: new Date().toISOString(),
+      pos_terminal_id: selectedTerminal?.id ?? null,
     }).select().single()
     if (error) { toast.error('Failed to open shift'); return }
     setActiveShift(data)
     localStorage.setItem('pos_active_shift', JSON.stringify(data))
     setShiftModal(null)
-    toast.success('Shift opened')
+    setShowTerminalPicker(false)
+    toast.success(`Shift opened${selectedTerminal ? ` on ${selectedTerminal.name}` : ''}`)
   }
 
   async function handleClockOut(shiftId: string, closingCash: number, note: string) {
@@ -863,15 +1000,52 @@ export default function POSPage() {
     toast.success(`Cash In: ${currencySymbol}${amount.toFixed(2)} recorded`)
   }
 
-  async function handleCashOut(shiftId: string, amount: number, note: string) {
+  async function handleCashOut(shiftId: string, amount: number, note: string, category: string) {
     if (!shiftId) { toast.error('No active shift'); return }
-    await supabase.from('shift_cash_movements').insert({
-      shift_id: shiftId,
-      shop_id: shopId,
-      type: 'cash_out',
-      amount,
-      note,
-    })
+
+    // 1. Record the cash movement and capture its ID
+    const { data: movement, error: movErr } = await supabase
+      .from('shift_cash_movements')
+      .insert({
+        shift_id: shiftId,
+        shop_id: shopId,
+        type: 'cash_out',
+        amount,
+        note,
+      })
+      .select()
+      .single()
+
+    if (movErr) { toast.error('Failed to record cash out'); return }
+
+    // 2. Also log it as a journal expense entry so Finance picks it up
+    try {
+      const entryDate = new Intl.DateTimeFormat('en-CA', {
+        timeZone: shopTimezone,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(new Date())
+
+      await fetch('/api/journal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'expense',
+          category,
+          amount,
+          description: note || null,
+          reference_no: null,
+          date: entryDate,
+          is_recurring: false,
+          recurring_day: null,
+          reference_type: 'cash_movement',
+          reference_id: movement.id,
+        }),
+      })
+    } catch (err) {
+      // Journal write failure shouldn't block the POS flow — log but don't throw
+      console.error('[handleCashOut] Journal entry failed:', err)
+    }
+
     setShiftModal(null)
     toast.success(`Cash Out: ${currencySymbol}${amount.toFixed(2)} recorded`)
   }
@@ -976,7 +1150,16 @@ export default function POSPage() {
       const itemsByCat = new Map<string, AddonItem[]>()
       for (const a of addonItemsData || []) {
         if (!itemsByCat.has(a.category_id)) itemsByCat.set(a.category_id, [])
-        itemsByCat.get(a.category_id)!.push({ id: a.id, name: a.name, price: Number(a.price), selected: false, quantity: 1 })
+        const addonAvail = availabilityMap.get(a.id)
+        itemsByCat.get(a.category_id)!.push({
+          id: a.id,
+          name: a.name,
+          price: Number(a.price),
+          selected: false,
+          quantity: 1,
+          outOfStock: addonAvail ? addonAvail.canMake === 0 : false,
+          canMake: addonAvail ? addonAvail.canMake : null,
+        })
       }
 
       const grouped: AddonCategory[] = catRows
@@ -1010,22 +1193,49 @@ export default function POSPage() {
     if (!pickerItem) return
     const basePrice = variant ? Number(variant.price) : Number(pickerItem.price)
     const baseName = variant ? `${pickerItem.name} (${variant.name})` : pickerItem.name
-    addItem({
-      itemId: pickerItem.id,
-      name: baseName,
-      price: basePrice,
-      quantity: 1,
-      modifiers: [],
-      addons: addons.map(a => ({ id: a.id, name: a.name, price: a.price, quantity: a.quantity })),
-      trackStock: pickerItem.track_stock,
-      note: note.trim() || undefined,
-      variantId: variant?.id,
-    })
-    const addonCount = addons.length
-    toast.success(`${baseName} added${addonCount > 0 ? ` + ${addonCount} add-on${addonCount > 1 ? 's' : ''}` : ''}`)
+    const addonLines = addons.map(a => ({ id: a.id, name: a.name, price: a.price, quantity: a.quantity }))
+
+    if (editingCartItemId) {
+      // Edit mode: update existing cart item in place
+      updateItem(editingCartItemId, {
+        name: baseName,
+        price: basePrice,
+        variantId: variant?.id,
+        addons: addonLines,
+        note: note.trim() || undefined,
+      })
+      toast.success(`${baseName} updated`)
+      setEditingCartItemId(null)
+    } else {
+      // Add mode: new cart item
+      addItem({
+        itemId: pickerItem.id,
+        name: baseName,
+        price: basePrice,
+        quantity: 1,
+        modifiers: [],
+        addons: addonLines,
+        trackStock: pickerItem.track_stock,
+        note: note.trim() || undefined,
+        variantId: variant?.id,
+      })
+      const addonCount = addons.length
+      toast.success(`${baseName} added${addonCount > 0 ? ` + ${addonCount} add-on${addonCount > 1 ? 's' : ''}` : ''}`)
+    }
+
     setPickerItem(null)
     setPickerVariants([])
     setPickerAddonCategories([])
+  }
+
+  // Called by Cart's onEditItem — re-opens the variant/addon picker pre-filled
+  async function handleEditCartItem(cartItemId: string) {
+    const cartItem = cartItems.find(i => i.id === cartItemId)
+    if (!cartItem) return
+    const menuItem = items.find(i => i.id === cartItem.itemId)
+    if (!menuItem) return
+    setEditingCartItemId(cartItemId)
+    await openItemPicker(menuItem)
   }
 
   const itemsByCategory = useMemo(() => {
@@ -1068,6 +1278,7 @@ export default function POSPage() {
           item={pickerItem} variants={pickerVariants} addonCategories={pickerAddonCategories}
           currencySymbol={currencySymbol}
           variantAvailability={variantAvailabilityMap}
+          addonAvailability={availabilityMap}
           onConfirm={handlePickerConfirm}
           onClose={() => { setPickerItem(null); setPickerVariants([]); setPickerAddonCategories([]) }}
         />
@@ -1076,6 +1287,17 @@ export default function POSPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
           <div className="bg-white rounded-2xl px-6 py-4 shadow-xl text-sm text-gray-500">Loading…</div>
         </div>
+      )}
+      {showTerminalPicker && (
+        <TerminalPickerModal
+          terminals={posTerminals}
+          onSelect={terminal => {
+            setSelectedTerminal(terminal)
+            setShowTerminalPicker(false)
+            setShiftModal('clockin')
+          }}
+          onClose={() => setShowTerminalPicker(false)}
+        />
       )}
       {shiftModal && (
         <ShiftModal
@@ -1113,12 +1335,12 @@ export default function POSPage() {
         <div className="bg-white border-b border-gray-200 px-3 py-2 flex items-center gap-2 flex-wrap">
           {selectedCategory ? (
             <button onClick={() => { setSelectedCategory(null); setSearch('') }} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
-              <ChevronLeft className="w-5 h-5" />
+              <ArrowLeft className="w-7 h-7" />
             </button>
           ) : (
             <div className="flex items-center gap-1 flex-shrink-0">
               <Link href="/dashboard" className="text-gray-400 hover:text-gray-600 p-1">
-                <ArrowLeft className="w-5 h-5" />
+                <ArrowLeft className="w-6 h-6" />
               </Link>
               <Link href="/dashboard" className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-100 text-gray-600 border border-gray-200 rounded-xl text-xs font-semibold hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 transition-colors">
                 <LayoutDashboard className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Dashboard</span>
@@ -1141,7 +1363,13 @@ export default function POSPage() {
             <div className="flex items-center gap-1">
               {!activeShift ? (
                 <>
-                  <button onClick={() => setShiftModal('clockin')} className="flex items-center gap-1 px-2.5 py-1.5 bg-green-600 text-white rounded-xl text-xs font-semibold hover:bg-green-700 transition-colors">
+                  <button onClick={() => {
+                    if (posTerminals.length > 0) {
+                      setShowTerminalPicker(true)
+                    } else {
+                      setShiftModal('clockin')
+                    }
+                  }} className="flex items-center gap-1 px-2.5 py-1.5 bg-green-600 text-white rounded-xl text-xs font-semibold hover:bg-green-700 transition-colors">
                     <LogIn className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Open Shift</span>
                   </button>
                   {currentUser?.role === 'cashier' && (
@@ -1169,6 +1397,14 @@ export default function POSPage() {
                   </button>
                 </>
               )}
+            </div>
+          )}
+
+          {/* Active terminal badge */}
+          {featureShifts && activeShift && selectedTerminal && (
+            <div className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl">
+              <Monitor className="w-3.5 h-3.5 text-indigo-500" />
+              <span className="text-xs font-semibold text-indigo-700 hidden sm:inline">{selectedTerminal.name}</span>
             </div>
           )}
 
@@ -1238,7 +1474,13 @@ export default function POSPage() {
             <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
               <LogIn className="w-12 h-12 opacity-40" />
               <p className="text-base font-medium text-gray-500">Open a shift to start taking orders</p>
-              <button onClick={() => setShiftModal('clockin')} className="px-5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700 transition-colors flex items-center gap-2">
+              <button onClick={() => {
+                if (posTerminals.length > 0) {
+                  setShowTerminalPicker(true)
+                } else {
+                  setShiftModal('clockin')
+                }
+              }} className="px-5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700 transition-colors flex items-center gap-2">
                 <LogIn className="w-4 h-4" /> Open Shift
               </button>
             </div>
@@ -1418,6 +1660,7 @@ export default function POSPage() {
           diningOption={selectedDiningOption}
           activeShiftId={activeShift?.id || null}
           cashierName={userName}
+          onEditItem={handleEditCartItem}
           onPaymentComplete={() => {
             handleNewTransaction()
             window.location.reload()
@@ -1456,6 +1699,7 @@ export default function POSPage() {
         diningOption={selectedDiningOption}
         activeShiftId={activeShift?.id || null}
         cashierName={userName}
+        onEditItem={handleEditCartItem}
         onPaymentComplete={() => {
           setCartSheetOpen(false)
           handleNewTransaction()

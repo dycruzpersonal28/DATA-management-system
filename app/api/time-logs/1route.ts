@@ -318,16 +318,14 @@ export async function POST(req: NextRequest) {
     // ── CLOCK IN ──────────────────────────────────────────────────────────────
     if (action === 'clock_in') {
       // Check if already clocked in today (work log, no clock_out)
-      // NOTE: must use maybeSingle() — .single() throws when no rows found,
-      // which was silently swallowed and allowed duplicate clock-ins.
       const { data: existing } = await admin
         .from('time_logs')
         .select('id')
         .eq('employee_id', employee_id)
-        .eq('shop_id', shop_id)
+        .eq('date', date)
         .eq('log_type', 'work')
         .is('clock_out', null)
-        .maybeSingle()
+        .single()
 
       if (existing) {
         return NextResponse.json({ error: 'Employee is already clocked in' }, { status: 409 })

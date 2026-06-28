@@ -15,6 +15,7 @@ import type { ItemDiscount } from './Cart'
 interface Props {
   total: number
   onClose: () => void
+  onPaymentComplete?: () => void
   employeeId?: string
   itemNotes?: Map<string, string>
   itemDiscounts?: Map<string, ItemDiscount>
@@ -483,7 +484,7 @@ function buildReceiptESCPOS(
   return new Uint8Array(cmd)
 }
 
-export default function PaymentModal({ total, onClose, itemNotes, itemDiscounts, cashierName: cashierNameProp }: Props) {
+export default function PaymentModal({ total, onClose, onPaymentComplete, itemNotes, itemDiscounts, cashierName: cashierNameProp }: Props) {
   const supabase = createClient()
   const { items, customerId, discountAmount, clearCart, subtotal } = useCart()
   const [paymentTypes, setPaymentTypes] = useState<any[]>([])
@@ -561,6 +562,75 @@ export default function PaymentModal({ total, onClose, itemNotes, itemDiscounts,
         } catch {}
       }
 
+      // ── PWD duplicate check ───────────────────────────────────────────────
+      const pwdEntries = itemDiscounts
+        ? Array.from(itemDiscounts.entries())
+            .filter(([, d]) => d.idRef && d.discount.name.toLowerCase().includes('pwd'))
+        : []
+
+      if (pwdEntries.length > 0) {
+        const { data: shopRow } = await supabase
+          .from('shops').select('timezone').eq('id', shop.id).single()
+        const tz = shopRow?.timezone ?? 'Asia/Manila'
+        const todayDate = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())
+
+        // Collect all unique PWD IDs being used in this transaction
+        const pwdIdsToCheck = [...new Set(pwdEntries.map(([, d]) => d.idRef as string))]
+
+        // Convert today shop-timezone bounds to UTC for correct comparison
+        const probeStart = new Date(`${todayDate}T00:00:00Z`)
+        const tzFormatter = new Intl.DateTimeFormat('en-CA', {
+          timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        })
+        const tzParts = tzFormatter.formatToParts(probeStart)
+        const tzGet = (t: string) => tzParts.find(p => p.type === t)?.value ?? '00'
+        const shopLocalIso = `${tzGet('year')}-${tzGet('month')}-${tzGet('day')}T${tzGet('hour')}:${tzGet('minute')}:${tzGet('second')}`
+        const offsetMs = probeStart.getTime() - new Date(shopLocalIso + 'Z').getTime()
+        const startUtc = new Date(new Date(`${todayDate}T00:00:00Z`).getTime() + offsetMs).toISOString()
+        const endUtc   = new Date(new Date(`${todayDate}T23:59:59Z`).getTime() + offsetMs).toISOString()
+
+        // Query receipts for today using UTC bounds
+        const { data: todayReceipts } = await supabase
+          .from('receipts')
+          .select('id, receipt_number, created_at')
+          .eq('shop_id', shop.id)
+          .eq('status', 'completed')
+          .gte('created_at', startUtc)
+          .lte('created_at', endUtc)
+
+        if (todayReceipts && todayReceipts.length > 0) {
+          const todayReceiptIds = todayReceipts.map((r: any) => r.id)
+          const { data: matchingItems } = await supabase
+            .from('receipt_items')
+            .select('receipt_id, modifiers')
+            .in('receipt_id', todayReceiptIds)
+
+          const receiptMap = new Map(todayReceipts.map((r: any) => [r.id, r]))
+
+          for (const pwdId of pwdIdsToCheck) {
+            const duplicate = (matchingItems || []).find((ri: any) => {
+              const mods: any[] = Array.isArray(ri.modifiers) ? ri.modifiers : []
+              return mods.some(m => m.type === 'discount_id' && m.value === pwdId)
+            })
+            if (duplicate) {
+              const dupeReceipt = receiptMap.get(duplicate.receipt_id)
+              const receiptNum = dupeReceipt?.receipt_number ?? 'unknown'
+              const usedAt = dupeReceipt?.created_at
+                ? new Date(dupeReceipt.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : ''
+              setLoading(false)
+              toast.error(
+                `PWD ID ${pwdId} was already used today on receipt ${receiptNum}${usedAt ? ` at ${usedAt}` : ''}.`,
+                { duration: 8000 }
+              )
+              return
+            }
+          }
+        }
+      }
+      // ── End PWD duplicate check ───────────────────────────────────────────
+
       const sub = subtotal()
       const res = await fetch('/api/receipts', {
         method: 'POST',
@@ -573,10 +643,16 @@ export default function PaymentModal({ total, onClose, itemNotes, itemDiscounts,
           amount_tendered: isCash ? cashAmount : total, change_amount: changeAmount,
           loyalty_points_earned: Math.floor(total), loyalty_points_redeemed: 0,
           shift_id: activeShiftId, status: 'completed',
-          items: items.map(item => ({
-            ...item,
-            note: itemNotes?.get(item.id) ?? item.note ?? undefined,
-          })),
+          items: items.map(item => {
+            const itemDisc = itemDiscounts?.get(item.id)
+            return {
+              ...item,
+              note: itemNotes?.get(item.id) ?? item.note ?? undefined,
+              discount_name:   itemDisc?.discount?.name   ?? null,
+              discount_amount: itemDisc?.amount           ?? 0,
+              discount_id_ref: itemDisc?.idRef            ?? null,
+            }
+          }),
         }),
       })
 
@@ -636,7 +712,7 @@ export default function PaymentModal({ total, onClose, itemNotes, itemDiscounts,
             }}>
               <Printer className="w-4 h-4 mr-1.5" />Reprint
             </Button>
-            <Button className="flex-1" onClick={onClose}>New order</Button>
+            <Button className="flex-1" onClick={onPaymentComplete ?? onClose}>New order</Button>
           </div>
           {kitchenPrintArgs && (
             <Button

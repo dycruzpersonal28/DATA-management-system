@@ -68,8 +68,6 @@ export async function POST(req: NextRequest) {
       date,
       is_recurring,
       recurring_day,
-      reference_type: customReferenceType,
-      reference_id: customReferenceId,
     } = body
 
     if (!type || !category || !amount || !date) {
@@ -123,8 +121,8 @@ export async function POST(req: NextRequest) {
         category,
         amount: Number(amount),
         direction,
-        reference_type: customReferenceType ?? 'journal',
-        reference_id: customReferenceId ?? entry.id,
+        reference_type: 'journal',
+        reference_id: entry.id,
         note: description || `${type}: ${category}`,
       })
 
