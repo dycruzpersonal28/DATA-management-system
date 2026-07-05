@@ -25,9 +25,6 @@ export default function ItemsPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [rowsPerPage, setRowsPerPage] = useState(25)
   const [page, setPage] = useState(1)
-  const [allVariants, setAllVariants] = useState<any[]>([])
-  const [allVariantIngredients, setAllVariantIngredients] = useState<any[]>([])
-  const [allIngredients, setAllIngredients] = useState<any[]>([])
 
   async function loadData() {
     setLoading(true)
@@ -69,26 +66,6 @@ export default function ItemsPage() {
         .from('item_ingredients')
         .select('id, item_id, ingredient_id, quantity')
         .eq('shop_id', shop.id)
-      setAllIngredients(ings ?? [])
-
-      // ── variants ──────────────────────────────────────────────────────────
-      const { data: variants } = await supabase
-        .from('item_variants')
-        .select('*')
-        .eq('shop_id', shop.id)
-      setAllVariants(variants ?? [])
-
-      // ── variant ingredients ───────────────────────────────────────────────
-      const variantIds = (variants ?? []).map((v: any) => v.id)
-      let variantIngs: any[] = []
-      if (variantIds.length > 0) {
-        const { data: vi } = await supabase
-          .from('item_variant_ingredients')
-          .select('*')
-          .in('variant_id', variantIds)
-        variantIngs = vi ?? []
-      }
-      setAllVariantIngredients(variantIngs)
 
       // build a lookup: item_id → ingredients[]
       const ingMap: Record<string, any[]> = {}
@@ -181,127 +158,47 @@ export default function ItemsPage() {
     }
   }
 
-  // ── export — tree format: item row, then its ingredients/variants/addon rows indented below ──
+  // ── export — full raw format (matches Supabase export, safe to re-import) ──
   function handleExport() {
-    const q = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const itemsById: Record<string, any> = {}
-    for (const item of items) itemsById[item.id] = item
-
     const headers = [
-      'row_type',
       'id', 'shop_id', 'name', 'description', 'sku', 'barcode',
       'category', 'level', 'addon_category',
       'category_id', 'level_id', 'price', 'cost', 'tax_rate',
       'is_active', 'is_composite', 'has_variants', 'track_stock',
       'sold_by_weight', 'offer_addons', 'addon_category_id',
-      // ingredient / variant / addon columns (empty for item rows)
-      'ingredient_id', 'ingredient_name', 'quantity',
-      'variant_id', 'variant_name', 'variant_price', 'variant_cost', 'variant_sku',
     ]
-
-    const rows: string[] = [headers.map(q).join(',')]
-
-    // build lookups
-    const ingsByItem: Record<string, any[]> = {}
-    for (const ing of allIngredients) {
-      if (!ingsByItem[ing.item_id]) ingsByItem[ing.item_id] = []
-      ingsByItem[ing.item_id].push(ing)
-    }
-    const variantsByItem: Record<string, any[]> = {}
-    for (const v of allVariants) {
-      if (!variantsByItem[v.item_id]) variantsByItem[v.item_id] = []
-      variantsByItem[v.item_id].push(v)
-    }
-    const variantIngsByVariant: Record<string, any[]> = {}
-    for (const vi of allVariantIngredients) {
-      if (!variantIngsByVariant[vi.variant_id]) variantIngsByVariant[vi.variant_id] = []
-      variantIngsByVariant[vi.variant_id].push(vi)
-    }
-
-    for (const i of filtered) {
-      // ── item row ────────────────────────────────────────────────────────
-      rows.push([
-        'item',
-        i.id,
-        (i as any).shop_id ?? shopId,
-        i.name,
-        i.description ?? '',
-        i.sku ?? '',
-        i.barcode ?? '',
-        (i as any).categories?.name ?? '',
-        (i as any).level?.name ?? '',
-        categories.find(c => c.id === (i as any).addon_category_id)?.name ?? '',
-        i.category_id ?? '',
-        i.level_id ?? '',
-        i.price ?? 0,
-        i.cost ?? 0,
-        (i as any).tax_rate ?? 0,
-        i.is_active,
-        i.is_composite,
-        (i as any).has_variants ?? false,
-        i.track_stock,
-        i.sold_by_weight,
-        (i as any).offer_addons ?? false,
-        (i as any).addon_category_id ?? '',
-        '', '', '',   // ingredient columns
-        '', '', '', '', '', // variant columns
-      ].map(q).join(','))
-
-      // ── item ingredient rows ─────────────────────────────────────────────
-      for (const ing of ingsByItem[i.id] ?? []) {
-        rows.push([
-          'ingredient',
-          ing.id, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-          ing.ingredient_id,
-          itemsById[ing.ingredient_id]?.name ?? '',
-          ing.quantity,
-          '', '', '', '', '',
-        ].map(q).join(','))
-      }
-
-      // ── variant rows + their ingredients ────────────────────────────────
-      for (const v of variantsByItem[i.id] ?? []) {
-        rows.push([
-          'variant',
-          v.id, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-          '', '', '',
-          v.id, v.name, v.price ?? 0, v.cost ?? 0, v.sku ?? '',
-        ].map(q).join(','))
-
-        for (const vi of variantIngsByVariant[v.id] ?? []) {
-          rows.push([
-            'variant_ingredient',
-            vi.id, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-            vi.ingredient_id,
-            itemsById[vi.ingredient_id]?.name ?? '',
-            vi.quantity,
-            v.id, v.name, '', '', '',
-          ].map(q).join(','))
-        }
-      }
-
-      // ── addon rows ───────────────────────────────────────────────────────
-      const addonCatId = (i as any).addon_category_id
-      if (addonCatId) {
-        const addonItems = items.filter(a => (a as any).category_id === addonCatId)
-        for (const addon of addonItems) {
-          rows.push([
-            'addon',
-            addon.id, '', addon.name, '', addon.sku ?? '', '', '', '', '', '', '', addon.price ?? 0, '', '', '', '', '', '', '', '', '',
-            '', '', '',
-            '', '', '', '', '',
-          ].map(q).join(','))
-        }
-      }
-    }
-
-    const csv = rows.join('\n')
+    const rows = filtered.map(i => [
+      i.id,
+      (i as any).shop_id ?? shopId,
+      i.name,
+      i.description ?? '',
+      i.sku ?? '',
+      i.barcode ?? '',
+      (i as any).categories?.name ?? '',
+      (i as any).level?.name ?? '',
+      categories.find(c => c.id === (i as any).addon_category_id)?.name ?? '',
+      i.category_id ?? '',
+      i.level_id ?? '',
+      i.price ?? 0,
+      i.cost ?? 0,
+      (i as any).tax_rate ?? 0,
+      i.is_active,
+      i.is_composite,
+      (i as any).has_variants ?? false,
+      i.track_stock,
+      i.sold_by_weight,
+      (i as any).offer_addons ?? false,
+      (i as any).addon_category_id ?? '',
+    ])
+    const csv = [headers, ...rows]
+      .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+      .join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url; a.download = 'items_export.csv'; a.click()
     URL.revokeObjectURL(url)
-    toast.success('Exported items_export.csv with ingredients, variants & add-ons')
+    toast.success('Exported items_export.csv — safe to re-import')
   }
 
   // ── import ─────────────────────────────────────────────────────────────────

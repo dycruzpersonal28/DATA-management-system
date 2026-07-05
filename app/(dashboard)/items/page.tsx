@@ -159,37 +159,82 @@ export default function ItemsPage() {
   }
 
   // ── export — full raw format (matches Supabase export, safe to re-import) ──
-  function handleExport() {
+  // 'ingredients' col: "Name=Qty,Name2=Qty2"
+  // 'variants' col:    "VariantName:Price:Name=Qty,Name2=Qty2;VariantName2:Price2:..."
+  async function handleExport() {
+    const ids = filtered.map(i => i.id)
+
+    const { data: variantRows } = ids.length > 0
+      ? await supabase.from('item_variants').select('id, item_id, name, price').in('item_id', ids).order('sort_order')
+      : { data: [] as any[] }
+
+    const variantIds = (variantRows ?? []).map((v: any) => v.id)
+    const { data: variantIngRows } = variantIds.length > 0
+      ? await supabase.from('item_variant_ingredients').select('variant_id, ingredient_id, quantity').in('variant_id', variantIds)
+      : { data: [] as any[] }
+
+    // Name lookup must cover ALL items in the shop (ingredients often live in
+    // categories hidden from the POS grid, so `items`/`filtered` won't include them)
+    const { data: allShopItems } = await supabase.from('items').select('id, name').eq('shop_id', shopId)
+    const nameById = new Map((allShopItems ?? []).map((r: any) => [r.id, r.name]))
+
+    const variantIngByVariant: Record<string, string[]> = {}
+    for (const vi of (variantIngRows ?? []) as any[]) {
+      const label = `${nameById.get(vi.ingredient_id) ?? vi.ingredient_id}=${vi.quantity}`
+      ;(variantIngByVariant[vi.variant_id] ??= []).push(label)
+    }
+
+    const variantsByItem: Record<string, string[]> = {}
+    for (const v of (variantRows ?? []) as any[]) {
+      const ingStr = (variantIngByVariant[v.id] ?? []).join(',')
+      const part = `${v.name}:${v.price}${ingStr ? ':' + ingStr : ''}`
+      ;(variantsByItem[v.item_id] ??= []).push(part)
+    }
+
     const headers = [
       'id', 'shop_id', 'name', 'description', 'sku', 'barcode',
       'category', 'level', 'addon_category',
+      'has_variant', 'has_addons', 'bom_item',
       'category_id', 'level_id', 'price', 'cost', 'tax_rate',
       'is_active', 'is_composite', 'has_variants', 'track_stock',
       'sold_by_weight', 'offer_addons', 'addon_category_id',
+      'ingredients', 'variants',
     ]
-    const rows = filtered.map(i => [
-      i.id,
-      (i as any).shop_id ?? shopId,
-      i.name,
-      i.description ?? '',
-      i.sku ?? '',
-      i.barcode ?? '',
-      (i as any).categories?.name ?? '',
-      (i as any).level?.name ?? '',
-      categories.find(c => c.id === (i as any).addon_category_id)?.name ?? '',
-      i.category_id ?? '',
-      i.level_id ?? '',
-      i.price ?? 0,
-      i.cost ?? 0,
-      (i as any).tax_rate ?? 0,
-      i.is_active,
-      i.is_composite,
-      (i as any).has_variants ?? false,
-      i.track_stock,
-      i.sold_by_weight,
-      (i as any).offer_addons ?? false,
-      (i as any).addon_category_id ?? '',
-    ])
+    const yesNo = (v: unknown) => (v ? 'Yes' : 'No')
+    const rows = filtered.map(i => {
+      const ingredientsStr = ((i as any).ingredients ?? [])
+        .map((ing: any) => `${ing.ingredient?.name ?? nameById.get(ing.ingredient_id) ?? ing.ingredient_id}=${ing.quantity}`)
+        .join(',')
+      const variantsStr = (variantsByItem[i.id] ?? []).join(';')
+      return [
+        i.id,
+        (i as any).shop_id ?? shopId,
+        i.name,
+        i.description ?? '',
+        i.sku ?? '',
+        i.barcode ?? '',
+        (i as any).categories?.name ?? '',
+        (i as any).level?.name ?? '',
+        categories.find(c => c.id === (i as any).addon_category_id)?.name ?? '',
+        yesNo((i as any).has_variants),
+        yesNo((i as any).offer_addons),
+        yesNo(i.is_composite),
+        i.category_id ?? '',
+        i.level_id ?? '',
+        i.price ?? 0,
+        i.cost ?? 0,
+        (i as any).tax_rate ?? 0,
+        i.is_active,
+        i.is_composite,
+        (i as any).has_variants ?? false,
+        i.track_stock,
+        i.sold_by_weight,
+        (i as any).offer_addons ?? false,
+        (i as any).addon_category_id ?? '',
+        ingredientsStr,
+        variantsStr,
+      ]
+    })
     const csv = [headers, ...rows]
       .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
       .join('\n')
@@ -242,7 +287,8 @@ export default function ItemsPage() {
 
     let imported = 0
     let skipped = 0
-    const toInsert: any[] = []
+    const rawRows: { row: any; ingredientsStr: string; variantsStr: string }[] = []
+    const friendlyRows: any[] = []
 
     for (let i = 1; i < lines.length; i++) {
       const cols = parseCSVLine(lines[i])
@@ -286,14 +332,14 @@ export default function ItemsPage() {
         const addonCatName = get('addon_category')
         if (addonCatId) row.addon_category_id = addonCatId
         else if (addonCatName) row.addon_category_id = catByName[addonCatName.toLowerCase()] || null
-        toInsert.push(row)
+        rawRows.push({ row, ingredientsStr: get('ingredients'), variantsStr: get('variants') })
       } else {
         // ── Friendly CSV format (Name, Category, Level, Price, Cost, SKU, Barcode, Status, Composite, Track Stock) ──
         const name = get('name')
         if (!name) { skipped++; continue }
         const catName = get('category')
         const levelName = get('level')
-        toInsert.push({
+        friendlyRows.push({
           shop_id: shopId,
           name,
           category_id: catByName[catName.toLowerCase()] || null,
@@ -310,18 +356,91 @@ export default function ItemsPage() {
       imported++
     }
 
-    if (toInsert.length === 0) { toast.error('No valid rows found'); return }
+    if (rawRows.length === 0 && friendlyRows.length === 0) { toast.error('No valid rows found'); return }
 
-    // Insert in batches of 100
+    // "Name=Qty,Name2=Qty2" → [{name, quantity}]
+    const parseIngredientsStr = (str: string) =>
+      str.split(',').map(s => s.trim()).filter(Boolean).map(pair => {
+        const [name, qty] = pair.split('=')
+        return { name: (name ?? '').trim(), quantity: parseFloat(qty) || 0 }
+      })
+    // "Name:Price:Ing=Qty,Ing2=Qty2;Name2:Price2:..." → [{name, price, ingredients}]
+    const parseVariantsStr = (str: string) =>
+      str.split(';').map(s => s.trim()).filter(Boolean).map(block => {
+        const [name, price, ingPart] = block.split(':')
+        return {
+          name: (name ?? '').trim(),
+          price: parseFloat(price) || 0,
+          ingredients: parseIngredientsStr(ingPart ?? ''),
+        }
+      })
+
+    // Ingredient names must resolve against ALL items in the shop, not just
+    // what's currently loaded (ingredients often live in hidden categories)
+    const { data: allShopItems } = await supabase.from('items').select('id, name').eq('shop_id', shopId)
+    const nameToId = new Map((allShopItems ?? []).map((r: any) => [r.name.toLowerCase(), r.id]))
+
     let inserted = 0
-    for (let i = 0; i < toInsert.length; i += 100) {
-      const batch = toInsert.slice(i, i + 100)
+    let missingIngredients = 0
+
+    // Raw rows: processed one at a time so we can capture each item's id
+    // (new or existing) and correctly attach its ingredients/variants to it.
+    for (const { row, ingredientsStr, variantsStr } of rawRows) {
+      const { data: savedItem, error } = await supabase.from('items').upsert(row, { onConflict: 'id' }).select('id').single()
+      if (error || !savedItem) {
+        toast.error(`Failed to import "${row.name}": ${error?.message ?? 'unknown error'}`)
+        continue
+      }
+      const itemId = savedItem.id
+      inserted++
+
+      // Sync item-level ingredients
+      await supabase.from('item_ingredients').delete().eq('item_id', itemId)
+      const parsedIngredients = parseIngredientsStr(ingredientsStr)
+      if (parsedIngredients.length > 0) {
+        const ingRows = parsedIngredients.map(ing => {
+          const ingredientId = nameToId.get(ing.name.toLowerCase())
+          if (!ingredientId) { missingIngredients++; return null }
+          return { item_id: itemId, ingredient_id: ingredientId, quantity: ing.quantity, shop_id: shopId }
+        }).filter(Boolean) as any[]
+        if (ingRows.length > 0) await supabase.from('item_ingredients').insert(ingRows)
+      }
+
+      // Sync variants + each variant's own ingredients
+      const parsedVariants = parseVariantsStr(variantsStr)
+      const { data: existingVariants } = await supabase.from('item_variants').select('id').eq('item_id', itemId)
+      const oldVariantIds = (existingVariants ?? []).map((v: any) => v.id)
+      if (oldVariantIds.length > 0) {
+        await supabase.from('item_variant_ingredients').delete().in('variant_id', oldVariantIds)
+        await supabase.from('item_variants').delete().eq('item_id', itemId)
+      }
+      for (const v of parsedVariants) {
+        const { data: newVariant, error: vErr } = await supabase
+          .from('item_variants')
+          .insert({ item_id: itemId, name: v.name, price: v.price, sort_order: 0 })
+          .select('id').single()
+        if (vErr || !newVariant) continue
+        const vIngRows = v.ingredients.map(ing => {
+          const ingredientId = nameToId.get(ing.name.toLowerCase())
+          if (!ingredientId) { missingIngredients++; return null }
+          return { variant_id: newVariant.id, ingredient_id: ingredientId, quantity: ing.quantity }
+        }).filter(Boolean) as any[]
+        if (vIngRows.length > 0) await supabase.from('item_variant_ingredients').insert(vIngRows)
+      }
+    }
+
+    // Friendly rows: no ingredients/variants column to parse, keep the fast batched path
+    for (let i = 0; i < friendlyRows.length; i += 100) {
+      const batch = friendlyRows.slice(i, i + 100)
       const { error } = await supabase.from('items').upsert(batch, { onConflict: 'id' })
       if (error) { toast.error(`Import error: ${error.message}`); break }
       inserted += batch.length
     }
 
-    toast.success(`Imported ${inserted} items${skipped > 0 ? `, skipped ${skipped}` : ''}`)
+    toast.success(
+      `Imported ${inserted} items${skipped > 0 ? `, skipped ${skipped}` : ''}` +
+      (missingIngredients > 0 ? ` — ${missingIngredients} ingredient reference(s) not found by name` : '')
+    )
     loadData()
     e.target.value = ''
   }
