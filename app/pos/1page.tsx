@@ -27,7 +27,7 @@ type AddonItem = {
   outOfStock?: boolean
   canMake?: number | null
 }
-type AddonCategory = { id: string; name: string; multiple_select: boolean; items: AddonItem[] }
+type AddonCategory = { id: string; name: string; items: AddonItem[] }
 
 // ── Expense categories (mirrors Finance/Journal page) ─────────────────────────
 const EXPENSE_CATEGORIES = [
@@ -94,18 +94,10 @@ function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClos
   function toggleAddon(catId: string, addonId: string) {
     setCatItems(prev => {
       const next = new Map(prev)
-      const cat = addonCategories.find(c => c.id === catId)
-      const isMultiSelect = cat?.multiple_select ?? true
       const items = (next.get(catId) || []).map(a => {
-        if (a.id === addonId) {
-          if (a.outOfStock && !a.selected) return a // block selecting OOS addons
-          return { ...a, selected: !a.selected, quantity: !a.selected ? 1 : 0 }
-        }
-        // Single-select: picking a new item clears any other selection in this category
-        if (!isMultiSelect && a.selected) {
-          return { ...a, selected: false, quantity: 0 }
-        }
-        return a
+        if (a.id !== addonId) return a
+        if (a.outOfStock && !a.selected) return a // block selecting OOS addons
+        return { ...a, selected: !a.selected, quantity: !a.selected ? 1 : 0 }
       })
       next.set(catId, items)
       return next
@@ -202,7 +194,6 @@ function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClos
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="text-sm font-semibold text-gray-800 truncate">{cat.name}</span>
-                          <span className="text-[10px] text-gray-400 flex-shrink-0">{cat.multiple_select ? 'Multi-select' : 'Pick one'}</span>
                           {selectedInCat.length > 0 && (
                             <span className="flex-shrink-0 px-2 py-0.5 bg-indigo-600 text-white rounded-full text-[10px] font-bold">
                               {selectedInCat.length}
@@ -229,13 +220,9 @@ function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClos
                               <button
                                 onClick={() => !a.outOfStock && toggleAddon(cat.id, a.id)}
                                 disabled={a.outOfStock}
-                                className={`w-5 h-5 border-2 flex-shrink-0 flex items-center justify-center transition-colors ${cat.multiple_select ? 'rounded-md' : 'rounded-full'} ${a.outOfStock ? 'border-gray-200 cursor-not-allowed' : a.selected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300'}`}
+                                className={`w-5 h-5 rounded-md border-2 flex-shrink-0 flex items-center justify-center transition-colors ${a.outOfStock ? 'border-gray-200 cursor-not-allowed' : a.selected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300'}`}
                               >
-                                {a.selected && (cat.multiple_select ? (
-                                  <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                                ) : (
-                                  <div className="w-2 h-2 rounded-full bg-white" />
-                                ))}
+                                {a.selected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
                               </button>
                               <div className="flex-1 min-w-0" onClick={() => !a.outOfStock && toggleAddon(cat.id, a.id)}>
                                 <p className="text-sm font-medium text-gray-800 truncate">{a.name}</p>
@@ -252,7 +239,7 @@ function VariantPickerModal({ item, variants, addonCategories, onConfirm, onClos
                                   ) : null}
                                 </div>
                               </div>
-                              {a.selected && cat.multiple_select && (
+                              {a.selected && (
                                 <div className="flex items-center gap-1.5 flex-shrink-0">
                                   <button onClick={() => changeQty(cat.id, a.id, -1)} className="w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center"><Minus className="w-3 h-3" /></button>
                                   <span className="text-sm font-medium w-4 text-center">{a.quantity}</span>
@@ -1142,14 +1129,14 @@ export default function POSPage() {
         ? supabase.from('item_variants').select('id, name, price, cost').eq('item_id', item.id).eq('is_active', true).order('sort_order')
         : Promise.resolve({ data: [] }),
       item.offer_addons
-        ? supabase.from('item_addon_categories').select('category_id, multiple_select, categories(id, name)').eq('item_id', item.id)
+        ? supabase.from('item_addon_categories').select('category_id, categories(id, name)').eq('item_id', item.id)
         : Promise.resolve({ data: [] }),
     ])
 
     setPickerVariants((variantRes as any).data || [])
 
     // Fetch addon items grouped by category
-    const catRows: { category_id: string; multiple_select: boolean; categories: { id: string; name: string } }[] = (addonCatRes as any).data || []
+    const catRows: { category_id: string; categories: { id: string; name: string } }[] = (addonCatRes as any).data || []
     if (catRows.length > 0) {
       const catIds = catRows.map(r => r.category_id)
       const { data: addonItemsData } = await supabase
@@ -1179,7 +1166,6 @@ export default function POSPage() {
         .map(r => ({
           id: r.category_id,
           name: r.categories?.name ?? r.category_id,
-          multiple_select: r.multiple_select ?? false,
           items: itemsByCat.get(r.category_id) || [],
         }))
         .filter(cat => cat.items.length > 0)
