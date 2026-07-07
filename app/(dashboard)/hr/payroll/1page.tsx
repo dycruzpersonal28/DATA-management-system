@@ -1282,7 +1282,7 @@ function EditTimeLogModal({
   shifts: ShiftSchedule[]
   shopTimezone: string
   onClose: () => void
-  onSave: (updates: { clock_in: string; clock_out: string | null; late_minutes: number; is_late: boolean; notes?: string; advances: { id: string; label: string; amount: number }[] }) => Promise<void>
+  onSave: (updates: { clock_in: string; clock_out: string | null; late_minutes: number; is_late: boolean; shift_schedule_id?: string; notes?: string; advances: { id: string; label: string; amount: number }[] }) => Promise<void>
   onDelete: (id: string) => Promise<void>
 }) {
   const toLocalTime = (iso: string) => {
@@ -1337,6 +1337,7 @@ function EditTimeLogModal({
       clock_out: clockOut ? toUtcIso(dateStr, clockOut, shopTimezone) : null,
       late_minutes: lateMinutes,
       is_late: isLate,
+      shift_schedule_id: shiftId || undefined,
       notes,
       advances,
     })
@@ -1580,7 +1581,7 @@ function AttendanceTab() {
 
   useEffect(() => { fetchMonthLogs() }, [fetchMonthLogs])
 
-  const handleTimeLogEdit = async (id: string, updates: { clock_in: string; clock_out: string | null; late_minutes: number; is_late: boolean; notes?: string; advances: { id: string; label: string; amount: number }[] }) => {
+  const handleTimeLogEdit = async (id: string, updates: { clock_in: string; clock_out: string | null; late_minutes: number; is_late: boolean; shift_schedule_id?: string; notes?: string; advances: { id: string; label: string; amount: number }[] }) => {
     try {
       const res = await fetch('/api/time-logs', {
         method: 'PATCH',
@@ -2455,6 +2456,10 @@ function QuickPayslipGenerator() {
 
   // Computed pay values (editable overrides)
   const [basicPay, setBasicPay] = useState(0)
+  const [liveComputed, setLiveComputed] = useState<{
+    basicPay: number; overtimePay: number; lateDeduction: number
+    sss: number; philhealth: number; pagibig: number; tax: number
+  } | null>(null)
   const [overtimePay, setOvertimePay] = useState(0)
   const [allowance, setAllowance] = useState(0)
   const [lateDeduction, setLateDeduction] = useState(0)
@@ -2541,7 +2546,14 @@ function QuickPayslipGenerator() {
             // Overnight: if clock_out reads past midnight as a small number, add 24h
             if (isOvernight && actualEnd < shiftStartMin) actualEnd += 1440
 
-            const payStart       = Math.max(actualStart, shiftStartMin)
+            // When late deduction is a flat fee, the employee is already being
+            // penalized via the flat fee — don't also shrink their paid hours
+            // for the minutes they were late. Pay as if they clocked in on time.
+            // (Early clock-in still gives no bonus either way.)
+            const payStart = s.late_deduction_type === 'flat'
+              ? shiftStartMin
+              : Math.max(actualStart, shiftStartMin)
+
             const payEnd         = Math.min(actualEnd, effectiveEnd)
             const billableMins   = Math.max(0, payEnd - payStart)
             netHours = Math.max(0, (billableMins / 60) - breakDeductionHours)
@@ -2593,14 +2605,26 @@ function QuickPayslipGenerator() {
         const computedPagibig = s.pagibig_flat ?? 0
         const computedTax = Math.round(grossForDeductions * ((s.tax_rate ?? 0) / 100) * 100) / 100
 
-        setBasicPay(computedBasic)
-        setOvertimePay(computedOT)
+        setLiveComputed({
+          basicPay: computedBasic,
+          overtimePay: computedOT,
+          lateDeduction: computedLate,
+          sss: computedSSS,
+          philhealth: computedPH,
+          pagibig: computedPagibig,
+          tax: computedTax,
+        })
         setAllowance(computedAllowance)
-        setLateDeduction(computedLate)
-        setSss(computedSSS)
-        setPhilhealth(computedPH)
-        setPagibig(computedPagibig)
-        setTax(computedTax)
+        if (!savedPayslipId) {
+          // No saved draft yet — safe to auto-fill, nothing to protect
+          setBasicPay(computedBasic)
+          setOvertimePay(computedOT)
+          setLateDeduction(computedLate)
+          setSss(computedSSS)
+          setPhilhealth(computedPH)
+          setPagibig(computedPagibig)
+          setTax(computedTax)
+        }
 
 
         // Seed otherDeductions from per-log advances (manual time log entries)
@@ -2872,6 +2896,24 @@ function QuickPayslipGenerator() {
   }
   const removeDeduction = (id: string) => { setOtherDeductions(prev => prev.filter(o => o.id !== id)) }
 
+  const applyLiveComputed = () => {
+    if (!liveComputed) return
+    setBasicPay(liveComputed.basicPay)
+    setOvertimePay(liveComputed.overtimePay)
+    setLateDeduction(liveComputed.lateDeduction)
+    setSss(liveComputed.sss)
+    setPhilhealth(liveComputed.philhealth)
+    setPagibig(liveComputed.pagibig)
+    setTax(liveComputed.tax)
+    toast.success('Recalculated from current attendance data')
+  }
+
+  const isStaleVsAttendance =
+    !!liveComputed &&
+    (Math.round(liveComputed.basicPay * 100) !== Math.round(basicPay * 100) ||
+      Math.round(liveComputed.overtimePay * 100) !== Math.round(overtimePay * 100) ||
+      Math.round(liveComputed.lateDeduction * 100) !== Math.round(lateDeduction * 100))
+
   const selectedEmployee = employees.find(e => e.id === employeeId)
   const selectedTpl = templates.find(t => t.id === templateId) ?? null
   const accentColor = selectedTpl?.primaryColor ?? '#4f46e5'
@@ -3051,6 +3093,21 @@ function QuickPayslipGenerator() {
                 onClick={handleUnlockDraft}
                 className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-amber-600 border border-amber-300 bg-white rounded-lg hover:bg-amber-50 transition-colors flex-shrink-0">
                 <Pencil className="w-3 h-3" /> Unlock
+              </button>
+            </div>
+          )}
+
+          {/* Stale draft banner — saved values no longer match current attendance data */}
+          {!isFinalized && isStaleVsAttendance && (
+            <div className="flex items-center justify-between gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                Attendance data has changed since this draft was saved — earnings shown may be out of date.
+              </div>
+              <button
+                onClick={applyLiveComputed}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-amber-700 border border-amber-300 bg-white rounded-lg hover:bg-amber-100 transition-colors flex-shrink-0">
+                <RefreshCw className="w-3 h-3" /> Recalculate
               </button>
             </div>
           )}

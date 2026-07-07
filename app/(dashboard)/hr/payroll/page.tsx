@@ -1282,7 +1282,7 @@ function EditTimeLogModal({
   shifts: ShiftSchedule[]
   shopTimezone: string
   onClose: () => void
-  onSave: (updates: { clock_in: string; clock_out: string | null; late_minutes: number; is_late: boolean; notes?: string; advances: { id: string; label: string; amount: number }[] }) => Promise<void>
+  onSave: (updates: { clock_in: string; clock_out: string | null; late_minutes: number; is_late: boolean; shift_schedule_id?: string; notes?: string; advances: { id: string; label: string; amount: number }[] }) => Promise<void>
   onDelete: (id: string) => Promise<void>
 }) {
   const toLocalTime = (iso: string) => {
@@ -1337,6 +1337,7 @@ function EditTimeLogModal({
       clock_out: clockOut ? toUtcIso(dateStr, clockOut, shopTimezone) : null,
       late_minutes: lateMinutes,
       is_late: isLate,
+      shift_schedule_id: shiftId || undefined,
       notes,
       advances,
     })
@@ -1580,7 +1581,7 @@ function AttendanceTab() {
 
   useEffect(() => { fetchMonthLogs() }, [fetchMonthLogs])
 
-  const handleTimeLogEdit = async (id: string, updates: { clock_in: string; clock_out: string | null; late_minutes: number; is_late: boolean; notes?: string; advances: { id: string; label: string; amount: number }[] }) => {
+  const handleTimeLogEdit = async (id: string, updates: { clock_in: string; clock_out: string | null; late_minutes: number; is_late: boolean; shift_schedule_id?: string; notes?: string; advances: { id: string; label: string; amount: number }[] }) => {
     try {
       const res = await fetch('/api/time-logs', {
         method: 'PATCH',
@@ -2455,6 +2456,10 @@ function QuickPayslipGenerator() {
 
   // Computed pay values (editable overrides)
   const [basicPay, setBasicPay] = useState(0)
+  const [liveComputed, setLiveComputed] = useState<{
+    basicPay: number; overtimePay: number; lateDeduction: number
+    sss: number; philhealth: number; pagibig: number; tax: number
+  } | null>(null)
   const [overtimePay, setOvertimePay] = useState(0)
   const [allowance, setAllowance] = useState(0)
   const [lateDeduction, setLateDeduction] = useState(0)
@@ -2600,14 +2605,26 @@ function QuickPayslipGenerator() {
         const computedPagibig = s.pagibig_flat ?? 0
         const computedTax = Math.round(grossForDeductions * ((s.tax_rate ?? 0) / 100) * 100) / 100
 
-        setBasicPay(computedBasic)
-        setOvertimePay(computedOT)
+        setLiveComputed({
+          basicPay: computedBasic,
+          overtimePay: computedOT,
+          lateDeduction: computedLate,
+          sss: computedSSS,
+          philhealth: computedPH,
+          pagibig: computedPagibig,
+          tax: computedTax,
+        })
         setAllowance(computedAllowance)
-        setLateDeduction(computedLate)
-        setSss(computedSSS)
-        setPhilhealth(computedPH)
-        setPagibig(computedPagibig)
-        setTax(computedTax)
+        if (!savedPayslipId) {
+          // No saved draft yet — safe to auto-fill, nothing to protect
+          setBasicPay(computedBasic)
+          setOvertimePay(computedOT)
+          setLateDeduction(computedLate)
+          setSss(computedSSS)
+          setPhilhealth(computedPH)
+          setPagibig(computedPagibig)
+          setTax(computedTax)
+        }
 
 
         // Seed otherDeductions from per-log advances (manual time log entries)
@@ -2879,6 +2896,24 @@ function QuickPayslipGenerator() {
   }
   const removeDeduction = (id: string) => { setOtherDeductions(prev => prev.filter(o => o.id !== id)) }
 
+  const applyLiveComputed = () => {
+    if (!liveComputed) return
+    setBasicPay(liveComputed.basicPay)
+    setOvertimePay(liveComputed.overtimePay)
+    setLateDeduction(liveComputed.lateDeduction)
+    setSss(liveComputed.sss)
+    setPhilhealth(liveComputed.philhealth)
+    setPagibig(liveComputed.pagibig)
+    setTax(liveComputed.tax)
+    toast.success('Recalculated from current attendance data')
+  }
+
+  const isStaleVsAttendance =
+    !!liveComputed &&
+    (Math.round(liveComputed.basicPay * 100) !== Math.round(basicPay * 100) ||
+      Math.round(liveComputed.overtimePay * 100) !== Math.round(overtimePay * 100) ||
+      Math.round(liveComputed.lateDeduction * 100) !== Math.round(lateDeduction * 100))
+
   const selectedEmployee = employees.find(e => e.id === employeeId)
   const selectedTpl = templates.find(t => t.id === templateId) ?? null
   const accentColor = selectedTpl?.primaryColor ?? '#4f46e5'
@@ -2922,10 +2957,10 @@ function QuickPayslipGenerator() {
   // (EditField is defined outside this component — see below QuickPayslipGenerator)
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex flex-col md:flex-row flex-1 overflow-visible md:overflow-hidden">
 
       {/* ── Left panel: controls ── */}
-      <div className="w-[400px] flex-shrink-0 border-r border-gray-200 bg-white flex flex-col overflow-y-auto">
+      <div className="w-full md:w-[400px] flex-shrink-0 border-b md:border-b-0 md:border-r border-gray-200 bg-white flex flex-col overflow-visible md:overflow-y-auto">
         <div className="px-6 py-4 border-b border-gray-100">
           <h2 className="font-semibold text-gray-900">Generate Payslip</h2>
           <p className="text-xs text-gray-400 mt-0.5">Picks up real attendance data — all amounts auto-computed.</p>
@@ -3062,6 +3097,21 @@ function QuickPayslipGenerator() {
             </div>
           )}
 
+          {/* Stale draft banner — saved values no longer match current attendance data */}
+          {!isFinalized && isStaleVsAttendance && (
+            <div className="flex items-center justify-between gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                Attendance data has changed since this draft was saved — earnings shown may be out of date.
+              </div>
+              <button
+                onClick={applyLiveComputed}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-amber-700 border border-amber-300 bg-white rounded-lg hover:bg-amber-100 transition-colors flex-shrink-0">
+                <RefreshCw className="w-3 h-3" /> Recalculate
+              </button>
+            </div>
+          )}
+
           {/* Earnings — auto-filled, editable */}
           <div>
             <div className="flex items-center justify-between mb-1">
@@ -3120,8 +3170,8 @@ function QuickPayslipGenerator() {
       </div>
 
       {/* ── Right panel: live preview ── */}
-      <div className="flex-1 bg-gray-50 flex flex-col overflow-hidden">
-        <div className="px-6 py-4 bg-white border-b border-gray-200 flex items-center justify-between gap-4">
+      <div className="flex-1 min-w-0 bg-gray-50 flex flex-col overflow-visible md:overflow-hidden">
+        <div className="px-4 md:px-6 py-4 bg-white border-b border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h3 className="font-semibold text-gray-900">Live Preview</h3>
@@ -3140,7 +3190,7 @@ function QuickPayslipGenerator() {
               {logs.length > 0 ? `Based on ${logs.length} attendance log${logs.length !== 1 ? 's' : ''}` : 'Select employee and period to load attendance'}
             </p>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
             {/* Print — always available */}
             <button onClick={handlePrint} disabled={!employeeId || logsLoading}
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 disabled:opacity-40 transition-colors">
@@ -3172,7 +3222,7 @@ function QuickPayslipGenerator() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6">
           {!employeeId ? (
             <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 pb-12">
               <Users className="w-10 h-10 mb-3 text-gray-300" />
@@ -3392,7 +3442,7 @@ export default function PayrollPage() {
 
       {/* Tab content */}
       {activeTab === 'attendance' && <div className="flex-1 overflow-y-auto"><AttendanceTab /></div>}
-      {activeTab === 'generate' && <div className="flex-1 flex overflow-hidden"><QuickPayslipGenerator /></div>}
+      {activeTab === 'generate' && <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden"><QuickPayslipGenerator /></div>}
       {activeTab === 'templates' && <div className="flex-1 overflow-y-auto"><TemplatesTab /></div>}
       {activeTab === 'settings' && <div className="flex-1 overflow-y-auto"><SettingsTab /></div>}
 

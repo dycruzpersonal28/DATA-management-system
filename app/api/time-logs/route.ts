@@ -615,7 +615,7 @@ export async function PATCH(req: NextRequest) {
     if (!caller || !['owner', 'manager'].includes(caller.role?.toLowerCase()))
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-    const { id, clock_in, clock_out, late_minutes, is_late, overtime_hours, notes, advances } = await req.json()
+    const { id, clock_in, clock_out, late_minutes, is_late, overtime_hours, shift_schedule_id, notes, advances } = await req.json()
     if (!id) return NextResponse.json({ error: 'Log ID required' }, { status: 400 })
 
     const admin = createAdminClient()
@@ -627,6 +627,7 @@ export async function PATCH(req: NextRequest) {
     if (late_minutes  !== undefined) updatePayload.late_minutes   = late_minutes
     if (is_late       !== undefined) updatePayload.is_late        = is_late
     if (overtime_hours !== undefined) updatePayload.overtime_hours = overtime_hours
+    if (shift_schedule_id !== undefined) updatePayload.shift_schedule_id = shift_schedule_id || null
     if (notes         !== undefined) updatePayload.notes          = notes
     if (advances      !== undefined) updatePayload.advances       = advances
 
