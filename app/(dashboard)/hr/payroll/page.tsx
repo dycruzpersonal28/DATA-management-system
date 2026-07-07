@@ -3426,13 +3426,16 @@ export default function PayrollPage() {
     <div className="flex flex-col h-full overflow-hidden bg-gray-50">
 
       {/* Tab bar */}
-      <div className="bg-white border-b border-gray-200 px-6 flex items-center gap-1">
+      <div className="bg-white border-b border-gray-200 flex flex-col md:flex-row md:items-center md:px-6 gap-0 md:gap-1">
         {tabs.map(tab => {
           const Icon = tab.icon
+          const active = activeTab === tab.id
           return (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-3.5 text-sm font-medium border-b-2 transition-colors
-                ${activeTab === tab.id ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-800'}`}
+              className={`w-full md:w-auto flex items-center gap-2 px-6 md:px-4 py-3 md:py-3.5 text-sm font-medium border-l-4 md:border-l-0 md:border-b-2 transition-colors
+                ${active
+                  ? 'border-indigo-500 text-indigo-600 bg-indigo-50/60 md:bg-transparent'
+                  : 'border-transparent text-gray-500 hover:text-gray-800 hover:bg-gray-50 md:hover:bg-transparent'}`}
             >
               <Icon className="w-4 h-4" />{tab.label}
             </button>

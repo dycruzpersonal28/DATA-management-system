@@ -2957,10 +2957,10 @@ function QuickPayslipGenerator() {
   // (EditField is defined outside this component — see below QuickPayslipGenerator)
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex flex-col md:flex-row flex-1 overflow-visible md:overflow-hidden">
 
       {/* ── Left panel: controls ── */}
-      <div className="w-[400px] flex-shrink-0 border-r border-gray-200 bg-white flex flex-col overflow-y-auto">
+      <div className="w-full md:w-[400px] flex-shrink-0 border-b md:border-b-0 md:border-r border-gray-200 bg-white flex flex-col overflow-visible md:overflow-y-auto">
         <div className="px-6 py-4 border-b border-gray-100">
           <h2 className="font-semibold text-gray-900">Generate Payslip</h2>
           <p className="text-xs text-gray-400 mt-0.5">Picks up real attendance data — all amounts auto-computed.</p>
@@ -3170,8 +3170,8 @@ function QuickPayslipGenerator() {
       </div>
 
       {/* ── Right panel: live preview ── */}
-      <div className="flex-1 bg-gray-50 flex flex-col overflow-hidden">
-        <div className="px-6 py-4 bg-white border-b border-gray-200 flex items-center justify-between gap-4">
+      <div className="flex-1 min-w-0 bg-gray-50 flex flex-col overflow-visible md:overflow-hidden">
+        <div className="px-4 md:px-6 py-4 bg-white border-b border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h3 className="font-semibold text-gray-900">Live Preview</h3>
@@ -3190,7 +3190,7 @@ function QuickPayslipGenerator() {
               {logs.length > 0 ? `Based on ${logs.length} attendance log${logs.length !== 1 ? 's' : ''}` : 'Select employee and period to load attendance'}
             </p>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
             {/* Print — always available */}
             <button onClick={handlePrint} disabled={!employeeId || logsLoading}
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 disabled:opacity-40 transition-colors">
@@ -3222,7 +3222,7 @@ function QuickPayslipGenerator() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6">
           {!employeeId ? (
             <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 pb-12">
               <Users className="w-10 h-10 mb-3 text-gray-300" />
@@ -3442,7 +3442,7 @@ export default function PayrollPage() {
 
       {/* Tab content */}
       {activeTab === 'attendance' && <div className="flex-1 overflow-y-auto"><AttendanceTab /></div>}
-      {activeTab === 'generate' && <div className="flex-1 flex overflow-hidden"><QuickPayslipGenerator /></div>}
+      {activeTab === 'generate' && <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden"><QuickPayslipGenerator /></div>}
       {activeTab === 'templates' && <div className="flex-1 overflow-y-auto"><TemplatesTab /></div>}
       {activeTab === 'settings' && <div className="flex-1 overflow-y-auto"><SettingsTab /></div>}
 
