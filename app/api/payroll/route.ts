@@ -405,6 +405,17 @@ export async function POST(req: NextRequest) {
       .single()
     const shopTimezone = shopRow?.timezone ?? 'Asia/Manila'
 
+    // Capture which payslips are actually draft BEFORE updating, so the
+    // ledger-write step below only touches payslips finalized by this call —
+    // not ones that were already released from an earlier finalize_period or
+    // finalize_payslip call (which would otherwise get a duplicate entry).
+    const { data: draftSlipsBefore } = await admin
+      .from('payslips')
+      .select('id, net_pay, snapshot_name')
+      .eq('period_id', period_id)
+      .eq('shop_id', shop_id)
+      .eq('status', 'draft')
+
     // Finalize all draft payslips in this period
     const { error: slipError } = await admin
       .from('payslips')
@@ -430,14 +441,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: periodError.message }, { status: 500 })
     }
 
-    // ── Write financial_entries: one expense row per payslip ─────────────────
-    const { data: finalizedSlips } = await admin
-      .from('payslips')
-      .select('id, net_pay, snapshot_name, period_id')
-      .eq('period_id', period_id)
-      .eq('shop_id', shop_id)
+    // ── Write financial_entries: one expense row per newly-finalized payslip ─
+    const finalizedSlips = draftSlipsBefore ?? []
 
-    if (finalizedSlips && finalizedSlips.length > 0) {
+    if (finalizedSlips.length > 0) {
       const entryDate = period.period_end ?? getShopDate(shopTimezone)
 
       const ledgerEntries = finalizedSlips
@@ -498,6 +505,16 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Write a single financial_entries row for this payslip ────────────────
+    // Defensive delete-then-insert: guards against any stale/duplicate row
+    // left behind by an earlier unlock cycle (e.g. from before the unlock fix
+    // below existed), so re-finalizing never stacks a second entry on top.
+    await admin
+      .from('financial_entries')
+      .delete()
+      .eq('shop_id', shop_id)
+      .eq('reference_type', 'payslip')
+      .eq('reference_id', payslip_id)
+
     if (current.net_pay > 0) {
       const { data: period } = await admin
         .from('payroll_periods')
@@ -604,6 +621,17 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: unlockError.message }, { status: 500 })
       }
 
+      // Remove the financial_entries row written at finalize-time — a draft
+      // payslip has no business appearing in the P&L. Without this, unlocking
+      // leaves a stale entry behind that still counts toward payroll totals,
+      // and re-finalizing later would add a second entry on top of it.
+      await admin
+        .from('financial_entries')
+        .delete()
+        .eq('shop_id', shop_id)
+        .eq('reference_type', 'payslip')
+        .eq('reference_id', payslip_id)
+
       return NextResponse.json({ payslip: unlocked })
     }
 
@@ -632,6 +660,119 @@ export async function POST(req: NextRequest) {
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json({ payslip })
+  }
+
+  // ── EDIT FINALIZED PAYSLIP (owner/manager only) ────────────────────────────
+  // Unlike update_payslip, this edits a payslip WITHOUT reverting its status
+  // out of 'released'. Because a finalized payslip already has a matching
+  // financial_entries ledger row (written at finalize-time), editing amounts
+  // here must also keep that ledger row in sync — otherwise the books and
+  // the payslip silently disagree.
+  if (action === 'edit_finalized_payslip') {
+    const { payslip_id, updates } = body
+
+    if (!payslip_id || !updates) {
+      return NextResponse.json({ error: 'payslip_id and updates required' }, { status: 400 })
+    }
+
+    // Editing amounts on an already-posted payslip affects financial records,
+    // so restrict it the same way void_payslip is restricted.
+    if (!['owner', 'manager'].includes(appUser.role?.toLowerCase())) {
+      return NextResponse.json({ error: 'Forbidden: only owners and managers can edit finalized payslips' }, { status: 403 })
+    }
+
+    const { data: current } = await admin
+      .from('payslips')
+      .select('*')
+      .eq('id', payslip_id)
+      .eq('shop_id', shop_id)
+      .single()
+
+    if (!current) {
+      return NextResponse.json({ error: 'Payslip not found' }, { status: 404 })
+    }
+
+    if (current.status !== 'released') {
+      return NextResponse.json({ error: 'Payslip is not finalized — use update_payslip instead' }, { status: 400 })
+    }
+
+    // Strip fields that must not be overwritten via this endpoint. Status is
+    // intentionally excluded from safeUpdates too — this action edits amounts
+    // in place, it never changes lock state. Use the unlock action for that.
+    const { status: _s, id: _i, shop_id: _sh, employee_id: _e, period_id: _p, ...safeUpdates } = updates as any
+
+    const merged = { ...current, ...safeUpdates }
+
+    const gross = merged.basic_pay + merged.overtime_pay + merged.allowance
+    const otherTotal = (merged.other_deductions ?? []).reduce((s: number, o: any) => s + (o.amount ?? 0), 0)
+    const deductions = merged.late_deduction + merged.sss_contribution +
+      merged.philhealth_contribution + merged.pagibig_contribution + merged.tax_withheld + otherTotal
+    const net_pay = parseFloat((gross - deductions).toFixed(2))
+
+    const { data: payslip, error } = await admin
+      .from('payslips')
+      .update({ ...safeUpdates, net_pay })
+      .eq('id', payslip_id)
+      .eq('shop_id', shop_id)
+      .select()
+      .single()
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    // ── Keep the linked financial_entries row in sync with the new net_pay ──
+    const { data: existingEntry } = await admin
+      .from('financial_entries')
+      .select('id')
+      .eq('shop_id', shop_id)
+      .eq('reference_type', 'payslip')
+      .eq('reference_id', payslip_id)
+      .maybeSingle()
+
+    if (net_pay > 0) {
+      if (existingEntry) {
+        // Amount changed — update the existing ledger row to match.
+        await admin
+          .from('financial_entries')
+          .update({ amount: net_pay })
+          .eq('id', existingEntry.id)
+      } else {
+        // Payslip previously had net_pay <= 0 (no ledger row was written at
+        // finalize-time), but the edit pushed it above zero — create one now.
+        const { data: period } = await admin
+          .from('payroll_periods')
+          .select('period_end')
+          .eq('id', current.period_id)
+          .eq('shop_id', shop_id)
+          .single()
+
+        const { data: shopRow } = await admin
+          .from('shops')
+          .select('timezone')
+          .eq('id', shop_id)
+          .single()
+        const shopTimezone = shopRow?.timezone ?? 'Asia/Manila'
+        const entryDate = period?.period_end ?? getShopDate(shopTimezone)
+
+        await admin.from('financial_entries').insert({
+          shop_id,
+          entry_date: entryDate,
+          type: 'expense',
+          category: 'payroll',
+          amount: net_pay,
+          direction: 'out',
+          reference_type: 'payslip',
+          reference_id: payslip_id,
+          note: `Payroll: ${current.snapshot_name ?? 'Employee'} (edited)`,
+        })
+      }
+    } else if (existingEntry) {
+      // Edit brought net_pay to zero or below — remove the now-invalid ledger row.
+      await admin.from('financial_entries').delete().eq('id', existingEntry.id)
     }
 
     return NextResponse.json({ payslip })
