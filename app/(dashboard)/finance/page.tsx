@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'react'
 import {
   TrendingUp, TrendingDown, DollarSign, ShoppingBag,
   Users, Percent, RefreshCw, ChevronDown, Receipt, ExternalLink, Zap,
@@ -80,6 +80,55 @@ function shortDate(d: string, tz: string) {
   return new Date(d + 'T12:00:00Z').toLocaleDateString('en-PH', { timeZone: tz, month: 'short', day: 'numeric' })
 }
 
+// ── Auto-fit text ─────────────────────────────────────────────────────────────
+// Shrinks font-size step by step until the text fits on one line within its
+// container's width, instead of truncating it with an ellipsis. Re-measures
+// whenever the text changes or the container is resized (e.g. sidebar
+// collapsing, window resize, grid reflow at different breakpoints).
+function AutoFitText({
+  text, maxFontSize = 24, minFontSize = 13, className = '',
+}: {
+  text: string
+  maxFontSize?: number
+  minFontSize?: number
+  className?: string
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [fontSize, setFontSize] = useState(maxFontSize)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+
+    const fit = () => {
+      let size = maxFontSize
+      el.style.fontSize = `${size}px`
+      while (el.scrollWidth > el.clientWidth && size > minFontSize) {
+        size -= 1
+        el.style.fontSize = `${size}px`
+      }
+      setFontSize(size)
+    }
+
+    fit()
+
+    const observer = new ResizeObserver(fit)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [text, maxFontSize, minFontSize])
+
+  return (
+    <div
+      ref={ref}
+      className={`whitespace-nowrap overflow-hidden ${className}`}
+      style={{ fontSize }}
+      title={text}
+    >
+      {text}
+    </div>
+  )
+}
+
 // ── Stat card ─────────────────────────────────────────────────────────────────
 function StatCard({
   label, value, sub, icon: Icon, color, bg, pulse, href,
@@ -101,7 +150,7 @@ function StatCard({
           <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-400 rounded-full animate-pulse" />
         )}
       </div>
-      <p className="text-2xl font-semibold text-gray-900 truncate">{value}</p>
+      <AutoFitText text={value} maxFontSize={24} minFontSize={13} className="font-semibold text-gray-900" />
       <p className="text-xs text-gray-500 mt-0.5">{label}</p>
       {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
       {href && (

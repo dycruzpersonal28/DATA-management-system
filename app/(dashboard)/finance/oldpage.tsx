@@ -194,6 +194,7 @@ export default function FinancePage() {
         body: JSON.stringify({ feature_auto_cogs: newVal }),
       })
       if (!res.ok) throw new Error('Failed to update')
+      await load(from, to)
     } catch {
       // Revert on error
       setAutoCogsEnabled(!newVal)
