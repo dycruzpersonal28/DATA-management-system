@@ -145,51 +145,10 @@ export async function POST(req: NextRequest) {
 
       if (logError) return NextResponse.json({ error: logError.message }, { status: 400 })
 
-      // ── PAYROLL: write labor cost to financial_entries when clock_out is present ──
-      if (clock_out) {
-        // Fetch employee hourly rate
-        const { data: emp } = await admin
-          .from('employees')
-          .select('name, hourly_rate')
-          .eq('id', employee_id)
-          .single()
-
-        // Fetch break settings
-        const { data: payrollSettings } = await admin
-          .from('payroll_settings')
-          .select('break_mode, break_duration_minutes')
-          .eq('shop_id', caller.shop_id)
-          .single()
-
-        const breakMode            = payrollSettings?.break_mode ?? 'auto'
-        const breakDurationMinutes = payrollSettings?.break_duration_minutes ?? 0
-        const breakMins            = breakMode === 'auto' ? breakDurationMinutes : (payload.break_minutes ?? 0)
-
-        const clockInMs   = new Date(clock_in).getTime()
-        const clockOutMs  = new Date(clock_out).getTime()
-        const rawHours    = (clockOutMs - clockInMs) / 1000 / 3600
-        // Deduct break AND late minutes — late minutes are unpaid time
-        const lateMins    = payload.late_minutes ?? 0
-        const hoursWorked = parseFloat((rawHours - breakMins / 60 - lateMins / 60).toFixed(4))
-
-        const hourlyRate = Number(emp?.hourly_rate) || 0
-
-        if (hourlyRate > 0 && hoursWorked > 0) {
-          const laborCost = parseFloat((hoursWorked * hourlyRate).toFixed(2))
-          await admin.from('financial_entries').insert({
-            shop_id:        caller.shop_id,
-            entry_date:     date,
-            type:           'expense',
-            category:       'payroll',
-            amount:         laborCost,
-            direction:      'out',
-            reference_type: 'time_log',
-            reference_id:   log.id,
-            note: `Payroll (manual): ${emp?.name ?? employee_id} — ${hoursWorked.toFixed(2)}h × ₱${hourlyRate}/hr${lateMins > 0 ? ` (${lateMins}min late deducted)` : ''}`,
-          })
-        }
-      }
-      // ── end payroll ────────────────────────────────────────────────────────────
+      // NOTE: financial_entries for payroll are no longer written here.
+      // Punch times are provisional (subject to late/break/shift correction),
+      // so payroll cost is now written once, from the finalized payslip amount,
+      // in the Payroll save/finalize handler. This keeps P&L in sync with payslips.
 
       return NextResponse.json({ success: true, log })
     }
@@ -485,36 +444,24 @@ export async function POST(req: NextRequest) {
 
       if (logError) return NextResponse.json({ error: logError.message }, { status: 400 })
 
-      // ── PAYROLL: write labor cost to financial_entries on clock-out ──────────
+      // NOTE: financial_entries for payroll are no longer written here.
+      // Raw punch hours (rawHours - break_minutes) are provisional — late
+      // deduction, shift-matching, and manual corrections all happen after
+      // this point. Payroll cost is now written once, from the finalized
+      // payslip amount, in the Payroll save/finalize handler, so P&L always
+      // matches what's shown on the payslip.
       const clockInMs   = new Date(openLog.clock_in).getTime()
       const clockOutMs  = clockOutTime.getTime()
       const rawHours    = (clockOutMs - clockInMs) / 1000 / 3600
       const hoursWorked = parseFloat((rawHours - break_minutes / 60).toFixed(4))
-
-      const hourlyRate = Number(employee.hourly_rate) || 0
-
-      if (hourlyRate > 0 && hoursWorked > 0) {
-        const laborCost = parseFloat((hoursWorked * hourlyRate).toFixed(2))
-
-        await admin.from('financial_entries').insert({
-          shop_id,
-          entry_date: date,
-          type: 'expense',
-          category: 'payroll',
-          amount: laborCost,
-          direction: 'out',
-          reference_type: 'time_log',
-          reference_id: openLog.id,
-          note: `Payroll: ${employee.name} — ${hoursWorked.toFixed(2)}h × ₱${hourlyRate}/hr`,
-        })
-      }
-      // ── end payroll ──────────────────────────────────────────────────────────
+      const hourlyRate  = Number(employee.hourly_rate) || 0
 
       return NextResponse.json({
         success: true,
         action: 'clock_out',
         log,
         employee: { name: employee.name },
+        // Provisional estimate only — for display/toast purposes. Not written to P&L.
         payroll: {
           hours: hoursWorked,
           rate: hourlyRate,

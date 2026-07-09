@@ -111,7 +111,7 @@ export async function GET(req: NextRequest) {
     if (e.type === 'revenue' && e.category === 'sales')    totalRevenue  += amt
     if (e.type === 'revenue' && e.category === 'tax')      totalTax      += amt
     if (e.type === 'cogs')                                 totalCogs     += amt
-    if ((e.type === 'expense' && e.category === 'payroll') || e.type === 'labor') totalPayroll  += amt
+    if (e.type === 'expense' && e.category === 'payroll') totalPayroll  += amt
     if (e.type === 'expense' && e.category === 'discount') totalDiscount += amt
     if (e.type === 'other_income')                         totalOtherIncome       += amt
     if (e.type === 'expense' && e.category !== 'payroll' && e.category !== 'discount') totalOperatingExpenses += amt
@@ -139,7 +139,7 @@ export async function GET(req: NextRequest) {
     const amt = Number(e.amount)
     if (e.type === 'revenue' && e.category === 'sales')    dailyMap[d].revenue  += amt
     if (e.type === 'cogs')                                 dailyMap[d].cogs     += amt
-    if ((e.type === 'expense' && e.category === 'payroll') || e.type === 'labor') dailyMap[d].payroll  += amt
+    if (e.type === 'expense' && e.category === 'payroll') dailyMap[d].payroll  += amt
     if (e.type === 'expense' && e.category === 'discount') dailyMap[d].discount += amt
   }
 

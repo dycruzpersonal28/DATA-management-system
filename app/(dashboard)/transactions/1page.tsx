@@ -1114,22 +1114,6 @@ export default function TransactionsPage() {
   // ── Cash movement: delete ────────────────────────────────────────────────────
   async function handleCashMovementDelete(movement: any) {
     setCashDeleteModal(null)
-
-    // If this cash movement has a linked journal (expense) entry, delete that
-    // first — /api/journal's DELETE handler cascades to remove the
-    // financial_entries mirror too, which is what the P&L page reads from.
-    // Without this step the journal/financial rows are orphaned and the
-    // "deleted" expense keeps showing up on the P&L page forever.
-    if (movement.journal_entry_id) {
-      const res = await fetch(`/api/journal?id=${movement.journal_entry_id}`, {
-        method: 'DELETE',
-      })
-      if (!res.ok) {
-        toast.error('Failed to remove linked expense entry')
-        return
-      }
-    }
-
     const { error } = await supabase
       .from('shift_cash_movements')
       .delete()

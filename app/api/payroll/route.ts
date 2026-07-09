@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
 
   // ── CREATE PERIOD + GENERATE DRAFT PAYSLIPS ────────────────────────────────
   if (action === 'create_period') {
-    const { period_start, period_end } = body
+    const { period_start, period_end, employee_ids } = body
 
     if (!period_start || !period_end) {
       return NextResponse.json({ error: 'period_start and period_end required' }, { status: 400 })
@@ -171,12 +171,20 @@ export async function POST(req: NextRequest) {
       other_deductions: [] as { label: string; amount: number }[],
     }
 
-    // Fetch all active employees for this shop
-    const { data: employees, error: empError } = await admin
+    // Fetch employees for this shop — scoped to employee_ids when provided
+    // (e.g. the single-employee "Generate" tab), otherwise every active employee.
+    let employeeQuery = admin
       .from('employees')
       .select('id, name, employee_no, role, hourly_rate, allowance, employment_type, sss_no, philhealth_no, pagibig_no, govt_deductions_enabled')
       .eq('shop_id', shop_id)
-      .eq('is_active', true)
+
+    if (Array.isArray(employee_ids) && employee_ids.length > 0) {
+      employeeQuery = employeeQuery.in('id', employee_ids)
+    } else {
+      employeeQuery = employeeQuery.eq('is_active', true)
+    }
+
+    const { data: employees, error: empError } = await employeeQuery
 
     if (empError || !employees?.length) {
       return NextResponse.json({
@@ -588,17 +596,30 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'period_id required' }, { status: 400 })
   }
 
-  // Prevent deletion of finalized periods
+  // Confirm the period exists
   const { data: period } = await admin
     .from('payroll_periods')
-    .select('status')
+    .select('id')
     .eq('id', period_id)
     .eq('shop_id', appUser.shop_id)
     .single()
 
   if (!period) return NextResponse.json({ error: 'Period not found' }, { status: 404 })
-  if (period.status === 'finalized') {
-    return NextResponse.json({ error: 'Cannot delete a finalized payroll period' }, { status: 400 })
+
+  // Prevent deletion only if it actually still has released payslips.
+  // (Don't trust payroll_periods.status here — it's set to 'finalized' once
+  // at finalize-time and never reset back to 'draft' if every finalized
+  // payslip inside it is later voided one-by-one, which would otherwise
+  // permanently lock an effectively-empty period from being deleted.)
+  const { count: releasedCount } = await admin
+    .from('payslips')
+    .select('id', { count: 'exact', head: true })
+    .eq('period_id', period_id)
+    .eq('shop_id', appUser.shop_id)
+    .eq('status', 'released')
+
+  if ((releasedCount ?? 0) > 0) {
+    return NextResponse.json({ error: 'Cannot delete a period with finalized payslips' }, { status: 400 })
   }
 
   // Collect payslip IDs so we can remove their financial_entries mirrors

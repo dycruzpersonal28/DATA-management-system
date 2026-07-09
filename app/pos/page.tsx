@@ -1038,7 +1038,7 @@ export default function POSPage() {
         year: 'numeric', month: '2-digit', day: '2-digit',
       }).format(new Date())
 
-      await fetch('/api/journal', {
+      const journalRes = await fetch('/api/journal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1050,10 +1050,25 @@ export default function POSPage() {
           date: entryDate,
           is_recurring: false,
           recurring_day: null,
-          reference_type: 'cash_movement',
-          reference_id: movement.id,
+          // NOTE: no reference_type/reference_id override here anymore.
+          // Letting /api/journal use its own defaults ('journal' + the new
+          // journal_entries.id) means the journal route's DELETE handler can
+          // always find and clean up the financial_entries mirror correctly.
         }),
       })
+
+      const journalData = await journalRes.json()
+
+      // 3. Link the cash movement back to the journal entry so deleting
+      //    either one can find and clean up the other.
+      if (journalRes.ok && journalData?.entry?.id) {
+        await supabase
+          .from('shift_cash_movements')
+          .update({ journal_entry_id: journalData.entry.id })
+          .eq('id', movement.id)
+      } else {
+        console.error('[handleCashOut] Journal entry response missing id:', journalData)
+      }
     } catch (err) {
       // Journal write failure shouldn't block the POS flow — log but don't throw
       console.error('[handleCashOut] Journal entry failed:', err)
