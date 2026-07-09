@@ -307,17 +307,19 @@ function EditableAmount({ value, label, onChange, disabled }: {
 
 // ─── Payslip Row ──────────────────────────────────────────────────────────────
 
-function PayslipRow({ slip, onUpdate, onPrint, onVoid, selected, onToggleSelect }: {
+function PayslipRow({ slip, onUpdate, onPrint, onVoid, onFinalize, selected, onToggleSelect }: {
   slip: Payslip
   onUpdate: (id: string, updates: Partial<Payslip>) => Promise<void>
   onPrint: (slip: Payslip) => void
   onVoid?: (id: string) => Promise<void>
+  onFinalize?: (id: string) => Promise<void>
   selected?: boolean
   onToggleSelect?: (id: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [saving, setSaving] = useState(false)
   const [voiding, setVoiding] = useState(false)
+  const [finalizing, setFinalizing] = useState(false)
   const isFinalized = slip.status === 'released'
 
   const handleVoid = async (e: React.MouseEvent) => {
@@ -332,6 +334,14 @@ function PayslipRow({ slip, onUpdate, onPrint, onVoid, selected, onToggleSelect 
     // Reverse the late fee journal entry now that the payslip is voided
     await deleteLateFeeJournalEntry(slip.id)
     setVoiding(false)
+  }
+
+  const handleFinalizeClick = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!onFinalize) return
+    setFinalizing(true)
+    await onFinalize(slip.id)
+    setFinalizing(false)
   }
 
   // Per-payslip other deductions (stored in DB on the payslip itself)
@@ -496,6 +506,12 @@ function PayslipRow({ slip, onUpdate, onPrint, onVoid, selected, onToggleSelect 
                   }}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-600 border border-amber-200 rounded-lg hover:bg-amber-50 transition-colors">
                   <Pencil className="w-3.5 h-3.5" /> Unlock & Edit
+                </button>
+              )}
+              {!isFinalized && onFinalize && (
+                <button onClick={handleFinalizeClick} disabled={finalizing}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-600 border border-emerald-200 rounded-lg hover:bg-emerald-50 disabled:opacity-50 transition-colors">
+                  {finalizing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />} Finalize
                 </button>
               )}
               {onVoid && (
@@ -3498,6 +3514,24 @@ function PayslipRecordsTab() {
     }
   }
 
+  const handleFinalizeSingle = async (id: string) => {
+    if (!confirm('Finalize this payslip? It will be locked and can no longer be edited.')) return
+    try {
+      const res = await fetch('/api/payroll', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'finalize_payslip', payslip_id: id }),
+      })
+      const data = await safeJson(res)
+      if (data.error) throw new Error(data.error)
+      setPayslips(prev => prev.map(s => s.id === id ? { ...s, status: 'released' } as Payslip : s))
+      toast.success('Payslip finalized')
+      // Period's finalized_count / status can shift once every payslip is done — resync.
+      loadPeriods()
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to finalize payslip')
+    }
+  }
+
   const handleVoid = async (id: string) => {
     try {
       const res = await fetch('/api/payroll', {
@@ -3726,6 +3760,7 @@ function PayslipRecordsTab() {
               onUpdate={handleUpdate}
               onPrint={handlePrintSlip}
               onVoid={handleVoid}
+              onFinalize={handleFinalizeSingle}
               selected={selectedIds.has(slip.id)}
               onToggleSelect={toggleSelect}
             />

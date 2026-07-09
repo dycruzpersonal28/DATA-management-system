@@ -462,91 +462,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ period })
   }
 
-  // ── FINALIZE SINGLE PAYSLIP ───────────────────────────────────────────────
-  if (action === 'finalize_payslip') {
-    const { payslip_id } = body
-
-    if (!payslip_id) {
-      return NextResponse.json({ error: 'payslip_id required' }, { status: 400 })
-    }
-
-    const { data: current } = await admin
-      .from('payslips')
-      .select('id, status, net_pay, snapshot_name, period_id')
-      .eq('id', payslip_id)
-      .eq('shop_id', shop_id)
-      .single()
-
-    if (!current) {
-      return NextResponse.json({ error: 'Payslip not found' }, { status: 404 })
-    }
-
-    if (current.status === 'released') {
-      return NextResponse.json({ error: 'Payslip is already finalized' }, { status: 400 })
-    }
-
-    const { data: payslip, error: slipError } = await admin
-      .from('payslips')
-      .update({ status: 'released' })
-      .eq('id', payslip_id)
-      .eq('shop_id', shop_id)
-      .select()
-      .single()
-
-    if (slipError) {
-      return NextResponse.json({ error: slipError.message }, { status: 500 })
-    }
-
-    // ── Write a single financial_entries row for this payslip ────────────────
-    if (current.net_pay > 0) {
-      const { data: period } = await admin
-        .from('payroll_periods')
-        .select('period_end')
-        .eq('id', current.period_id)
-        .eq('shop_id', shop_id)
-        .single()
-
-      const { data: shopRow } = await admin
-        .from('shops')
-        .select('timezone')
-        .eq('id', shop_id)
-        .single()
-      const shopTimezone = shopRow?.timezone ?? 'Asia/Manila'
-      const entryDate = period?.period_end ?? getShopDate(shopTimezone)
-
-      await admin.from('financial_entries').insert({
-        shop_id,
-        entry_date: entryDate,
-        type: 'expense',
-        category: 'payroll',
-        amount: parseFloat(current.net_pay.toFixed(2)),
-        direction: 'out',
-        reference_type: 'payslip',
-        reference_id: payslip_id,
-        note: `Payroll: ${current.snapshot_name ?? 'Employee'}`,
-      })
-    }
-
-    // If every payslip in the period is now finalized, mark the period itself
-    // as finalized too (mirrors what finalize_period does in bulk).
-    const { count: draftRemaining } = await admin
-      .from('payslips')
-      .select('id', { count: 'exact', head: true })
-      .eq('period_id', current.period_id)
-      .eq('shop_id', shop_id)
-      .eq('status', 'draft')
-
-    if ((draftRemaining ?? 0) === 0) {
-      await admin
-        .from('payroll_periods')
-        .update({ status: 'finalized' })
-        .eq('id', current.period_id)
-        .eq('shop_id', shop_id)
-    }
-
-    return NextResponse.json({ payslip })
-  }
-
   // ── UPDATE SINGLE PAYSLIP (admin override) ─────────────────────────────────
   if (action === 'update_payslip') {
     const { payslip_id, updates } = body
@@ -577,34 +492,6 @@ export async function POST(req: NextRequest) {
 
     if (!current) {
       return NextResponse.json({ error: 'Payslip not found' }, { status: 404 })
-    }
-
-    // ── Unlock path: caller only wants to revert a finalized payslip back to
-    // draft (updates === { status: 'draft' }). This must run BEFORE the
-    // released-lock check below, since that check would otherwise block the
-    // unlock itself. Handled as its own minimal update — it does not touch
-    // pay fields, so it skips the recalculation logic entirely.
-    const updateKeys = Object.keys(updates)
-    const isUnlockRequest = updateKeys.length === 1 && updates.status === 'draft'
-
-    if (isUnlockRequest) {
-      if (current.status !== 'released') {
-        return NextResponse.json({ error: 'Payslip is not finalized' }, { status: 400 })
-      }
-
-      const { data: unlocked, error: unlockError } = await admin
-        .from('payslips')
-        .update({ status: 'draft' })
-        .eq('id', payslip_id)
-        .eq('shop_id', shop_id)
-        .select()
-        .single()
-
-      if (unlockError) {
-        return NextResponse.json({ error: unlockError.message }, { status: 500 })
-      }
-
-      return NextResponse.json({ payslip: unlocked })
     }
 
     if (current.status === 'released') {

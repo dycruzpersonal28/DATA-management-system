@@ -307,11 +307,13 @@ function EditableAmount({ value, label, onChange, disabled }: {
 
 // ─── Payslip Row ──────────────────────────────────────────────────────────────
 
-function PayslipRow({ slip, onUpdate, onPrint, onVoid }: {
+function PayslipRow({ slip, onUpdate, onPrint, onVoid, selected, onToggleSelect }: {
   slip: Payslip
   onUpdate: (id: string, updates: Partial<Payslip>) => Promise<void>
   onPrint: (slip: Payslip) => void
   onVoid?: (id: string) => Promise<void>
+  selected?: boolean
+  onToggleSelect?: (id: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -321,7 +323,10 @@ function PayslipRow({ slip, onUpdate, onPrint, onVoid }: {
   const handleVoid = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!onVoid) return
-    if (!confirm(`Void payslip for ${slip.employees.name}? This will delete it and remove all related financial entries.`)) return
+    const msg = isFinalized
+      ? `Void payslip for ${slip.employees.name}? This will delete it and remove all related financial entries.`
+      : `Delete this draft payslip for ${slip.employees.name}? This cannot be undone.`
+    if (!confirm(msg)) return
     setVoiding(true)
     await onVoid(slip.id)
     // Reverse the late fee journal entry now that the payslip is voided
@@ -364,8 +369,17 @@ function PayslipRow({ slip, onUpdate, onPrint, onVoid }: {
   const deductions = slip.late_deduction + slip.sss_contribution + slip.philhealth_contribution + slip.pagibig_contribution + slip.tax_withheld + otherTotal
 
   return (
-    <div className={`border rounded-lg overflow-hidden transition-all ${isFinalized ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-200 bg-white'}`}>
+    <div className={`border rounded-lg overflow-hidden transition-all ${selected ? 'ring-2 ring-red-300' : ''} ${isFinalized ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-200 bg-white'}`}>
       <div className="flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-gray-50/80 transition-colors" onClick={() => setExpanded(v => !v)}>
+        {onToggleSelect && (
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onClick={e => e.stopPropagation()}
+            onChange={() => onToggleSelect(slip.id)}
+            className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-400 flex-shrink-0"
+          />
+        )}
         <div className="flex-1 min-w-0">
           <p className="font-medium text-gray-900 text-sm truncate">{slip.employees.name}</p>
           <p className="text-xs text-gray-500">{slip.employees.role}{slip.employees.employee_no ? ` · #${slip.employees.employee_no}` : ''}</p>
@@ -484,10 +498,10 @@ function PayslipRow({ slip, onUpdate, onPrint, onVoid }: {
                   <Pencil className="w-3.5 h-3.5" /> Unlock & Edit
                 </button>
               )}
-              {isFinalized && onVoid && (
+              {onVoid && (
                 <button onClick={handleVoid} disabled={voiding}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors">
-                  {voiding ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Void
+                  {voiding ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} {isFinalized ? 'Void' : 'Delete'}
                 </button>
               )}
               <button onClick={e => { e.stopPropagation(); onPrint(slip) }}
@@ -3396,9 +3410,335 @@ function QuickPayslipGenerator() {
   )
 }
 
+// ─── Payslip Records Tab ──────────────────────────────────────────────────────
+// Browse past payroll periods and drill into a period to view, print, unlock,
+// or void its finalized payslips. This is the dedicated place to find
+// finalized payslips — the Generate tab only ever shows one employee/period
+// at a time, so there was previously no way to see everything that had
+// already been finalized.
+
+function PayslipRecordsTab() {
+  const [periods, setPeriods] = useState<PayrollPeriod[]>([])
+  const [loadingPeriods, setLoadingPeriods] = useState(true)
+  const [selectedPeriod, setSelectedPeriod] = useState<PayrollPeriod | null>(null)
+  const [payslips, setPayslips] = useState<Payslip[]>([])
+  const [loadingSlips, setLoadingSlips] = useState(false)
+  const [search, setSearch] = useState('')
+  const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [deletingPeriodId, setDeletingPeriodId] = useState<string | null>(null)
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const loadPeriods = useCallback(async () => {
+    setLoadingPeriods(true)
+    try {
+      const res = await fetch('/api/payroll')
+      const data = await safeJson(res)
+      if (data.error) throw new Error(data.error)
+      const list: PayrollPeriod[] = data.periods ?? []
+      list.sort((a, b) => b.period_start.localeCompare(a.period_start))
+      setPeriods(list)
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to load payroll periods')
+    } finally {
+      setLoadingPeriods(false)
+    }
+  }, [])
+
+  useEffect(() => { loadPeriods() }, [loadPeriods])
+
+  useEffect(() => {
+    fetch('/api/shop-settings')
+      .then(r => r.json())
+      .then(data => { if (data?.timezone) setShopTimezone(data.timezone) })
+      .catch(() => {})
+  }, [])
+
+  const openPeriod = async (period: PayrollPeriod) => {
+    setSelectedPeriod(period)
+    setLoadingSlips(true)
+    setSearch('')
+    setSelectedIds(new Set())
+    try {
+      const res = await fetch(`/api/payroll?period_id=${period.id}`)
+      const data = await safeJson(res)
+      if (data.error) throw new Error(data.error)
+      setPayslips(data.payslips ?? [])
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to load payslips')
+      setPayslips([])
+    } finally {
+      setLoadingSlips(false)
+    }
+  }
+
+  const handleUpdate = async (id: string, updates: Partial<Payslip>) => {
+    try {
+      const res = await fetch('/api/payroll', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_payslip', payslip_id: id, updates }),
+      })
+      const data = await safeJson(res)
+      if (data.error) throw new Error(data.error)
+      setPayslips(prev => prev.map(s => s.id === id ? { ...s, ...updates } as Payslip : s))
+      if ((updates as any).status === 'draft') toast.success('Payslip unlocked — set back to draft')
+      // Finalized counts on the period list can shift after an unlock — resync.
+      if ((updates as any).status) loadPeriods()
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to update payslip')
+    }
+  }
+
+  const handleVoid = async (id: string) => {
+    try {
+      const res = await fetch('/api/payroll', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'void_payslip', payslip_id: id }),
+      })
+      const data = await safeJson(res)
+      if (data.error) throw new Error(data.error)
+      setPayslips(prev => prev.filter(s => s.id !== id))
+      setSelectedIds(prev => {
+        if (!prev.has(id)) return prev
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+      toast.success('Payslip deleted')
+      loadPeriods()
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to delete payslip')
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    if (!confirm(`Delete ${ids.length} selected payslip${ids.length !== 1 ? 's' : ''}? This cannot be undone.`)) return
+    setBulkDeleting(true)
+    let succeeded = 0
+    let failed = 0
+    for (const id of ids) {
+      try {
+        const res = await fetch('/api/payroll', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'void_payslip', payslip_id: id }),
+        })
+        const data = await safeJson(res)
+        if (data.error) throw new Error(data.error)
+        await deleteLateFeeJournalEntry(id)
+        succeeded++
+      } catch {
+        failed++
+      }
+    }
+    setPayslips(prev => prev.filter(s => !ids.includes(s.id)))
+    setSelectedIds(new Set())
+    setBulkDeleting(false)
+    if (succeeded > 0) toast.success(`${succeeded} payslip${succeeded !== 1 ? 's' : ''} deleted`)
+    if (failed > 0) toast.error(`Failed to delete ${failed} payslip${failed !== 1 ? 's' : ''}`)
+    loadPeriods()
+    if (selectedPeriod) openPeriod(selectedPeriod)
+  }
+
+  const handleDeletePeriod = async (period: PayrollPeriod) => {
+    if (period.finalized_count > 0) {
+      toast.error('Finalized periods can\'t be deleted — void or unlock the payslips first.')
+      return
+    }
+    if (!confirm(`Delete the record for ${fmtDate(period.period_start)} – ${fmtDate(period.period_end)}? This removes all its payslips and related P&L entries. This cannot be undone.`)) return
+
+    setDeletingPeriodId(period.id)
+    try {
+      const res = await fetch(`/api/payroll?period_id=${period.id}`, { method: 'DELETE' })
+      const data = await safeJson(res)
+      if (data.error) throw new Error(data.error)
+      setPeriods(prev => prev.filter(pd => pd.id !== period.id))
+      toast.success('Payroll record deleted')
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to delete payroll record')
+    } finally {
+      setDeletingPeriodId(null)
+    }
+  }
+
+  const handlePrintSlip = (slip: Payslip) => {
+    if (!selectedPeriod) return
+    const tpl = getTemplateForPeriod(selectedPeriod.id)
+    printPayslip(slip, selectedPeriod, tpl, undefined, undefined, shopTimezone)
+  }
+
+  const filteredSlips = payslips
+    .filter(s => !search.trim() || s.employees.name.toLowerCase().includes(search.trim().toLowerCase()))
+
+  const allVisibleSelected = filteredSlips.length > 0 && filteredSlips.every(s => selectedIds.has(s.id))
+
+  const toggleSelectAll = () => {
+    setSelectedIds(prev => {
+      if (allVisibleSelected) {
+        const next = new Set(prev)
+        filteredSlips.forEach(s => next.delete(s.id))
+        return next
+      }
+      const next = new Set(prev)
+      filteredSlips.forEach(s => next.add(s.id))
+      return next
+    })
+  }
+
+  // ── Period list view ──────────────────────────────────────────────────────
+  if (!selectedPeriod) {
+    return (
+      <div className="p-6 max-w-4xl">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Payslip Records</h2>
+            <p className="text-sm text-gray-400 mt-0.5">Browse past payroll periods and manage draft &amp; finalized payslips.</p>
+          </div>
+          <button onClick={loadPeriods} disabled={loadingPeriods}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors">
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingPeriods ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+        </div>
+
+        {loadingPeriods ? (
+          <div className="flex items-center justify-center h-40 text-gray-400">
+            <RefreshCw className="w-4 h-4 animate-spin mr-2" /> Loading periods…
+          </div>
+        ) : periods.length === 0 ? (
+          <div className="text-center py-16 text-gray-400">
+            <CalendarDays className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+            <p className="text-sm">No payroll periods yet.</p>
+            <p className="text-xs mt-1">Generate a payslip first — periods will show up here once created.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {periods.map(p => {
+              const isFinalized = p.finalized_count > 0
+              return (
+                <div key={p.id} onClick={() => openPeriod(p)}
+                  className="w-full flex items-center gap-4 px-4 py-3 bg-white border border-gray-200 rounded-xl hover:border-indigo-300 hover:shadow-sm transition-all text-left cursor-pointer">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900">{fmtDate(p.period_start)} – {fmtDate(p.period_end)}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {p.finalized_count} finalized · {p.payslip_count} total payslip{p.payslip_count !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                  <div className="text-right hidden sm:block">
+                    <p className="text-xs text-gray-400">Total Net Pay</p>
+                    <p className="text-sm font-semibold text-gray-800">{fmt(p.total_net_pay)}</p>
+                  </div>
+                  {p.finalized_count > 0 ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200 flex-shrink-0">
+                      <CheckCircle2 className="w-3 h-3" /> {p.finalized_count} Finalized
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 border border-amber-200 flex-shrink-0">
+                      <Edit3 className="w-3 h-3" /> Draft only
+                    </span>
+                  )}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDeletePeriod(p) }}
+                    disabled={deletingPeriodId === p.id || isFinalized}
+                    title={isFinalized ? 'Finalized periods can\'t be deleted — void the payslips first' : 'Delete this record'}
+                    className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400 transition-colors flex-shrink-0"
+                  >
+                    {deletingPeriodId === p.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  </button>
+                  <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── Period detail view ────────────────────────────────────────────────────
+  return (
+    <div className="p-6 max-w-4xl">
+      <button onClick={() => setSelectedPeriod(null)}
+        className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 mb-4 transition-colors">
+        <ChevronLeft className="w-4 h-4" /> Back to periods
+      </button>
+
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-lg font-semibold text-gray-900">
+          {fmtDate(selectedPeriod.period_start)} – {fmtDate(selectedPeriod.period_end)}
+        </h2>
+      </div>
+      <p className="text-sm text-gray-400 mb-4">
+        {payslips.length} payslip{payslips.length !== 1 ? 's' : ''} in this period · showing draft &amp; finalized
+      </p>
+
+      <input
+        type="text" value={search} onChange={e => setSearch(e.target.value)}
+        placeholder="Search by employee name…"
+        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+      />
+
+      {filteredSlips.length > 0 && (
+        <div className="flex items-center justify-between mb-3 px-1">
+          <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              onChange={toggleSelectAll}
+              className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-400"
+            />
+            {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select all'}
+          </label>
+          {selectedIds.size > 0 && (
+            <button onClick={handleBulkDelete} disabled={bulkDeleting}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors">
+              {bulkDeleting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              Delete {selectedIds.size} Selected
+            </button>
+          )}
+        </div>
+      )}
+
+      {loadingSlips ? (
+        <div className="flex items-center justify-center h-40 text-gray-400">
+          <RefreshCw className="w-4 h-4 animate-spin mr-2" /> Loading payslips…
+        </div>
+      ) : filteredSlips.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <Lock className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+          <p className="text-sm">No payslips {search ? 'match your search' : 'for this period'}.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredSlips.map(slip => (
+            <PayslipRow
+              key={slip.id}
+              slip={slip}
+              onUpdate={handleUpdate}
+              onPrint={handlePrintSlip}
+              onVoid={handleVoid}
+              selected={selectedIds.has(slip.id)}
+              onToggleSelect={toggleSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
-type Tab = 'generate' | 'attendance' | 'templates' | 'settings'
+type Tab = 'generate' | 'attendance' | 'records' | 'templates' | 'settings'
 
 
 export default function PayrollPage() {
@@ -3418,6 +3758,7 @@ export default function PayrollPage() {
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: 'generate', label: 'Generate', icon: FileDown },
     { id: 'attendance', label: 'Attendance', icon: CalendarDays },
+    { id: 'records', label: 'Records', icon: CheckCircle2 },
     { id: 'templates', label: 'Templates', icon: LayoutTemplate },
     { id: 'settings', label: 'Settings', icon: Settings },
   ]
@@ -3446,6 +3787,7 @@ export default function PayrollPage() {
       {/* Tab content */}
       {activeTab === 'attendance' && <div className="flex-1 overflow-y-auto"><AttendanceTab /></div>}
       {activeTab === 'generate' && <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden"><QuickPayslipGenerator /></div>}
+      {activeTab === 'records' && <div className="flex-1 overflow-y-auto"><PayslipRecordsTab /></div>}
       {activeTab === 'templates' && <div className="flex-1 overflow-y-auto"><TemplatesTab /></div>}
       {activeTab === 'settings' && <div className="flex-1 overflow-y-auto"><SettingsTab /></div>}
 
