@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
 
   // ── CREATE PERIOD + GENERATE DRAFT PAYSLIPS ────────────────────────────────
   if (action === 'create_period') {
-    const { period_start, period_end, employee_ids } = body
+    const { period_start, period_end } = body
 
     if (!period_start || !period_end) {
       return NextResponse.json({ error: 'period_start and period_end required' }, { status: 400 })
@@ -171,20 +171,12 @@ export async function POST(req: NextRequest) {
       other_deductions: [] as { label: string; amount: number }[],
     }
 
-    // Fetch employees for this shop — scoped to employee_ids when provided
-    // (e.g. the single-employee "Generate" tab), otherwise every active employee.
-    let employeeQuery = admin
+    // Fetch all active employees for this shop
+    const { data: employees, error: empError } = await admin
       .from('employees')
       .select('id, name, employee_no, role, hourly_rate, allowance, employment_type, sss_no, philhealth_no, pagibig_no, govt_deductions_enabled')
       .eq('shop_id', shop_id)
-
-    if (Array.isArray(employee_ids) && employee_ids.length > 0) {
-      employeeQuery = employeeQuery.in('id', employee_ids)
-    } else {
-      employeeQuery = employeeQuery.eq('is_active', true)
-    }
-
-    const { data: employees, error: empError } = await employeeQuery
+      .eq('is_active', true)
 
     if (empError || !employees?.length) {
       return NextResponse.json({
