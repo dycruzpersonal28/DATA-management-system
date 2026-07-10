@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -230,6 +230,55 @@ function StockValueModal({
   )
 }
 
+// ── Auto-fit text ─────────────────────────────────────────────────────────────
+// Shrinks font-size step by step until the text fits on one line within its
+// container's width, instead of clipping or overflowing. Re-measures whenever
+// the text changes or the container is resized (sidebar collapse, window
+// resize, grid reflow at different breakpoints).
+function AutoFitText({
+  text, maxFontSize = 24, minFontSize = 13, className = '',
+}: {
+  text: string
+  maxFontSize?: number
+  minFontSize?: number
+  className?: string
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [fontSize, setFontSize] = useState(maxFontSize)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+
+    const fit = () => {
+      let size = maxFontSize
+      el.style.fontSize = `${size}px`
+      while (el.scrollWidth > el.clientWidth && size > minFontSize) {
+        size -= 1
+        el.style.fontSize = `${size}px`
+      }
+      setFontSize(size)
+    }
+
+    fit()
+
+    const observer = new ResizeObserver(fit)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [text, maxFontSize, minFontSize])
+
+  return (
+    <div
+      ref={ref}
+      className={`whitespace-nowrap overflow-hidden ${className}`}
+      style={{ fontSize }}
+      title={text}
+    >
+      {text}
+    </div>
+  )
+}
+
 // ── Stat Card ─────────────────────────────────────────────────────────────────
 function StatCard({
   label, value, sub, color, bg, icon: Icon, onClick, clickable, locked,
@@ -271,7 +320,7 @@ function StatCard({
         </div>
         {clickable && <ChevronRight className="w-4 h-4 text-gray-300 mt-1" />}
       </div>
-      <p className={`text-2xl font-bold ${color} tracking-tight`}>{value}</p>
+      <AutoFitText text={value} maxFontSize={24} minFontSize={13} className={`font-bold ${color} tracking-tight`} />
       <p className="text-xs font-medium text-gray-500 mt-1">{label}</p>
       {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
     </button>
@@ -545,11 +594,13 @@ function CashDetailModal({ movement, onClose }: {
         </div>
         <div className="p-5 space-y-3">
           <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-xs text-gray-500">Amount</span>
-              <span className={`text-xl font-bold ${isIn ? 'text-emerald-700' : 'text-red-600'}`}>
-                {isIn ? '+' : '−'}{fmt(movement.amount)}
-              </span>
+            <div className="flex justify-between items-center gap-3">
+              <span className="text-xs text-gray-500 flex-shrink-0">Amount</span>
+              <AutoFitText
+                text={`${isIn ? '+' : '−'}${fmt(movement.amount)}`}
+                maxFontSize={20} minFontSize={13}
+                className={`flex-1 min-w-0 text-right font-bold ${isIn ? 'text-emerald-700' : 'text-red-600'}`}
+              />
             </div>
             <div className="flex justify-between items-center border-t border-gray-200 pt-3">
               <span className="text-xs text-gray-500">Note</span>
@@ -1591,9 +1642,13 @@ export default function DashboardPage() {
                 : <TrendingDown className="w-5 h-5 text-red-600" />}
             </div>
           </div>
-          <p className={`text-2xl font-bold tracking-tight ${
-            (summary?.netAfterCogs ?? 0) >= 0 ? 'text-blue-700' : 'text-red-600'
-          }`}>{fmt(summary?.netAfterCogs ?? 0)}</p>
+          <AutoFitText
+            text={fmt(summary?.netAfterCogs ?? 0)}
+            maxFontSize={24} minFontSize={13}
+            className={`font-bold tracking-tight ${
+              (summary?.netAfterCogs ?? 0) >= 0 ? 'text-blue-700' : 'text-red-600'
+            }`}
+          />
           <p className="text-xs font-medium text-gray-500 mt-1">Net after cashout discount/taxes</p>
           <p className="text-xs text-gray-400 mt-0.5">Gross − expenses − disc/taxes (all payment methods)</p>
 
@@ -1629,9 +1684,13 @@ export default function DashboardPage() {
                 : <TrendingDown className="w-5 h-5 text-red-600" />}
             </div>
           </div>
-          <p className={`text-2xl font-bold tracking-tight ${
-            (summary?.netSales ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-600'
-          }`}>{fmt(summary?.netSales ?? 0)}</p>
+          <AutoFitText
+            text={fmt(summary?.netSales ?? 0)}
+            maxFontSize={24} minFontSize={13}
+            className={`font-bold tracking-tight ${
+              (summary?.netSales ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-600'
+            }`}
+          />
           <p className="text-xs font-medium text-gray-500 mt-1">Net Sales</p>
           <p className="text-xs text-gray-400 mt-0.5">After COGS, wastages, expenses & discounts</p>
         </div>
@@ -1646,9 +1705,11 @@ export default function DashboardPage() {
             </div>
             <ChevronRight className="w-4 h-4 text-teal-300 mt-1" />
           </div>
-          <p className="text-2xl font-bold text-teal-700 tracking-tight">
-            {stockValue !== null ? fmt(stockValue) : '—'}
-          </p>
+          <AutoFitText
+            text={stockValue !== null ? fmt(stockValue) : '—'}
+            maxFontSize={24} minFontSize={13}
+            className="font-bold text-teal-700 tracking-tight"
+          />
           <p className="text-xs font-medium text-gray-500 mt-1">Unsold Stock Value based on Cost</p>
           <p className="text-xs text-gray-400 mt-0.5">Raw Stocks on hand · cost basis</p>
         </button>

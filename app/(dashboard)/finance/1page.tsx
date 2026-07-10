@@ -370,17 +370,17 @@ export default function FinancePage() {
           </button>
         ))}
         {preset === 'custom' && (
-          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-2 ml-1">
             <input
               type="date" value={from}
               onChange={e => setFrom(e.target.value)}
-              className="flex-1 min-w-0 sm:flex-none sm:w-auto border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
-            <span className="text-gray-400 text-sm flex-shrink-0">→</span>
+            <span className="text-gray-400 text-sm">→</span>
             <input
               type="date" value={to}
               onChange={e => setTo(e.target.value)}
-              className="flex-1 min-w-0 sm:flex-none sm:w-auto border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
           </div>
         )}

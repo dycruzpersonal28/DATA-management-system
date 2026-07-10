@@ -244,47 +244,6 @@ function DateRangePicker({
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared sub-components
 // ─────────────────────────────────────────────────────────────────────────────
-// Shrinks its text to fit the available width instead of overflowing the card.
-// Renders at full size by default and only scales down as far as needed.
-function AutoFitText({ text, className }: { text: string; className?: string }) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const textRef = useRef<HTMLSpanElement>(null)
-  const [scale, setScale] = useState(1)
-
-  useEffect(() => {
-    const fit = () => {
-      const container = containerRef.current
-      const el = textRef.current
-      if (!container || !el) return
-      const containerWidth = container.clientWidth
-      el.style.transform = 'scale(1)'
-      const textWidth = el.scrollWidth
-      if (!containerWidth || !textWidth) return
-      setScale(Math.min(1, containerWidth / textWidth))
-    }
-    fit()
-    const ro = new ResizeObserver(fit)
-    if (containerRef.current) ro.observe(containerRef.current)
-    window.addEventListener('resize', fit)
-    return () => {
-      ro.disconnect()
-      window.removeEventListener('resize', fit)
-    }
-  }, [text])
-
-  return (
-    <div ref={containerRef} className="w-full min-w-0 overflow-hidden">
-      <span
-        ref={textRef}
-        className={`inline-block whitespace-nowrap origin-left ${className ?? ''}`}
-        style={{ transform: `scale(${scale})` }}
-      >
-        {text}
-      </span>
-    </div>
-  )
-}
-
 function KpiCard({
   label, value, sub, icon: Icon, bg, text, isLoading, prefix = '',
 }: {
@@ -297,11 +256,11 @@ function KpiCard({
       <div className={`w-9 h-9 ${bg} rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5`}>
         <Icon className={`w-4 h-4 ${text}`} />
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0">
         <p className="text-xs text-gray-500 font-medium">{label}</p>
         {isLoading
           ? <div className="h-6 w-20 bg-gray-100 rounded animate-pulse mt-1" />
-          : <AutoFitText text={`${prefix}${value}`} className={`text-lg font-bold ${text} leading-tight`} />
+          : <p className={`text-lg font-bold ${text} leading-tight`}>{prefix}{value}</p>
         }
         {sub && !isLoading && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
       </div>
@@ -898,8 +857,8 @@ function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string
             <div className={`w-9 h-9 ${c.bg} rounded-xl flex items-center justify-center flex-shrink-0`}>
               <c.icon className={`w-4 h-4 ${c.color}`} />
             </div>
-            <div className="min-w-0 flex-1">
-              <AutoFitText text={c.value} className={`text-lg font-bold ${c.color}`} />
+            <div>
+              <p className={`text-lg font-bold ${c.color}`}>{c.value}</p>
               <p className="text-xs text-gray-400">{c.label}</p>
             </div>
           </div>

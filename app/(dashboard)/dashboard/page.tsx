@@ -310,7 +310,7 @@ function StatCard({
     <button
       onClick={onClick}
       disabled={!clickable}
-      className={`bg-white rounded-2xl border border-gray-200 p-5 text-left w-full transition-all ${
+      className={`bg-white rounded-2xl border border-gray-200 p-5 text-left w-full overflow-hidden transition-all ${
         clickable ? 'hover:shadow-md hover:border-gray-300 active:scale-[0.98] cursor-pointer' : 'cursor-default'
       }`}
     >
@@ -1630,7 +1630,7 @@ export default function DashboardPage() {
           clickable onClick={() => setModal('wastage')}
         />
         {/* Net after COGS (excludes cashout expenses) */}
-        <div className={`rounded-2xl border-2 p-5 ${
+        <div className={`rounded-2xl border-2 p-5 overflow-hidden ${
           (summary?.netAfterCogs ?? 0) >= 0 ? 'border-blue-200 bg-blue-50' : 'border-red-300 bg-red-50'
         }`}>
           <div className="flex items-start justify-between mb-3">
@@ -1653,26 +1653,36 @@ export default function DashboardPage() {
           <p className="text-xs text-gray-400 mt-0.5">Gross − expenses − disc/taxes (all payment methods)</p>
 
           {/* Cash-on-hand breakdown — cash-method sales only, since cashouts come from the drawer */}
-          <div className="mt-3 pt-3 border-t border-blue-100 space-y-1">
+          <div className="mt-3 pt-3 border-t border-blue-100 space-y-1 min-w-0">
             <p className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider mb-1.5">Cash on hand</p>
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">Cash sales</span>
-              <span className="font-medium text-gray-700">{fmt(cashSalesAmount)}</span>
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-xs text-gray-500 flex-shrink-0">Cash sales</span>
+              <AutoFitText
+                text={fmt(cashSalesAmount)}
+                maxFontSize={12} minFontSize={9}
+                className="flex-1 min-w-0 text-right font-medium text-gray-700"
+              />
             </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">− Cash outs</span>
-              <span className="font-medium text-red-600">−{fmt(summary?.cashouts ?? 0)}</span>
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-xs text-gray-500 flex-shrink-0">− Cash outs</span>
+              <AutoFitText
+                text={`−${fmt(summary?.cashouts ?? 0)}`}
+                maxFontSize={12} minFontSize={9}
+                className="flex-1 min-w-0 text-right font-medium text-red-600"
+              />
             </div>
-            <div className={`flex justify-between text-sm font-bold pt-1 border-t border-blue-100 ${
-              cashOnHand >= 0 ? 'text-emerald-700' : 'text-red-600'
-            }`}>
-              <span>Remaining cash</span>
-              <span>{fmt(cashOnHand)}</span>
+            <div className="flex justify-between items-center gap-2 pt-1 border-t border-blue-100">
+              <span className="text-xs font-bold text-gray-700 flex-shrink-0">Remaining cash</span>
+              <AutoFitText
+                text={fmt(cashOnHand)}
+                maxFontSize={14} minFontSize={9}
+                className={`flex-1 min-w-0 text-right font-bold ${cashOnHand >= 0 ? 'text-emerald-700' : 'text-red-600'}`}
+              />
             </div>
           </div>
         </div>
         {/* Net Sales */}
-        <div className={`rounded-2xl border-2 p-5 ${
+        <div className={`rounded-2xl border-2 p-5 overflow-hidden ${
           (summary?.netSales ?? 0) >= 0 ? 'border-emerald-300 bg-emerald-50' : 'border-red-300 bg-red-50'
         }`}>
           <div className="flex items-start justify-between mb-3">
@@ -1697,7 +1707,7 @@ export default function DashboardPage() {
         {/* Stock Value at Cost — Raw Stocks category */}
         <button
           onClick={() => setModal('stockvalue')}
-          className="rounded-2xl border-2 border-teal-200 bg-teal-50 p-5 text-left hover:shadow-md hover:border-teal-300 active:scale-[0.98] transition-all cursor-pointer"
+          className="rounded-2xl border-2 border-teal-200 bg-teal-50 p-5 overflow-hidden text-left hover:shadow-md hover:border-teal-300 active:scale-[0.98] transition-all cursor-pointer"
         >
           <div className="flex items-start justify-between mb-3">
             <div className="w-10 h-10 bg-teal-100 rounded-xl flex items-center justify-center">

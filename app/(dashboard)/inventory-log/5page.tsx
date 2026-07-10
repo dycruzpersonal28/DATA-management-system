@@ -215,9 +215,9 @@ export default function InventoryLogPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/shop')
+    fetch('/api/shop-settings')
       .then(r => r.json())
-      .then(data => { if (data?.shop?.timezone) setShopTimezone(data.shop.timezone) })
+      .then(data => { if (data?.timezone) setShopTimezone(data.timezone) })
       .catch(() => {})
   }, [])
 
@@ -298,47 +298,23 @@ export default function InventoryLogPage() {
 
     const rows: GroupedRow[] = singles.map(log => ({ isGroup: false, log }))
 
-    // A "shell": exactly one dispense log, and that log's ingredient IS
-    // the sold product itself (self-decrement — no recipe expansion). This
-    // can occasionally match MORE than one product in a receipt (e.g. a
-    // real combo shell like "HMB 1" AND a plain product that simply has no
-    // recipe configured, like a plain pizza) — in that case whichever one
-    // happens to come first in array order wins. A sale and its later void
-    // share the exact same set of products, so we resolve 'sale' receipts
-    // first and cache which product won the anchor pick per receipt_number;
-    // the matching 'void' receipt then reuses that same anchor instead of
-    // re-guessing from its own (differently-ordered) array. This keeps the
-    // "final product" row consistently on top for both sale and void.
-    const anchorByReceiptNumber = new Map<string, string>()
-    const receiptEntries = [...byReceipt.entries()].sort(
-      ([a], [b]) => (a.startsWith('sale:') ? 0 : 1) - (b.startsWith('sale:') ? 0 : 1)
-    )
-
-    for (const [receiptKey, productMap] of receiptEntries) {
-      const receiptNumber = receiptKey.slice(receiptKey.indexOf(':') + 1)
-      const isSaleReceipt = receiptKey.startsWith('sale:')
-
+    for (const [receiptKey, productMap] of byReceipt) {
       const productGroups = [...productMap.entries()].map(([productKey, logs]) => ({
         productKey,
         name: logs[0].product_name ?? logs[0].item_name,
         logs: [...logs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
       }))
 
+      // A "shell": exactly one dispense log, and that log's ingredient IS
+      // the sold product itself (self-decrement — no recipe expansion).
       const isShell = (g: typeof productGroups[number]) =>
         g.logs.length === 1 && g.logs[0].item_name === g.name
 
-      // Prefer the anchor already established by this receipt's sale (if
-      // we've seen it), falling back to the shape-based guess otherwise
-      // (e.g. the sale row fell outside the current date filter).
-      const cachedKey = anchorByReceiptNumber.get(receiptNumber)
-      let anchorIdx = cachedKey ? productGroups.findIndex(g => g.productKey === cachedKey) : -1
-      if (anchorIdx === -1) anchorIdx = productGroups.findIndex(isShell)
-
+      const anchorIdx = productGroups.findIndex(isShell)
       const hasBundle = anchorIdx !== -1 && productGroups.length > 1
 
       if (hasBundle) {
         const anchor = productGroups[anchorIdx]
-        if (isSaleReceipt) anchorByReceiptNumber.set(receiptNumber, anchor.productKey)
         const included = productGroups.filter((_, i) => i !== anchorIdx)
         const allLogs = productGroups.flatMap(g => g.logs)
         const first = [...allLogs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]

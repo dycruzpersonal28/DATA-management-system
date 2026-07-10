@@ -215,9 +215,9 @@ export default function InventoryLogPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/shop')
+    fetch('/api/shop-settings')
       .then(r => r.json())
-      .then(data => { if (data?.shop?.timezone) setShopTimezone(data.shop.timezone) })
+      .then(data => { if (data?.timezone) setShopTimezone(data.timezone) })
       .catch(() => {})
   }, [])
 

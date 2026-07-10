@@ -128,11 +128,10 @@ export default function CategoriesPage() {
         {categories.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm">No categories yet</div>
         ) : (
-          <div style={{ maxHeight: '600px', overflowY: 'auto', overflowX: 'auto' }}>
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="px-4 py-3 w-8 sticky left-0 z-20 bg-gray-50 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">
+                <th className="px-4 py-3 w-8">
                   <input type="checkbox" checked={selected.size === categories.length && categories.length > 0} onChange={toggleAll} className="rounded" />
                 </th>
                 <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Name</th>
@@ -145,15 +144,9 @@ export default function CategoriesPage() {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {categories.map(cat => (
-                <tr
-                  key={cat.id}
-                  onClick={() => startEdit(cat)}
-                  className={`group cursor-pointer hover:bg-gray-50 ${selected.has(cat.id) ? 'bg-indigo-50' : ''}`}
-                >
-                  <td className={`px-4 py-3 sticky left-0 z-10 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)] ${selected.has(cat.id) ? 'bg-indigo-50' : 'bg-white group-hover:bg-gray-50'}`}>
-                    <div onClick={e => e.stopPropagation()}>
-                      <input type="checkbox" checked={selected.has(cat.id)} onChange={() => toggleSelect(cat.id)} className="rounded" />
-                    </div>
+                <tr key={cat.id} className={`hover:bg-gray-50 ${selected.has(cat.id) ? 'bg-indigo-50' : ''}`}>
+                  <td className="px-4 py-3">
+                    <input type="checkbox" checked={selected.has(cat.id)} onChange={() => toggleSelect(cat.id)} className="rounded" />
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -165,47 +158,38 @@ export default function CategoriesPage() {
                     <span className="inline-block px-3 py-0.5 rounded-full text-xs text-white font-medium" style={{ backgroundColor: cat.color }}>{cat.color}</span>
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <div onClick={e => e.stopPropagation()}>
-                      <button
-                        onClick={() => togglePosVisibility(cat)}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${cat.show_in_pos !== false ? 'bg-indigo-500' : 'bg-gray-200'}`}
-                      >
-                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${cat.show_in_pos !== false ? 'translate-x-4' : 'translate-x-1'}`} />
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => togglePosVisibility(cat)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${cat.show_in_pos !== false ? 'bg-indigo-500' : 'bg-gray-200'}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${cat.show_in_pos !== false ? 'translate-x-4' : 'translate-x-1'}`} />
+                    </button>
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <div onClick={e => e.stopPropagation()}>
-                      <button
-                        onClick={() => toggleInventoryVisibility(cat)}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${cat.show_in_inventory !== false ? 'bg-indigo-500' : 'bg-gray-200'}`}
-                      >
-                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${cat.show_in_inventory !== false ? 'translate-x-4' : 'translate-x-1'}`} />
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => toggleInventoryVisibility(cat)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${cat.show_in_inventory !== false ? 'bg-indigo-500' : 'bg-gray-200'}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${cat.show_in_inventory !== false ? 'translate-x-4' : 'translate-x-1'}`} />
+                    </button>
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <div onClick={e => e.stopPropagation()}>
-                      <button
-                        onClick={() => toggleItemsVisibility(cat)}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${cat.show_in_items !== false ? 'bg-indigo-500' : 'bg-gray-200'}`}
-                      >
-                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${cat.show_in_items !== false ? 'translate-x-4' : 'translate-x-1'}`} />
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => toggleItemsVisibility(cat)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${cat.show_in_items !== false ? 'bg-indigo-500' : 'bg-gray-200'}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${cat.show_in_items !== false ? 'translate-x-4' : 'translate-x-1'}`} />
+                    </button>
                   </td>
                   <td className="px-4 py-3">
-                    <div onClick={e => e.stopPropagation()}>
-                      <button onClick={() => startEdit(cat)} className="text-gray-400 hover:text-indigo-600">
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                    </div>
+                    <button onClick={() => startEdit(cat)} className="text-gray-400 hover:text-indigo-600">
+                      <Pencil className="w-4 h-4" />
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          </div>
         )}
       </div>
     </div>

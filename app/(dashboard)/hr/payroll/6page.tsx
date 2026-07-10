@@ -3798,10 +3798,10 @@ export default function PayrollPage() {
   ]
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto md:overflow-hidden bg-gray-50">
+    <div className="flex flex-col h-full overflow-hidden bg-gray-50">
 
       {/* Tab bar */}
-      <div className="bg-white border-b border-gray-200 flex flex-col md:flex-row md:items-center md:px-6 gap-0 md:gap-1 flex-shrink-0">
+      <div className="bg-white border-b border-gray-200 flex flex-col md:flex-row md:items-center md:px-6 gap-0 md:gap-1">
         {tabs.map(tab => {
           const Icon = tab.icon
           const active = activeTab === tab.id
@@ -3819,11 +3819,11 @@ export default function PayrollPage() {
       </div>
 
       {/* Tab content */}
-      {activeTab === 'attendance' && <div className="flex-1 overflow-visible md:overflow-y-auto"><AttendanceTab /></div>}
-      {activeTab === 'generate' && <div className="flex-1 flex flex-col md:flex-row overflow-visible md:overflow-hidden"><QuickPayslipGenerator /></div>}
-      {activeTab === 'records' && <div className="flex-1 overflow-visible md:overflow-y-auto"><PayslipRecordsTab /></div>}
-      {activeTab === 'templates' && <div className="flex-1 overflow-visible md:overflow-y-auto"><TemplatesTab /></div>}
-      {activeTab === 'settings' && <div className="flex-1 overflow-visible md:overflow-y-auto"><SettingsTab /></div>}
+      {activeTab === 'attendance' && <div className="flex-1 overflow-y-auto"><AttendanceTab /></div>}
+      {activeTab === 'generate' && <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden"><QuickPayslipGenerator /></div>}
+      {activeTab === 'records' && <div className="flex-1 overflow-y-auto"><PayslipRecordsTab /></div>}
+      {activeTab === 'templates' && <div className="flex-1 overflow-y-auto"><TemplatesTab /></div>}
+      {activeTab === 'settings' && <div className="flex-1 overflow-y-auto"><SettingsTab /></div>}
 
     </div>
   )

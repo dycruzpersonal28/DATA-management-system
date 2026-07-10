@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'sonner'
 import { Search, Pencil, X, AlertTriangle, Clock } from 'lucide-react'
 // date-fns removed — all date/time formatting uses Intl with shop timezone
@@ -44,48 +44,6 @@ function fmtBreak(minutes: number) {
   const h = Math.floor(minutes / 60)
   const m = minutes % 60
   return m > 0 ? `${h}h ${m}m` : `${h}h`
-}
-
-// Shrinks its text to fit the available width instead of overflowing the card.
-// Full-size by default; scales down only as far as needed, never scales up past 1.
-function AutoFitText({ text, className }: { text: string | number; className?: string }) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const textRef = useRef<HTMLSpanElement>(null)
-  const [scale, setScale] = useState(1)
-
-  useEffect(() => {
-    const fit = () => {
-      const container = containerRef.current
-      const el = textRef.current
-      if (!container || !el) return
-      const containerWidth = container.clientWidth
-      // Measure at natural (unscaled) size first
-      el.style.transform = 'scale(1)'
-      const textWidth = el.scrollWidth
-      if (!containerWidth || !textWidth) return
-      setScale(Math.min(1, containerWidth / textWidth))
-    }
-    fit()
-    const ro = new ResizeObserver(fit)
-    if (containerRef.current) ro.observe(containerRef.current)
-    window.addEventListener('resize', fit)
-    return () => {
-      ro.disconnect()
-      window.removeEventListener('resize', fit)
-    }
-  }, [text])
-
-  return (
-    <div ref={containerRef} className="w-full overflow-hidden">
-      <span
-        ref={textRef}
-        className={`inline-block whitespace-nowrap origin-left ${className ?? ''}`}
-        style={{ transform: `scale(${scale})` }}
-      >
-        {text}
-      </span>
-    </div>
-  )
 }
 
 export default function AttendancePage() {
@@ -267,8 +225,8 @@ export default function AttendancePage() {
           { label: 'Late Entries', value: lateCount, warn: lateCount > 0 },
           { label: 'Currently Clocked In', value: openCount },
         ].map(s => (
-          <div key={s.label} className={`bg-white border rounded-xl px-5 py-4 overflow-hidden ${s.warn ? 'border-amber-200' : 'border-gray-200'}`}>
-            <AutoFitText text={s.value} className={`text-2xl font-semibold ${s.warn ? 'text-amber-600' : 'text-gray-900'}`} />
+          <div key={s.label} className={`bg-white border rounded-xl px-5 py-4 ${s.warn ? 'border-amber-200' : 'border-gray-200'}`}>
+            <div className={`text-2xl font-semibold ${s.warn ? 'text-amber-600' : 'text-gray-900'}`}>{s.value}</div>
             <div className="text-xs text-gray-500 mt-0.5">{s.label}</div>
           </div>
         ))}

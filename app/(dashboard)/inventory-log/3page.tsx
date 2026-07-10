@@ -18,6 +18,11 @@ interface UnifiedLog {
   source: LogSource
   item_name: string
   item_id: string
+  // The finished product (or addon) actually sold that this ingredient
+  // movement was generated for. Null for movements not tied to a sale
+  // (restocks, adjustments) and for sales made before this field existed.
+  product_name?: string | null
+  product_id?: string | null
   receipt_number?: string | null
   change_qty: number
   before_qty?: number | null
@@ -43,6 +48,39 @@ interface SummaryStats {
   mostMoved: string
 }
 
+// A single product sold within a receipt, with its own ingredient/
+// dispense breakdown. Used to nest e.g. Wings/Pizza/Fries under a combo.
+interface SubItem {
+  key: string
+  name: string
+  logs: UnifiedLog[]
+}
+
+// A row is either a single (non-transaction) log, or a group of items
+// that all belong to the same POS receipt (sale or void).
+type GroupedRow =
+  | { isGroup: false; log: UnifiedLog }
+  | {
+      isGroup: true
+      key: string
+      source: LogSource
+      receipt_number: string
+      // The finished product this group's ingredients belong to.
+      // Null for legacy pre-migration rows, in which case the UI falls
+      // back to listing raw ingredient names like before.
+      product_name: string | null
+      // Other products sold in the same receipt that were bundled under
+      // product_name (e.g. Wings/Pizza/Fries under a "HMB 1" combo shell).
+      // Empty for a normal single-product sale.
+      subItems: SubItem[]
+      items: UnifiedLog[]
+      created_at: string
+      created_by?: string | null
+      totalChange: number
+      totalBefore: number | null
+      totalAfter: number | null
+    }
+
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const sourceConfig: Record<LogSource, { label: string; icon: React.ElementType; badgeClass: string }> = {
@@ -64,11 +102,12 @@ function exportCSV(logs: UnifiedLog[], dateFrom: string, dateTo: string, tz = 'A
   const fmtDate = (iso: string) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(iso))
   const fmtTime = (iso: string) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(iso))
   const rows: (string | number)[][] = [
-    ['Date', 'Time', 'Item', 'Type', 'By', 'Receipt #', 'Batch No', 'Expiry', 'Change', 'Before Qty', 'After Qty', 'Note'],
+    ['Date', 'Time', 'Item', 'Product Sold', 'Type', 'By', 'Receipt #', 'Batch No', 'Expiry', 'Change', 'Before Qty', 'After Qty', 'Note'],
     ...logs.map(l => [
       fmtDate(l.created_at),
       fmtTime(l.created_at),
       l.item_name,
+      l.product_name ?? '—',
       sourceConfig[l.source]?.label ?? l.source,
       l.created_by ?? '—',
       l.receipt_number ?? '—',
@@ -95,6 +134,19 @@ function exportCSV(logs: UnifiedLog[], dateFrom: string, dateTo: string, tz = 'A
 
 // ── Summary Cards ─────────────────────────────────────────────────────────────
 
+function AutoFitText({ text, className = '' }: { text: string | number; className?: string }) {
+  const str = String(text)
+  const sizeClass =
+    str.length > 12 ? 'text-base' :
+    str.length > 9  ? 'text-lg'   :
+    str.length > 6  ? 'text-xl'   : 'text-2xl'
+  return (
+    <p className={`${sizeClass} font-bold leading-tight truncate ${className}`} title={str}>
+      {str}
+    </p>
+  )
+}
+
 function SummaryCards({ stats, loading }: { stats: SummaryStats; loading: boolean }) {
   const cards = [
     { label: 'Total Stock In',  value: loading ? '—' : `+${stats.totalIn}`,  icon: TrendingUp,  iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600', valueColor: 'text-emerald-600' },
@@ -111,20 +163,20 @@ function SummaryCards({ stats, loading }: { stats: SummaryStats; loading: boolea
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {cards.map(c => (
-        <div key={c.label} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+        <div key={c.label} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 min-w-0 overflow-hidden">
           <div className={`w-10 h-10 ${c.iconBg} rounded-lg flex items-center justify-center flex-shrink-0`}>
             <c.icon className={`w-5 h-5 ${c.iconColor}`} />
           </div>
-          <div className="min-w-0">
-            <p className={`text-xl font-bold ${c.valueColor} leading-tight`}>{c.value}</p>
-            <p className="text-xs text-gray-500 mt-0.5">{c.label}</p>
+          <div className="min-w-0 flex-1">
+            <AutoFitText text={c.value} className={c.valueColor} />
+            <p className="text-xs text-gray-500 mt-0.5 truncate">{c.label}</p>
           </div>
         </div>
       ))}
       {!loading && stats.mostMoved && (
-        <div className="col-span-2 lg:col-span-4 bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-2">
+        <div className="col-span-2 lg:col-span-4 bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-2 min-w-0 overflow-hidden">
           <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-600 truncate min-w-0">
             Most active item in this period:{' '}
             <span className="font-semibold text-gray-900">{stats.mostMoved}</span>
           </p>
@@ -157,6 +209,7 @@ export default function InventoryLogPage() {
   const [dateFrom, setDateFrom]     = useState<string>('')
   const [dateTo, setDateTo]         = useState<string>('')
   const [selectedLog, setSelectedLog] = useState<UnifiedLog | null>(null)
+  const [selectedGroup, setSelectedGroup] = useState<Extract<GroupedRow, { isGroup: true }> | null>(null)
 
   useEffect(() => {
     fetch('/api/shop-settings')
@@ -199,12 +252,118 @@ export default function InventoryLogPage() {
       if (!search) return true
       return (
         l.item_name.toLowerCase().includes(search.toLowerCase()) ||
+        (l.product_name ?? '').toLowerCase().includes(search.toLowerCase()) ||
         (l.receipt_number ?? '').toLowerCase().includes(search.toLowerCase()) ||
         (l.batch_no ?? '').toLowerCase().includes(search.toLowerCase())
       )
     }),
     [logs, search]
   )
+
+  // Group sale/void logs that share a receipt_number into a single row.
+  // Restocks, batch receives, adjustments, and losses aren't tied to a POS
+  // transaction, so they always stay as individual rows.
+  //
+  // Within a receipt, products are first bucketed by product (same as
+  // before). Then we look for a "shell" product — one whose only dispense
+  // log decrements itself (no recipe was found for it at sale time, so the
+  // backend fell back to a direct 1:1 stock deduction; see resolveBom /
+  // trackStock fallback in the receipts API). That's the signature of a
+  // combo / set-meal SKU (e.g. "HMB 1") that bundles other finished items
+  // (Wings, Pizza, Fries) rather than raw ingredients. When such a shell
+  // exists, every other product sold in that same receipt is nested under
+  // it as an included item. If no shell exists, the receipt's products stay
+  // as separate rows, same as before — this only kicks in for genuine combos.
+  const groupedRows = useMemo<GroupedRow[]>(() => {
+    // receiptKey (source:receipt_number) -> productKey -> logs
+    const byReceipt = new Map<string, Map<string, UnifiedLog[]>>()
+    const singles: UnifiedLog[] = []
+
+    for (const log of filtered) {
+      if ((log.source === 'sale' || log.source === 'void') && log.receipt_number) {
+        const receiptKey = `${log.source}:${log.receipt_number}`
+        const productKey = log.product_id ?? log.product_name ?? log.item_id
+        if (!byReceipt.has(receiptKey)) byReceipt.set(receiptKey, new Map())
+        const productMap = byReceipt.get(receiptKey)!
+        const arr = productMap.get(productKey)
+        if (arr) arr.push(log)
+        else productMap.set(productKey, [log])
+      } else {
+        singles.push(log)
+      }
+    }
+
+    const rows: GroupedRow[] = singles.map(log => ({ isGroup: false, log }))
+
+    for (const [receiptKey, productMap] of byReceipt) {
+      const productGroups = [...productMap.entries()].map(([productKey, logs]) => ({
+        productKey,
+        name: logs[0].product_name ?? logs[0].item_name,
+        logs: [...logs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+      }))
+
+      // A "shell": exactly one dispense log, and that log's ingredient IS
+      // the sold product itself (self-decrement — no recipe expansion).
+      const isShell = (g: typeof productGroups[number]) =>
+        g.logs.length === 1 && g.logs[0].item_name === g.name
+
+      const anchorIdx = productGroups.findIndex(isShell)
+      const hasBundle = anchorIdx !== -1 && productGroups.length > 1
+
+      if (hasBundle) {
+        const anchor = productGroups[anchorIdx]
+        const included = productGroups.filter((_, i) => i !== anchorIdx)
+        const allLogs = productGroups.flatMap(g => g.logs)
+        const first = [...allLogs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+        const beforeVals = allLogs.map(i => i.before_qty).filter((v): v is number => v != null)
+        const afterVals  = allLogs.map(i => i.after_qty).filter((v): v is number => v != null)
+        rows.push({
+          isGroup: true,
+          key: receiptKey,
+          source: first.source,
+          receipt_number: first.receipt_number as string,
+          product_name: anchor.name,
+          subItems: included.map(g => ({ key: g.productKey, name: g.name, logs: g.logs })),
+          items: allLogs,
+          created_at: first.created_at,
+          created_by: first.created_by,
+          totalChange: allLogs.reduce((sum, i) => sum + i.change_qty, 0),
+          totalBefore: beforeVals.length ? beforeVals.reduce((s, v) => s + v, 0) : null,
+          totalAfter:  afterVals.length  ? afterVals.reduce((s, v) => s + v, 0)  : null,
+        })
+      } else {
+        // No shell/combo detected — keep each product in this receipt as
+        // its own row, same behavior as before.
+        for (const g of productGroups) {
+          const first = g.logs[0]
+          const beforeVals = g.logs.map(i => i.before_qty).filter((v): v is number => v != null)
+          const afterVals  = g.logs.map(i => i.after_qty).filter((v): v is number => v != null)
+          rows.push({
+            isGroup: true,
+            key: `${receiptKey}:${g.productKey}`,
+            source: first.source,
+            receipt_number: first.receipt_number as string,
+            product_name: first.product_name ?? null,
+            subItems: [],
+            items: g.logs,
+            created_at: first.created_at,
+            created_by: first.created_by,
+            totalChange: g.logs.reduce((sum, i) => sum + i.change_qty, 0),
+            totalBefore: beforeVals.length ? beforeVals.reduce((s, v) => s + v, 0) : null,
+            totalAfter:  afterVals.length  ? afterVals.reduce((s, v) => s + v, 0)  : null,
+          })
+        }
+      }
+    }
+
+    rows.sort((a, b) => {
+      const ta = new Date(a.isGroup ? a.created_at : a.log.created_at).getTime()
+      const tb = new Date(b.isGroup ? b.created_at : b.log.created_at).getTime()
+      return tb - ta
+    })
+
+    return rows
+  }, [filtered])
 
   function setPreset(preset: string) {
     const now = new Date()
@@ -230,7 +389,7 @@ export default function InventoryLogPage() {
   const isAllTime = !dateFrom && !dateTo
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-6 space-y-5 max-w-full overflow-x-hidden">
 
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -364,7 +523,96 @@ export default function InventoryLogPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {filtered.map(log => {
+                {groupedRows.map(row => {
+                  if (row.isGroup) {
+                    const cfg  = sourceConfig[row.source] ?? sourceConfig['adjustment']
+                    const Icon = cfg.icon
+                    // Prefer the finished product name; fall back to listing
+                    // raw ingredient names for legacy pre-migration rows.
+                    const firstName = row.product_name ?? row.items[0].item_name
+                    const extraCount = row.product_name ? 0 : row.items.length - 1
+                    const isBundle = row.subItems.length > 0
+                    return (
+                      <tr
+                        key={row.key}
+                        className="hover:bg-gray-50 transition-colors cursor-pointer"
+                        onClick={() => setSelectedGroup(row)}
+                      >
+                        {/* Date — sticky first column */}
+                        <td className="sticky left-0 z-10 bg-white px-4 py-3 whitespace-nowrap shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">
+                          <p className="text-sm text-gray-700">
+                            {new Intl.DateTimeFormat('en-GB', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(row.created_at))}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(row.created_at))}
+                          </p>
+                        </td>
+
+                        {/* Item — summarized */}
+                        <td className="px-4 py-3">
+                          <p className="text-sm font-medium text-gray-900 truncate max-w-[220px]">
+                            {firstName}{extraCount > 0 && <span className="text-gray-400 font-normal"> +{extraCount} more</span>}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {isBundle
+                              ? `${row.subItems.length} item${row.subItems.length !== 1 ? 's' : ''} included`
+                              : `${row.items.length} ingredient${row.items.length !== 1 ? 's' : ''} dispensed`}
+                          </p>
+                        </td>
+
+                        {/* Type badge */}
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cfg.badgeClass}`}>
+                            <Icon className="w-3 h-3" />
+                            {cfg.label}
+                          </span>
+                        </td>
+
+                        {/* By */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="text-sm text-gray-600">{row.created_by || '—'}</span>
+                        </td>
+
+                        {/* Batch / Ref */}
+                        <td className="px-4 py-3">
+                          <span className="text-sm text-indigo-600 font-medium">{row.receipt_number}</span>
+                        </td>
+
+                        {/* Change — summed */}
+                        <td className="px-4 py-3 text-right">
+                          <ChangeBadge qty={row.totalChange} />
+                        </td>
+
+                        {/* Before Qty — summed across items in this receipt */}
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-sm tabular-nums text-gray-500">
+                            {row.totalBefore != null ? row.totalBefore : '—'}
+                          </span>
+                          {row.totalBefore != null && <p className="text-[10px] text-gray-300">combined</p>}
+                        </td>
+
+                        {/* After Qty — summed across items in this receipt */}
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-sm tabular-nums text-gray-700 font-medium">
+                            {row.totalAfter != null ? row.totalAfter : '—'}
+                          </span>
+                          {row.totalAfter != null && <p className="text-[10px] text-gray-300">combined</p>}
+                        </td>
+
+                        {/* Note */}
+                        <td className="px-4 py-3 max-w-[200px]">
+                          <span
+                            className="text-xs text-gray-500 truncate block"
+                            title={isBundle ? row.subItems.map(s => s.name).join(', ') : row.items.map(i => i.item_name).join(', ')}
+                          >
+                            {isBundle ? row.subItems.map(s => s.name).join(', ') : row.items.map(i => i.item_name).join(', ')}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  }
+
+                  const log = row.log
                   const cfg  = sourceConfig[log.source] ?? sourceConfig['adjustment']
                   const Icon = cfg.icon
                   const isExpired = log.expiry_date && new Date(log.expiry_date) < new Date()
@@ -386,7 +634,10 @@ export default function InventoryLogPage() {
 
                       {/* Item */}
                       <td className="px-4 py-3">
-                        <p className="text-sm font-medium text-gray-900">{log.item_name}</p>
+                        <p className="text-sm font-medium text-gray-900">{log.product_name ?? log.item_name}</p>
+                        {log.product_name && (
+                          <p className="text-xs text-gray-400">{log.item_name}</p>
+                        )}
                       </td>
 
                       {/* Type badge */}
@@ -455,8 +706,8 @@ export default function InventoryLogPage() {
 
       {/* Footer count */}
       <p className="text-xs text-gray-400 text-right">
-        {filtered.length} entr{filtered.length !== 1 ? 'ies' : 'y'}
-        {filtered.length !== logs.length && ` (filtered from ${logs.length})`}
+        {groupedRows.length} row{groupedRows.length !== 1 ? 's' : ''}
+        {groupedRows.length !== filtered.length && ` (${filtered.length} total movements)`}
       </p>
 
       {/* Log detail modal */}
@@ -478,8 +729,14 @@ export default function InventoryLogPage() {
                 <button onClick={() => setSelectedLog(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
               </div>
               <div className="space-y-3 text-sm">
+                {selectedLog.product_name && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Product Sold</span>
+                    <span className="font-medium text-gray-900">{selectedLog.product_name}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Item</span>
+                  <span className="text-gray-500">{selectedLog.product_name ? 'Ingredient' : 'Item'}</span>
                   <span className="font-medium text-gray-900">{selectedLog.item_name}</span>
                 </div>
                 <div className="flex justify-between">
@@ -571,6 +828,82 @@ export default function InventoryLogPage() {
               </div>
               <button
                 onClick={() => setSelectedLog(null)}
+                className="w-full mt-2 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-medium text-gray-700 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Grouped transaction detail modal */}
+      {selectedGroup && (() => {
+        const cfg  = sourceConfig[selectedGroup.source] ?? sourceConfig['adjustment']
+        const Icon = cfg.icon
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+            onClick={() => setSelectedGroup(null)}
+          >
+            <div
+              className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6 space-y-4 max-h-[85vh] overflow-y-auto"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-gray-900">
+                    {selectedGroup.product_name ?? 'Transaction Detail'}
+                  </h2>
+                  <span className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-xs font-medium ${cfg.badgeClass}`}>
+                    <Icon className="w-3 h-3" />{cfg.label}
+                  </span>
+                </div>
+                <button onClick={() => setSelectedGroup(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+              </div>
+
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Receipt #</span>
+                  <span className="text-indigo-600 font-medium">{selectedGroup.receipt_number}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">By</span>
+                  <span className="font-medium text-gray-900">{selectedGroup.created_by || '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Date</span>
+                  <span className="text-gray-700">
+                    {new Intl.DateTimeFormat('en-GB', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(selectedGroup.created_at))}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Total change</span>
+                  <ChangeBadge qty={selectedGroup.totalChange} />
+                </div>
+              </div>
+
+              <div className="border-t border-gray-100 pt-3 space-y-2">
+                <p className="text-xs font-semibold text-gray-500">
+                  {selectedGroup.items.length} ingredient{selectedGroup.items.length !== 1 ? 's' : ''} dispensed
+                </p>
+                {selectedGroup.items.map(item => (
+                  <div key={item.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{item.item_name}</p>
+                      {(item.before_qty != null || item.after_qty != null) && (
+                        <p className="text-xs text-gray-400">
+                          {item.before_qty != null ? item.before_qty : '—'} → {item.after_qty != null ? item.after_qty : '—'}
+                        </p>
+                      )}
+                    </div>
+                    <ChangeBadge qty={item.change_qty} />
+                  </div>
+                ))}
+              </div>
+
+              <button
+                onClick={() => setSelectedGroup(null)}
                 className="w-full mt-2 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-medium text-gray-700 transition-colors"
               >
                 Close

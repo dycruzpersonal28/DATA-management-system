@@ -27,20 +27,12 @@ function buildReceiptText(receipt: any, items: any[], shop: any, currencySymbol:
   const center = (s: string) => s.padStart(Math.floor((32 + s.length) / 2)).padEnd(32)
   const row = (left: string, right: string) => {
     const space = 32 - left.length - right.length
-    if (space < 1) {
-      const trimmedLeft = left.substring(0, Math.max(0, 32 - right.length - 1))
-      return trimmedLeft + ' ' + right
-    }
-    return left + ' '.repeat(space) + right
+    return left + ' '.repeat(Math.max(1, space)) + right
   }
-  const headerLines: string[] = [
+  const lines: string[] = [
     center(shop?.name || 'Receipt'),
     shop?.address ? center(shop.address) : '',
     shop?.phone ? center(shop.phone) : '',
-    ...(shop?.receipt_header ? String(shop.receipt_header).split('\n').map((l: string) => center(l)) : []),
-  ]
-  const lines: string[] = [
-    ...headerLines,
     '',
     center(`Receipt #${receipt.receipt_number}`),
     center(new Date(receipt.created_at).toLocaleString()),
@@ -264,7 +256,7 @@ function printViaWindow(text: string, title: string, logoUrl?: string | null) {
       .logo { text-align: center; margin-bottom: 6px; }
       .logo img { max-height: 52px; max-width: 150px; object-fit: contain; }
       .store-name { text-align: center; font-size: 15px; font-weight: bold; letter-spacing: 0.5px; margin-bottom: 2px; white-space: normal; }
-      .total-line { font-size: 12px; font-weight: bold; white-space: pre; }
+      .total-line { font-size: 14px; font-weight: bold; white-space: pre; }
       hr.thin  { border: none; border-top: 1px dashed #666; margin: 3px 0; }
       hr.thick { border: none; border-top: 2px solid #000; margin: 3px 0; }
       @media print { @page { size: 58mm auto; margin: 0; } body { padding: 2mm; } }
@@ -430,7 +422,7 @@ function buildReceiptESCPOS(
 
   // ── Store name — centered, bold, double-height ──────────────────────────────
   cmd.push(ESC, 0x61, 0x01)           // align center
-  cmd.push(GS,  0x21, 0x01)           // double height only (keeps 32-char width)
+  cmd.push(GS,  0x21, 0x10)           // double height only (keeps 32-char width)
   cmd.push(ESC, 0x45, 0x01)           // bold on
   line(shop?.name || 'Receipt')
   cmd.push(GS,  0x21, 0x00)           // normal size
@@ -438,9 +430,6 @@ function buildReceiptESCPOS(
 
   if (shop?.address) line(shop.address)
   if (shop?.phone)   line(shop.phone)
-  if (shop?.receipt_header) {
-    for (const l of String(shop.receipt_header).split('\n')) line(l)
-  }
   blank()
 
   // ── Meta — left aligned ─────────────────────────────────────────────────────
@@ -471,7 +460,7 @@ function buildReceiptESCPOS(
 
   // ── TOTAL — bold, double-height ──────────────────────────────────────────────
   line('='.repeat(W))
-  cmd.push(GS,  0x21, 0x01)           // double height only (keeps 32-char width)
+  cmd.push(GS,  0x21, 0x10)           // double height
   cmd.push(ESC, 0x45, 0x01)           // bold on
   line(twoCol('TOTAL', `${sym}${Number(receipt.total).toFixed(2)}`))
   cmd.push(GS,  0x21, 0x00)           // normal size

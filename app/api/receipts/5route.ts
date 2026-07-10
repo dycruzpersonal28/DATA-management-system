@@ -144,7 +144,6 @@ export async function POST(req: NextRequest) {
             shop_id, item_id: bom.ingredient_id, type: 'sale',
             quantity: -ingredientQtyNeeded, before_qty: beforeQty, after_qty: afterQty,
             reference_type: 'receipt', reference_id: receipt.id,
-            sold_item_id: item.itemId, sold_item_name: item.name,
             note: `Sale: ${item.name}${variantId ? ` (variant)` : ''} x${item.quantity}`,
           })
         }
@@ -202,7 +201,6 @@ export async function POST(req: NextRequest) {
             shop_id, item_id: item.itemId, variant_id: variantId,
             type: 'sale', quantity: -item.quantity, before_qty: beforeQty, after_qty: afterQty,
             reference_type: 'receipt', reference_id: receipt.id,
-            sold_item_id: item.itemId, sold_item_name: item.name,
             note: `Sale: ${item.name} x${item.quantity}`,
           })
 
@@ -276,8 +274,6 @@ export async function POST(req: NextRequest) {
             after_qty: afterQty,
             reference_type: 'receipt',
             reference_id: receipt.id,
-            sold_item_id: addon.id,
-            sold_item_name: addon.name,
             note: `Sale (addon): ${addon.name} x${addon.quantity} (on ${item.name} x${item.quantity})`,
           })
 
@@ -406,7 +402,6 @@ export async function PATCH(req: NextRequest) {
             shop_id, item_id: bom.ingredient_id, type: 'void',
             quantity: ingredientQtyToRestore, before_qty: beforeQty, after_qty: afterQty,
             reference_type: 'receipt', reference_id: receipt_id,
-            sold_item_id: soldItem.item_id, sold_item_name: soldItem.item_name,
             note: `Void: ${soldItem.item_name}${variantId ? ` (variant)` : ''} x${soldItem.quantity}`,
           })
         }
@@ -433,7 +428,6 @@ export async function PATCH(req: NextRequest) {
           shop_id, item_id: soldItem.item_id, variant_id: variantId,
           type: 'void', quantity: soldItem.quantity, before_qty: beforeQty, after_qty: afterQty,
           reference_type: 'receipt', reference_id: receipt_id,
-          sold_item_id: soldItem.item_id, sold_item_name: soldItem.item_name,
           note: `Void: ${soldItem.item_name} x${soldItem.quantity}`,
         })
       }
@@ -490,8 +484,6 @@ export async function PATCH(req: NextRequest) {
             after_qty: afterQty,
             reference_type: 'receipt',
             reference_id: receipt_id,
-            sold_item_id: addon.id,
-            sold_item_name: addon.name,
             note: `Void (addon): ${addon.name} x${addon.quantity} (on ${soldItem.item_name} x${soldItem.quantity}) — ingredient restored`,
           })
         }

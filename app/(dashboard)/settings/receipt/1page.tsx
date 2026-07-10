@@ -18,21 +18,16 @@ export default function ReceiptPage({ shop: shopProp, onShopUpdate }: { shop?: a
   // When rendered as a standalone page (no props), fetch shop data independently
   useEffect(() => {
     if (!shopProp) {
-      fetch('/api/shop/receipt')
-        .then(r => r.json())
-        .then(data => {
-          if (data?.shop) {
-            setShop(data.shop)
-            setForm({
-              receipt_header: data.shop.receipt_header || '',
-              receipt_footer: data.shop.receipt_footer || '',
-              logo_url: data.shop.logo_url || '',
-            })
-          } else {
-            toast.error(data?.error || 'Failed to load receipt settings')
-          }
-        })
-        .catch(() => toast.error('Failed to load receipt settings'))
+      supabase.from('shops').select('*').single().then(({ data }) => {
+        if (data) {
+          setShop(data)
+          setForm({
+            receipt_header: data.receipt_header || '',
+            receipt_footer: data.receipt_footer || '',
+            logo_url: data.logo_url || '',
+          })
+        }
+      })
     }
   }, [shopProp])
 
@@ -72,31 +67,16 @@ export default function ReceiptPage({ shop: shopProp, onShopUpdate }: { shop?: a
 
   async function handleSave() {
     setSaving(true)
-    try {
-      const res = await fetch('/api/shop/receipt', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          receipt_header: form.receipt_header,
-          receipt_footer: form.receipt_footer,
-          logo_url: form.logo_url,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        console.error('[Receipt settings] save failed:', data?.error)
-        toast.error(data?.error || 'Failed to save')
-        return
-      }
-      onShopUpdate?.(data.shop)
-      setShop(data.shop)
-      toast.success('Receipt settings saved')
-    } catch (err) {
-      console.error('[Receipt settings] save failed:', err)
-      toast.error('Failed to save')
-    } finally {
-      setSaving(false)
-    }
+    const { data, error } = await supabase.from('shops').update({
+      receipt_header: form.receipt_header,
+      receipt_footer: form.receipt_footer,
+      logo_url: form.logo_url,
+    }).eq('id', shop.id).select().single()
+    if (error) { toast.error('Failed to save'); setSaving(false); return }
+    onShopUpdate?.(data)
+    setShop(data)
+    toast.success('Receipt settings saved')
+    setSaving(false)
   }
 
   async function removeLogo() {

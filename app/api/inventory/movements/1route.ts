@@ -5,43 +5,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-// ── Timezone-aware date boundaries ──────────────────────────────────────────
-//
-// `from`/`to` arrive as plain YYYY-MM-DD strings representing a *local* day
-// in the shop's timezone (see todayStr() on the client). Postgres stores
-// created_at as timestamptz, so we need the actual UTC instant that
-// corresponds to local midnight — not a naive string concat, which Postgres
-// (and the previous version of this route) silently interprets as UTC
-// midnight instead. That mismatch is why "Today" could return zero rows:
-// for any shop ahead of UTC (e.g. Asia/Manila, UTC+8), local midnight is
-// still the previous UTC day, so the query window missed the first several
-// hours of the shop's "today".
-
-// Offset (ms) to ADD to a UTC instant to get the wall-clock time in `timeZone`.
-function tzOffsetMs(utcInstant: Date, timeZone: string): number {
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hourCycle: 'h23',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  })
-  const parts = dtf.formatToParts(utcInstant)
-  const map: Record<string, string> = {}
-  for (const p of parts) map[p.type] = p.value
-  const asIfUtc = Date.UTC(
-    Number(map.year), Number(map.month) - 1, Number(map.day),
-    Number(map.hour), Number(map.minute), Number(map.second),
-  )
-  return asIfUtc - utcInstant.getTime()
-}
-
-// Local midnight (00:00:00) of `dateStr` in `timeZone`, as a real UTC Date.
-function localMidnightUtc(dateStr: string, timeZone: string): Date {
-  const naive = new Date(`${dateStr}T00:00:00Z`)
-  const offset = tzOffsetMs(naive, timeZone)
-  return new Date(naive.getTime() - offset)
-}
-
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const admin    = createAdminClient()
@@ -65,7 +28,6 @@ export async function GET(req: NextRequest) {
   const to     = searchParams.get('to')
   const itemId = searchParams.get('item_id')
   const type   = searchParams.get('type')
-  const tz     = searchParams.get('tz') || 'Asia/Manila'
 
   // Join stock_batches to pull batch_no + expiry_date for batch_receive rows
   let query = admin
@@ -74,7 +36,6 @@ export async function GET(req: NextRequest) {
       id, type, quantity, before_qty, after_qty,
       note, created_at, item_id, variant_id,
       reference_type, reference_id, created_by, batch_id,
-      sold_item_id, sold_item_name,
       items!stock_movements_item_id_fkey(name),
       stock_batches(batch_no, expiry_date, pack_size, pack_unit, qty_packs, qty_base, conversion)
     `)
@@ -82,18 +43,8 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: false })
     .limit(500)
 
-  if (from) {
-    query = query.gte('created_at', localMidnightUtc(from, tz).toISOString())
-  }
-  if (to) {
-    // Use the START of the *next* local day as an exclusive upper bound,
-    // rather than trying to hit "23:59:59" of the target day exactly —
-    // avoids losing the last second/ms of the local day to rounding.
-    const nextDay = new Date(`${to}T00:00:00Z`)
-    nextDay.setUTCDate(nextDay.getUTCDate() + 1)
-    const nextDayStr = nextDay.toISOString().slice(0, 10)
-    query = query.lt('created_at', localMidnightUtc(nextDayStr, tz).toISOString())
-  }
+  if (from)   query = query.gte('created_at', `${from}T00:00:00`)
+  if (to)     query = query.lte('created_at', `${to}T23:59:59`)
   if (itemId) query = query.eq('item_id', itemId)
   if (type)   query = query.eq('type', type)
 
@@ -133,10 +84,6 @@ export async function GET(req: NextRequest) {
       item_name:      m.items?.name ?? 'Unknown item',
       item_id:        m.item_id,
       variant_id:     m.variant_id ?? null,
-      // The final compounded/finished product this ingredient movement was sold or voided for
-      // (null for movements not tied to a sale, e.g. restocks, adjustments)
-      product_name:   m.sold_item_name ?? null,
-      product_id:     m.sold_item_id ?? null,
       receipt_number: m.reference_type === 'receipt' && m.reference_id
                         ? receiptMap[m.reference_id] ?? null
                         : null,
