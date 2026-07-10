@@ -9,6 +9,7 @@ import {
   Printer, Trash2, AlertTriangle, ChevronRight,
   BarChart2, ArrowUpCircle, CreditCard,
   Banknote, Smartphone, ArrowDownCircle, Lock, Flame, Warehouse, RotateCcw,
+  Calendar, ChevronDown,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -89,6 +90,14 @@ function toDateStrTz(d: Date, tz?: string): string {
 // Legacy helper — kept for non-timezone-sensitive uses
 function toDateStr(d: Date) { return d.toISOString().split('T')[0] }
 function todayTz(tz?: string) { return toDateStrTz(new Date(), tz) }
+// Formats a YYYY-MM-DD string for display (e.g. "Jul 11, 2026").
+// Parses as UTC to avoid the date shifting by a day in negative-offset timezones.
+function fmtDateDisplay(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  if (!y || !m || !d) return dateStr
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(dt)
+}
 function startOfMonthTz(tz?: string): string {
   const now = new Date()
   // Get current year/month in shop timezone
@@ -1002,6 +1011,7 @@ export default function DashboardPage() {
   const [shopTimezone, setShopTimezone] = useState<string>('Asia/Manila')
   const [dateFrom, setDateFrom] = useState(() => startOfMonthTz('Asia/Manila'))
   const [dateTo, setDateTo] = useState(() => todayTz('Asia/Manila'))
+  const [datePickerOpen, setDatePickerOpen] = useState(false)
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -1582,16 +1592,61 @@ export default function DashboardPage() {
           ))}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2">
-            <span className="text-xs text-gray-400">From</span>
-            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-              className="text-sm border-none outline-none bg-transparent" />
-            <span className="text-xs text-gray-300">→</span>
-            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-              className="text-sm border-none outline-none bg-transparent" />
-          </div>
+          <button
+            onClick={() => setDatePickerOpen(true)}
+            className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors w-full sm:w-auto"
+          >
+            <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" />
+            <span className="truncate">
+              {dateFrom === dateTo ? fmtDateDisplay(dateFrom) : `${fmtDateDisplay(dateFrom)} – ${fmtDateDisplay(dateTo)}`}
+            </span>
+            <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0 ml-auto sm:ml-0" />
+          </button>
         </div>
       </div>
+
+      {datePickerOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          onClick={() => setDatePickerOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl border border-gray-200 shadow-xl w-full max-w-sm p-5"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-900">Select date range</h3>
+              <button onClick={() => setDatePickerOpen(false)} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {PRESETS.map(p => (
+                <button key={p.key} onClick={() => applyPreset(p.key)}
+                  className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors">
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">From</label>
+                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">To</label>
+                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+              </div>
+            </div>
+            <button onClick={() => setDatePickerOpen(false)}
+              className="w-full mt-4 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-medium hover:bg-gray-700 transition-colors">
+              Done
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-600">{error}</div>
@@ -1671,12 +1726,16 @@ export default function DashboardPage() {
                 className="flex-1 min-w-0 text-right font-medium text-red-600"
               />
             </div>
-            <div className="flex justify-between items-center gap-2 pt-1 border-t border-blue-100">
-              <span className="text-xs font-bold text-gray-700 flex-shrink-0">Remaining cash</span>
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-0.5 sm:gap-2 pt-1 border-t border-blue-100">
+              <AutoFitText
+                text="Remaining cash"
+                maxFontSize={12} minFontSize={9}
+                className="font-bold text-gray-700 flex-shrink-0"
+              />
               <AutoFitText
                 text={fmt(cashOnHand)}
                 maxFontSize={14} minFontSize={9}
-                className={`flex-1 min-w-0 text-right font-bold ${cashOnHand >= 0 ? 'text-emerald-700' : 'text-red-600'}`}
+                className={`sm:flex-1 sm:min-w-0 sm:text-right font-bold ${cashOnHand >= 0 ? 'text-emerald-700' : 'text-red-600'}`}
               />
             </div>
           </div>
