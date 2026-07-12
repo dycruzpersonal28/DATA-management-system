@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useCart } from '@/lib/hooks/useCart'
@@ -11,7 +11,7 @@ import {
   ChevronRight, Plus, Minus, Clock, DollarSign, Ticket,
   UtensilsCrossed, LogIn, LogOut, ArrowDownCircle, ArrowUpCircle,
   Save, FolderOpen, Trash2, AlertTriangle, TrendingUp, ShoppingCart,
-  LayoutDashboard, Camera, RotateCcw,
+  LayoutDashboard,
 } from 'lucide-react'
 import Link from 'next/link'
 import { toast } from 'sonner'
@@ -336,31 +336,6 @@ function TerminalPickerModal({
   )
 }
 
-// Uploads a captured cash-out proof photo to the shared discount-ID Google Drive
-// folder, filed under a cash-out reference. Mirrors PaymentModal's
-// uploadDiscountIdPhoto pattern — fire-and-forget, never blocks the POS flow.
-function uploadCashOutPhoto(photo: string, shiftId: string, amount: number, category: string) {
-  const reference = `CASHOUT-${shiftId.slice(0, 8)}-${Date.now()}`
-  fetch('/api/discount-id-photo', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageBase64: photo, receiptNumber: reference, discountName: 'Cash Out', idRef: category }),
-  })
-    .then(async res => {
-      const data = await res.json()
-      if (!res.ok) {
-        console.error('Cash-out photo upload failed:', data.error)
-        toast.error('Cash-out photo failed to save — check Google Drive connection', { duration: 8000 })
-      } else {
-        console.log('Cash-out photo upload success:', data.name)
-      }
-    })
-    .catch(err => {
-      console.error('Cash-out photo upload error:', err)
-      toast.error('Cash-out photo failed to save — check Google Drive connection', { duration: 8000 })
-    })
-}
-
 // ── Shift Clock-In Modal ──────────────────────────────────────────────────────
 function ShiftModal({
   mode,
@@ -378,7 +353,7 @@ function ShiftModal({
   onClockIn: (openingCash: number) => void
   onClockOut: (shiftId: string, closingCash: number, note: string) => void
   onCashIn: (shiftId: string, amount: number, note: string) => void
-  onCashOut: (shiftId: string, amount: number, note: string, category: string, photo: string) => void
+  onCashOut: (shiftId: string, amount: number, note: string, category: string) => void
   onClose: () => void
 }) {
   const [openingCash, setOpeningCash] = useState('')
@@ -388,73 +363,6 @@ function ShiftModal({
   const [expenseCategory, setExpenseCategory] = useState('')
   const [activeShiftId, setActiveShiftId] = useState('')
   const supabase = createClient()
-
-  // Cash-out proof photo capture — mirrors the Senior/PWD ID camera flow in Cart.tsx
-  const videoRef = useRef<HTMLVideoElement | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null)
-  const [cameraActive, setCameraActive] = useState(false)
-  const [cameraReady, setCameraReady] = useState(false)
-  const [cameraError, setCameraError] = useState(false)
-
-  const stopCamera = useCallback(() => {
-    streamRef.current?.getTracks().forEach(t => t.stop())
-    streamRef.current = null
-    setCameraReady(false)
-    setCameraActive(false)
-  }, [])
-
-  const startCamera = useCallback(async () => {
-    setCameraReady(false)
-    setCameraError(false)
-    setCameraActive(true)
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      })
-      streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play()
-          setCameraReady(true)
-        }
-      }
-    } catch (err) {
-      console.warn('Camera unavailable:', err)
-      setCameraError(true)
-    }
-  }, [])
-
-  const takeSnapshot = useCallback(() => {
-    const video = videoRef.current
-    if (!video) return
-    const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth || 640
-    canvas.height = video.videoHeight || 480
-    canvas.getContext('2d')?.drawImage(video, 0, 0)
-    setCapturedPhoto(canvas.toDataURL('image/jpeg', 0.85))
-    stopCamera()
-  }, [stopCamera])
-
-  const retakePhoto = useCallback(() => {
-    setCapturedPhoto(null)
-    startCamera()
-  }, [startCamera])
-
-  // Start the camera automatically when the Cash Out modal opens
-  useEffect(() => {
-    if (mode === 'cashout' && !capturedPhoto && !cameraActive) {
-      startCamera()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode])
-
-  // Stop the camera stream if the modal is closed while it's running
-  useEffect(() => {
-    return () => { streamRef.current?.getTracks().forEach(t => t.stop()) }
-  }, [])
 
   useEffect(() => {
     if (mode !== 'clockin' && currentUser?.id) {
@@ -482,8 +390,7 @@ function ShiftModal({
     } else if (mode === 'cashout') {
       if (!amount || parseFloat(amount) <= 0) { toast.error('Enter an amount'); return }
       if (!expenseCategory) { toast.error('Select an expense category'); return }
-      if (!capturedPhoto) { toast.error('Take a photo of the item/receipt as proof'); return }
-      onCashOut(activeShiftId, parseFloat(amount), note, expenseCategory, capturedPhoto)
+      onCashOut(activeShiftId, parseFloat(amount), note, expenseCategory)
     }
   }
 
@@ -496,8 +403,8 @@ function ShiftModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[90vh] flex flex-col overflow-hidden">
-        <div className="flex items-center gap-3 px-6 pt-6 pb-5 flex-shrink-0">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <div className="flex items-center gap-3 mb-5">
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${colorMap[mode]}`}>
             <IconComp className="w-5 h-5" />
           </div>
@@ -505,7 +412,7 @@ function ShiftModal({
           <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>
         </div>
 
-        <div className="space-y-4 overflow-y-auto px-6 pb-4 min-h-0">
+        <div className="space-y-4">
           {mode === 'clockin' && (
             <>
               <div className="bg-gray-50 rounded-xl px-4 py-3 flex items-center gap-3">
@@ -550,57 +457,6 @@ function ShiftModal({
               </select>
             </div>
           )}
-          {mode === 'cashout' && (
-            <div>
-              <label className="text-xs font-medium text-gray-500 block mb-1.5">
-                Photo Proof <span className="text-red-400">*</span>
-              </label>
-              <div className="relative bg-gray-900 rounded-xl overflow-hidden" style={{ aspectRatio: '4/3' }}>
-                {!capturedPhoto ? (
-                  <>
-                    <video
-                      ref={videoRef}
-                      className="w-full h-full object-cover"
-                      muted
-                      playsInline
-                    />
-                    {!cameraReady && !cameraError && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                        <div className="w-6 h-6 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />
-                        <span className="text-xs text-gray-300">Starting camera…</span>
-                      </div>
-                    )}
-                    {cameraError && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
-                        <Camera className="w-6 h-6 text-gray-400" />
-                        <span className="text-xs text-gray-300">Camera unavailable — allow camera access</span>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <img src={capturedPhoto} alt="Cash-out proof" className="w-full h-full object-cover" />
-                )}
-              </div>
-              <div className="mt-1.5">
-                {!capturedPhoto ? (
-                  <button
-                    onClick={takeSnapshot}
-                    disabled={!cameraReady}
-                    className="w-full py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-                  >
-                    <Camera className="w-3.5 h-3.5" /> Take Photo
-                  </button>
-                ) : (
-                  <button
-                    onClick={retakePhoto}
-                    className="w-full py-2 rounded-xl border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" /> Retake
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
           {(mode === 'clockout' || mode === 'cashin' || mode === 'cashout') && (
             <div>
               <label className="text-xs font-medium text-gray-500 block mb-1.5">Note <span className="text-gray-300 font-normal">(optional)</span></label>
@@ -609,13 +465,9 @@ function ShiftModal({
           )}
         </div>
 
-        <div className="flex gap-2 px-6 pt-4 pb-6 flex-shrink-0">
+        <div className="flex gap-2 mt-6">
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
-          <button
-            onClick={handleSubmit}
-            disabled={mode === 'cashout' && !capturedPhoto}
-            className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          >
+          <button onClick={handleSubmit} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all">
             Confirm
           </button>
         </div>
@@ -1161,7 +1013,7 @@ export default function POSPage() {
     toast.success(`Cash In: ${currencySymbol}${amount.toFixed(2)} recorded`)
   }
 
-  async function handleCashOut(shiftId: string, amount: number, note: string, category: string, photo: string) {
+  async function handleCashOut(shiftId: string, amount: number, note: string, category: string) {
     if (!shiftId) { toast.error('No active shift'); return }
 
     // 1. Record the cash movement and capture its ID
@@ -1221,10 +1073,6 @@ export default function POSPage() {
       // Journal write failure shouldn't block the POS flow — log but don't throw
       console.error('[handleCashOut] Journal entry failed:', err)
     }
-
-    // 3. Upload the proof photo, filed under this cash-out's movement record.
-    //    Fire-and-forget — never blocks the POS flow.
-    uploadCashOutPhoto(photo, shiftId, amount, category)
 
     setShiftModal(null)
     toast.success(`Cash Out: ${currencySymbol}${amount.toFixed(2)} recorded`)

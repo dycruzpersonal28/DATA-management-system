@@ -167,8 +167,6 @@ export async function POST(
             created_by:     createdByName,
             reference_type: 'receipt',
             reference_id:   receipt_id,
-            sold_item_id:   item.item_id,
-            sold_item_name: item.item_name,
             note: `Void: ${item.item_name}${variantId ? ' (variant)' : ''} x${item.quantity} — ingredient restored`,
           })
           console.log('[VOID DEBUG] stock_movement insert error:', movErr)
@@ -186,8 +184,6 @@ export async function POST(
             created_by:     createdByName,
             reference_type: 'receipt',
             reference_id:   receipt_id,
-            sold_item_id:   item.item_id,
-            sold_item_name: item.item_name,
             note: `POS Wastage: ${item.item_name}${variantId ? ' (variant)' : ''} x${item.quantity} — ${ingQty} units dispensed at sale, marked as waste (no additional deduction)`,
           })
           console.log('[VOID DEBUG] wastage stock_movement insert error:', wastageMovErr)
@@ -230,8 +226,6 @@ export async function POST(
           created_by:     createdByName,
           reference_type: 'receipt',
           reference_id:   receipt_id,
-          sold_item_id:   item.item_id,
-          sold_item_name: item.item_name,
           note: `Void: ${item.item_name} x${item.quantity}`,
         })
 
@@ -249,8 +243,6 @@ export async function POST(
           created_by:     createdByName,
           reference_type: 'receipt',
           reference_id:   receipt_id,
-          sold_item_id:   item.item_id,
-          sold_item_name: item.item_name,
           note: `Wastage: ${item.item_name} x${qty} — dispensed at sale, marked as waste (no additional deduction)`,
         })
         console.log('[VOID DEBUG] wastage stock_movement insert error:', wastageMovErr)
@@ -316,8 +308,6 @@ export async function POST(
             created_by:     createdByName,
             reference_type: 'receipt',
             reference_id:   receipt_id,
-            sold_item_id:   addon.id,
-            sold_item_name: addon.name,
             note: `Void (addon): ${addon.name} x${addon.quantity} (on ${item.item_name} x${qty}) — ingredient restored`,
           })
 
@@ -333,8 +323,6 @@ export async function POST(
             created_by:     createdByName,
             reference_type: 'receipt',
             reference_id:   receipt_id,
-            sold_item_id:   addon.id,
-            sold_item_name: addon.name,
             note: `Wastage (addon): ${addon.name} x${addon.quantity} — dispensed at sale, marked as waste`,
           })
         }

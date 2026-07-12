@@ -286,15 +286,22 @@ function AutoFitText({ text, className }: { text: string; className?: string }) 
 }
 
 function KpiCard({
-  label, value, sub, icon: Icon, bg, text, isLoading, prefix = '',
+  label, value, sub, icon: Icon, bg, text, isLoading, prefix = '', onClick, selected,
 }: {
   label: string; value: string; sub?: string
   icon: React.ElementType; bg: string; text: string
   isLoading: boolean; prefix?: string
+  onClick?: () => void; selected?: boolean
 }) {
+  const clickable = !!onClick
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 flex gap-3 items-start">
-      <div className={`w-9 h-9 ${bg} rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5`}>
+    <div
+      onClick={onClick}
+      className={`bg-white rounded-xl border p-4 flex gap-3 items-start transition-all ${
+        clickable ? 'cursor-pointer hover:border-indigo-300 hover:shadow-sm' : ''
+      } ${selected ? 'border-indigo-400 ring-2 ring-indigo-100' : 'border-gray-200'}`}
+    >
+      <div className={`hidden sm:flex w-9 h-9 ${bg} rounded-xl items-center justify-center flex-shrink-0 mt-0.5`}>
         <Icon className={`w-4 h-4 ${text}`} />
       </div>
       <div className="min-w-0 flex-1">
@@ -693,27 +700,32 @@ function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'open' | 'closed'>('all')
-  const [filterDays, setFilterDays] = useState(30)
+  const [dateRange, setDateRange] = useState<DateRange>(() => {
+    const tz = 'Asia/Manila' // fallback until timezone loads
+    return { label: 'Last 30 days', from: nDaysAgoTz(29, tz), to: todayTz(tz) }
+  })
   const [deleteShiftId, setDeleteShiftId] = useState<string | null>(null)
   const [deletingShiftId, setDeletingShiftId] = useState<string | null>(null)
   const [closeShiftId, setCloseShiftId] = useState<string | null>(null)
   const [closingShiftId, setClosingShiftId] = useState<string | null>(null)
   const [closingCash, setClosingCash] = useState<string>('')
   const [closeNote, setCloseNote] = useState<string>('')
+  const [summaryFilter, setSummaryFilter] = useState<'all' | 'active' | 'sales' | null>(null)
 
-  const loadShifts = useCallback(async () => {
-    setLoading(true)
+  const loadShifts = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     setError('')
     try {
       const { data: shop } = await supabase.from('shops').select('id').single()
-      const since = new Date()
-      since.setDate(since.getDate() - filterDays)
+      const fromTs = `${dateRange.from}T00:00:00`
+      const toTs   = `${dateRange.to}T23:59:59`
 
       const { data, error: sErr } = await supabase
         .from('shifts')
         .select('id, opening_cash, closing_cash, status, clock_in, clock_out, note, app_users(name, role)')
         .eq('shop_id', shop!.id)
-        .gte('clock_in', since.toISOString())
+        .gte('clock_in', fromTs)
+        .lte('clock_in', toTs)
         .order('clock_in', { ascending: false })
 
       if (sErr) throw sErr
@@ -754,11 +766,21 @@ function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string
     } catch (e: any) {
       setError(e.message || 'Failed to load shifts')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
-  }, [filterDays])
+  }, [dateRange.from, dateRange.to])
 
   useEffect(() => { loadShifts() }, [loadShifts])
+
+  // Auto refresh every 10 seconds — matches the KDS/Dashboard/Inventory Log pages' pattern.
+  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  useEffect(() => {
+    if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
+    autoRefreshRef.current = setInterval(() => { loadShifts(true) }, 10_000)
+    return () => {
+      if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
+    }
+  }, [loadShifts])
 
   const loadDetail = useCallback(async (shiftId: string) => {
     if (detailCache[shiftId]) return
@@ -878,24 +900,31 @@ function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string
   const visibleShifts = shifts.filter(s => {
     if (filterStatus !== 'all' && s.status !== filterStatus) return false
     if (search && !s.cashier.toLowerCase().includes(search.toLowerCase())) return false
+    if (summaryFilter === 'active' && s.status !== 'open') return false
+    if (summaryFilter === 'sales' && !((s.total_sales ?? 0) > 0)) return false
     return true
   })
 
   const totalSales = shifts.reduce((s, sh) => s + (sh.total_sales ?? 0), 0)
   const openShifts = shifts.filter(s => s.status === 'open').length
-  const DAY_OPTIONS = [7, 14, 30, 60, 90]
 
   return (
     <div className="space-y-5">
       {/* Summary strip */}
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: 'Total Shifts', value: String(shifts.length), icon: Clock, color: 'text-indigo-600', bg: 'bg-indigo-50' },
-          { label: 'Active Now', value: String(openShifts), icon: User, color: 'text-emerald-700', bg: 'bg-emerald-50' },
-          { label: 'Period Sales', value: fmt(totalSales, currencySymbol), icon: TrendingUp, color: 'text-blue-600', bg: 'bg-blue-50' },
+          { label: 'Total Shifts', value: String(shifts.length), icon: Clock, color: 'text-indigo-600', bg: 'bg-indigo-50', key: 'all' as const },
+          { label: 'Active Now', value: String(openShifts), icon: User, color: 'text-emerald-700', bg: 'bg-emerald-50', key: 'active' as const },
+          { label: 'Period Sales', value: fmt(totalSales, currencySymbol), icon: TrendingUp, color: 'text-blue-600', bg: 'bg-blue-50', key: 'sales' as const },
         ].map(c => (
-          <div key={c.label} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
-            <div className={`w-9 h-9 ${c.bg} rounded-xl flex items-center justify-center flex-shrink-0`}>
+          <div
+            key={c.label}
+            onClick={() => setSummaryFilter(f => f === c.key ? null : c.key)}
+            className={`bg-white rounded-xl border p-4 flex items-center gap-3 cursor-pointer transition-all hover:border-indigo-300 hover:shadow-sm ${
+              summaryFilter === c.key ? 'border-indigo-400 ring-2 ring-indigo-100' : 'border-gray-200'
+            }`}
+          >
+            <div className={`hidden sm:flex w-9 h-9 ${c.bg} rounded-xl items-center justify-center flex-shrink-0`}>
               <c.icon className={`w-4 h-4 ${c.color}`} />
             </div>
             <div className="min-w-0 flex-1">
@@ -918,12 +947,8 @@ function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string
             <button key={s} onClick={() => setFilterStatus(s)} className={`px-3 py-2 capitalize transition-colors ${filterStatus === s ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>{s}</button>
           ))}
         </div>
-        <div className="flex rounded-xl border border-gray-200 overflow-hidden text-xs font-medium">
-          {DAY_OPTIONS.map(d => (
-            <button key={d} onClick={() => setFilterDays(d)} className={`px-3 py-2 transition-colors ${filterDays === d ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>{d}d</button>
-          ))}
-        </div>
-        <button onClick={loadShifts} disabled={loading} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40">
+        <DateRangePicker value={dateRange} onChange={setDateRange} timezone={shopTimezone} />
+        <button onClick={() => loadShifts()} disabled={loading} className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40">
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
         </button>
       </div>
@@ -938,7 +963,7 @@ function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string
         <div className="bg-white rounded-xl border border-gray-200 p-16 text-center">
           <Clock className="w-12 h-12 text-gray-200 mx-auto mb-3" />
           <p className="text-gray-500 font-medium">No shifts found</p>
-          <p className="text-sm text-gray-400 mt-1">{search ? 'Try a different search' : `No shifts in the last ${filterDays} days`}</p>
+          <p className="text-sm text-gray-400 mt-1">{search ? 'Try a different search' : `No shifts from ${dateRange.from} to ${dateRange.to}`}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -963,7 +988,15 @@ function ShiftLogsTab({ currencySymbol, shopTimezone }: { currencySymbol: string
       {!loading && visibleShifts.length > 0 && (
         <p className="text-center text-xs text-gray-400">
           Showing {visibleShifts.length} of {shifts.length} shift{shifts.length !== 1 ? 's' : ''}
-          {filterStatus !== 'all' ? ` (${filterStatus})` : ''} · last {filterDays} days
+          {filterStatus !== 'all' ? ` (${filterStatus})` : ''} · {dateRange.label}
+          {summaryFilter && summaryFilter !== 'all' && (
+            <>
+              {' · '}
+              <button onClick={() => setSummaryFilter(null)} className="text-indigo-500 hover:text-indigo-700 font-medium underline underline-offset-2">
+                clear "{summaryFilter === 'active' ? 'Active Now' : 'Period Sales'}" filter
+              </button>
+            </>
+          )}
         </p>
       )}
 
@@ -1118,9 +1151,10 @@ export default function ReportsPage() {
   const [receiptItems, setReceiptItems] = useState<Record<string, any[]>>({})
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [kpiFilter, setKpiFilter] = useState<'gross' | 'net' | 'cashout' | 'transactions' | 'avg' | null>(null)
 
-  const loadData = useCallback(async () => {
-    setIsLoading(true)
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setIsLoading(true)
 
     // Fetch shop timezone on every load so it stays fresh
     const { data: shopRow } = await supabase.from('shops').select('timezone').single()
@@ -1155,6 +1189,16 @@ export default function ReportsPage() {
   }, [dateRange.from, dateRange.to])
 
   useEffect(() => { loadData() }, [loadData])
+
+  // Auto refresh every 10 seconds — matches the KDS/Dashboard/Inventory Log pages' pattern.
+  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  useEffect(() => {
+    if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
+    autoRefreshRef.current = setInterval(() => { loadData(true) }, 10_000)
+    return () => {
+      if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
+    }
+  }, [loadData])
 
   const activeReceipts = useMemo(() => receipts.filter(r => r.status !== 'voided'), [receipts])
   const voidedReceipts = useMemo(() => receipts.filter(r => r.status === 'voided'), [receipts])
@@ -1204,6 +1248,19 @@ export default function ReportsPage() {
     { id: 'shifts',       label: 'Shift Logs',   icon: Clock },
   ] as const
 
+  const KPI_FILTER_LABELS: Record<string, string> = {
+    gross: 'Gross Sales', net: 'Net Sales', cashout: 'Cash Out (Expenses)',
+    transactions: 'All Transactions', avg: 'Avg. Sale',
+  }
+
+  const filteredTransactions = useMemo(() => {
+    if (!kpiFilter || kpiFilter === 'transactions') return allTransactions
+    if (kpiFilter === 'cashout') return allTransactions.filter(t => t._type === 'cash_out')
+    if (kpiFilter === 'net') return allTransactions.filter(t => t._type === 'sale' || t._type === 'refund')
+    // gross / avg — both derived from active (non-voided) sales only
+    return allTransactions.filter(t => t._type === 'sale')
+  }, [allTransactions, kpiFilter])
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="p-4 md:p-6 space-y-5">
@@ -1220,7 +1277,7 @@ export default function ReportsPage() {
           </div>
           {activeTab === 'transactions' && (
             <div className="flex items-center gap-2">
-              <button onClick={loadData} className="p-2 rounded-xl border border-gray-200 bg-white text-gray-400 hover:bg-gray-50 hover:text-gray-700 transition-colors" title="Refresh">
+              <button onClick={() => loadData()} className="p-2 rounded-xl border border-gray-200 bg-white text-gray-400 hover:bg-gray-50 hover:text-gray-700 transition-colors" title="Refresh">
                 <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
               </button>
               <DateRangePicker value={dateRange} onChange={setDateRange} timezone={shopTimezone} />
@@ -1251,11 +1308,16 @@ export default function ReportsPage() {
           <>
             {/* KPI grid */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-              <KpiCard label="Gross Sales" value={`${currencySymbol}${grossSales.toFixed(2)}`} sub={`${activeReceipts.length} sale${activeReceipts.length !== 1 ? 's' : ''}`} icon={TrendingUp} bg="bg-indigo-50" text="text-indigo-600" isLoading={isLoading} />
-              <KpiCard label="Net Sales" value={`${currencySymbol}${netSales.toFixed(2)}`} sub={refundTotal > 0 ? `${voidedReceipts.length} voided (not deducted)` : 'No voids'} icon={DollarSign} bg="bg-emerald-50" text="text-emerald-600" isLoading={isLoading} />
-              <KpiCard label="Cash Out (Expenses)" value={`${currencySymbol}${cashOutTotal.toFixed(2)}`} sub={`${cashMovements.filter(m => m.type === 'cash_out').length} movement(s)`} icon={ArrowUpCircle} bg="bg-orange-50" text="text-orange-600" isLoading={isLoading} />
-              <KpiCard label="Transactions" value={String(totalTxCount)} sub={`${voidedReceipts.length} voided · ${cashMovements.length} cash moves`} icon={Receipt} bg="bg-violet-50" text="text-violet-600" isLoading={isLoading} />
-              <KpiCard label="Avg. Sale" value={`${currencySymbol}${avgSale.toFixed(2)}`} sub="per active transaction" icon={BarChart2} bg="bg-sky-50" text="text-sky-600" isLoading={isLoading} />
+              <KpiCard label="Gross Sales" value={`${currencySymbol}${grossSales.toFixed(2)}`} sub={`${activeReceipts.length} sale${activeReceipts.length !== 1 ? 's' : ''}`} icon={TrendingUp} bg="bg-indigo-50" text="text-indigo-600" isLoading={isLoading}
+                onClick={() => setKpiFilter(f => f === 'gross' ? null : 'gross')} selected={kpiFilter === 'gross'} />
+              <KpiCard label="Net Sales" value={`${currencySymbol}${netSales.toFixed(2)}`} sub={refundTotal > 0 ? `${voidedReceipts.length} voided (not deducted)` : 'No voids'} icon={DollarSign} bg="bg-emerald-50" text="text-emerald-600" isLoading={isLoading}
+                onClick={() => setKpiFilter(f => f === 'net' ? null : 'net')} selected={kpiFilter === 'net'} />
+              <KpiCard label="Cash Out (Expenses)" value={`${currencySymbol}${cashOutTotal.toFixed(2)}`} sub={`${cashMovements.filter(m => m.type === 'cash_out').length} movement(s)`} icon={ArrowUpCircle} bg="bg-orange-50" text="text-orange-600" isLoading={isLoading}
+                onClick={() => setKpiFilter(f => f === 'cashout' ? null : 'cashout')} selected={kpiFilter === 'cashout'} />
+              <KpiCard label="Transactions" value={String(totalTxCount)} sub={`${voidedReceipts.length} voided · ${cashMovements.length} cash moves`} icon={Receipt} bg="bg-violet-50" text="text-violet-600" isLoading={isLoading}
+                onClick={() => setKpiFilter(f => f === 'transactions' ? null : 'transactions')} selected={kpiFilter === 'transactions'} />
+              <KpiCard label="Avg. Sale" value={`${currencySymbol}${avgSale.toFixed(2)}`} sub="per active transaction" icon={BarChart2} bg="bg-sky-50" text="text-sky-600" isLoading={isLoading}
+                onClick={() => setKpiFilter(f => f === 'avg' ? null : 'avg')} selected={kpiFilter === 'avg'} />
             </div>
 
             {/* Transactions table */}
@@ -1263,9 +1325,19 @@ export default function ReportsPage() {
               <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <ShoppingBag className="w-4 h-4 text-gray-400" />
-                  <h2 className="text-sm font-semibold text-gray-800">All Transactions</h2>
+                  <h2 className="text-sm font-semibold text-gray-800">
+                    {kpiFilter ? KPI_FILTER_LABELS[kpiFilter] : 'All Transactions'}
+                  </h2>
+                  {kpiFilter && (
+                    <button
+                      onClick={() => setKpiFilter(null)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors"
+                    >
+                      <X className="w-2.5 h-2.5" /> Clear filter
+                    </button>
+                  )}
                 </div>
-                <span className="text-xs text-gray-400 bg-gray-50 rounded-lg px-2 py-1 border border-gray-100">{allTransactions.length} entries</span>
+                <span className="text-xs text-gray-400 bg-gray-50 rounded-lg px-2 py-1 border border-gray-100">{filteredTransactions.length} entries</span>
               </div>
               <div className="overflow-auto" style={{ maxHeight: '520px' }}>
                 <table className="w-full text-xs min-w-[700px]">
@@ -1284,10 +1356,10 @@ export default function ReportsPage() {
                         ))}
                       </tr>
                     ))}
-                    {!isLoading && allTransactions.length === 0 && (
-                      <tr><td colSpan={8} className="text-center py-16 text-gray-400"><Receipt className="w-8 h-8 mx-auto mb-2 opacity-30" />No transactions in this date range</td></tr>
+                    {!isLoading && filteredTransactions.length === 0 && (
+                      <tr><td colSpan={8} className="text-center py-16 text-gray-400"><Receipt className="w-8 h-8 mx-auto mb-2 opacity-30" />{kpiFilter ? 'No matching transactions' : 'No transactions in this date range'}</td></tr>
                     )}
-                    {!isLoading && allTransactions.map((tx) => {
+                    {!isLoading && filteredTransactions.map((tx) => {
                       const isSale = tx._type === 'sale'
                       const isRefund = tx._type === 'refund'
                       const isCashIn = tx._type === 'cash_in'
@@ -1348,7 +1420,7 @@ export default function ReportsPage() {
                       )
                     })}
                   </tbody>
-                  {!isLoading && allTransactions.length > 0 && (
+                  {!isLoading && filteredTransactions.length > 0 && (
                     <tfoot>
                       <tr className="bg-gray-50 border-t-2 border-gray-200 sticky bottom-0">
                         <td colSpan={7} className="px-3 py-2.5 text-xs font-semibold text-gray-600 text-right">Net Sales Total</td>

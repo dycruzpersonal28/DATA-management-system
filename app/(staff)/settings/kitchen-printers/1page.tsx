@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
-import { Plus, Pencil, Trash2, Check, X, Printer, ChevronDown, ChevronUp, Wifi, Network, Bluetooth, ScanLine, Sticker } from 'lucide-react'
+import { Plus, Pencil, Trash2, Check, X, Printer, ChevronDown, ChevronUp, Wifi, Network, Bluetooth, ScanLine } from 'lucide-react'
 import { requestBlePrinter } from '@/lib/printing/blePrinter'
 
 type PrinterGroup = {
@@ -19,10 +19,6 @@ type PrinterGroup = {
   paper_width: number
   show_amounts: boolean
   show_ingredients: boolean
-  print_per_item: boolean
-  sticker_footer_note: string
-  sticker_show_addons: boolean
-  sticker_show_ingredients: boolean
   categories?: string[]
 }
 
@@ -64,10 +60,6 @@ function PrinterGroupForm({
     paper_width: initial?.paper_width ?? 57,
     show_amounts: initial?.show_amounts ?? false,
     show_ingredients: initial?.show_ingredients ?? true,
-    print_per_item: initial?.print_per_item ?? false,
-    sticker_footer_note: initial?.sticker_footer_note || '',
-    sticker_show_addons: initial?.sticker_show_addons ?? true,
-    sticker_show_ingredients: initial?.sticker_show_ingredients ?? false,
   })
   const [selectedCats, setSelectedCats] = useState<string[]>(initial?.categories || [])
   const [btScanning, setBtScanning] = useState(false)
@@ -265,52 +257,6 @@ function PrinterGroupForm({
               <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.show_ingredients ? 'translate-x-5' : 'translate-x-1'}`} />
             </div>
           </label>
-          <label className="flex items-center justify-between px-3 py-2.5 bg-white border border-gray-200 rounded-xl cursor-pointer hover:border-gray-300 transition-colors">
-            <div>
-              <p className="text-sm font-medium text-gray-700">Print each item separately (sticker mode)</p>
-              <p className="text-[11px] text-gray-400">Prints one sticker per product instead of one combined ticket — useful for labeling items directly</p>
-            </div>
-            <div
-              onClick={() => setForm(p => ({ ...p, print_per_item: !p.print_per_item }))}
-              className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${form.print_per_item ? 'bg-indigo-500' : 'bg-gray-200'}`}
-            >
-              <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.print_per_item ? 'translate-x-5' : 'translate-x-1'}`} />
-            </div>
-          </label>
-          {form.print_per_item && (
-            <div className="px-3 py-2.5 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-3">
-              <p className="text-[11px] text-indigo-700 leading-relaxed">
-                Each sticker prints: transaction # at top, a divider line, then the item (with add-ons/ingredients per the options below) and its note, another divider line, then the footer note below.
-              </p>
-              <label className="flex items-center justify-between px-3 py-2 bg-white border border-gray-200 rounded-xl cursor-pointer hover:border-gray-300 transition-colors">
-                <p className="text-sm font-medium text-gray-700">Show add-ons on sticker</p>
-                <div
-                  onClick={() => setForm(p => ({ ...p, sticker_show_addons: !p.sticker_show_addons }))}
-                  className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${form.sticker_show_addons ? 'bg-indigo-500' : 'bg-gray-200'}`}
-                >
-                  <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.sticker_show_addons ? 'translate-x-5' : 'translate-x-1'}`} />
-                </div>
-              </label>
-              <label className="flex items-center justify-between px-3 py-2 bg-white border border-gray-200 rounded-xl cursor-pointer hover:border-gray-300 transition-colors">
-                <p className="text-sm font-medium text-gray-700">Show ingredients on sticker</p>
-                <div
-                  onClick={() => setForm(p => ({ ...p, sticker_show_ingredients: !p.sticker_show_ingredients }))}
-                  className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${form.sticker_show_ingredients ? 'bg-indigo-500' : 'bg-gray-200'}`}
-                >
-                  <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.sticker_show_ingredients ? 'translate-x-5' : 'translate-x-1'}`} />
-                </div>
-              </label>
-              <div>
-                <label className="text-xs font-medium text-gray-500 block mb-1">Sticker Footer Note</label>
-                <Input
-                  value={form.sticker_footer_note}
-                  onChange={e => setForm(p => ({ ...p, sticker_footer_note: e.target.value }))}
-                  placeholder="e.g. Thank you! or your shop name"
-                />
-                <p className="text-[10px] text-gray-400 mt-1">Printed at the bottom of every sticker for this printer group — optional</p>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
@@ -368,8 +314,6 @@ export default function KitchenPrintersPage() {
         paper_width: data.paper_width,
         show_amounts: data.show_amounts,
         show_ingredients: data.show_ingredients,
-        print_per_item: data.print_per_item,
-        sticker_footer_note: data.sticker_footer_note,
       }).eq('id', id)
       if (error) { toast.error('Failed'); setLoading(false); return }
 
@@ -393,8 +337,6 @@ export default function KitchenPrintersPage() {
           paper_width: data.paper_width,
           show_amounts: data.show_amounts,
           show_ingredients: data.show_ingredients,
-          print_per_item: data.print_per_item,
-          sticker_footer_note: data.sticker_footer_note,
           is_active: true,
           sort_order: groups.length,
         })
@@ -505,11 +447,6 @@ export default function KitchenPrintersPage() {
                           <TypeIcon className="w-3 h-3" />
                           {typeLabel[g.printer_type] || g.printer_type}
                         </span>
-                        {g.print_per_item && (
-                          <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-50 text-orange-600 text-[10px] font-medium">
-                            <Sticker className="w-3 h-3" /> Sticker mode
-                          </span>
-                        )}
                       </div>
                       <p className="text-xs text-gray-400">
                         {g.printer_address || 'No address set'} · {(g.categories?.length || 0)} categor{g.categories?.length === 1 ? 'y' : 'ies'}
@@ -587,19 +524,8 @@ export default function KitchenPrintersPage() {
                           {(g as any).show_amounts && (
                             <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-xs text-indigo-600">Amounts ✓</span>
                           )}
-                          {(g as any).print_per_item && (
-                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-50 border border-orange-200 text-xs text-orange-600">
-                              <Sticker className="w-3 h-3" /> Sticker mode ✓
-                            </span>
-                          )}
                         </div>
                       </div>
-                      {(g as any).print_per_item && (
-                        <div>
-                          <p className="text-xs font-semibold text-gray-500 mb-1">Sticker Footer Note</p>
-                          <p className="text-xs text-gray-500">{(g as any).sticker_footer_note || <span className="text-gray-300">Not set</span>}</p>
-                        </div>
-                      )}
                     </div>
                   )}
                 </>

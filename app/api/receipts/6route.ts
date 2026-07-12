@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     shop_id, employee_id, customer_id, receipt_number, subtotal,
     discount_amount, tax_amount, total, payment_type_id, amount_tendered,
     change_amount, loyalty_points_earned, loyalty_points_redeemed,
-    shift_id, status, items, dining_option_id, note,
+    shift_id, status, items,
   } = body
 
   if (!shop_id || !items?.length) {
@@ -67,7 +67,6 @@ export async function POST(req: NextRequest) {
         loyalty_points_earned: loyalty_points_earned || 0,
         loyalty_points_redeemed: loyalty_points_redeemed || 0,
         shift_id: shift_id || null, status: status || 'completed',
-        dining_option_id: dining_option_id || null, note: note || null,
       })
       .select().single()
 

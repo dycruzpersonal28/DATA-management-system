@@ -3400,15 +3400,19 @@ function QuickPayslipGenerator() {
                       const dateLabel = `${DSHORT[dow]}, ${MSHORT[mth-1]} ${dd}`
                       const fmtT = (iso: string) => { try { return new Date(iso).toLocaleTimeString('en-US', { timeZone: shopTimezone, hour: '2-digit', minute: '2-digit' }) } catch { return '—' } }
                       return (
-                        <div key={l.date + l.clock_in} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${isLate ? 'bg-red-50 border border-red-100' : 'bg-gray-50'}`}>
-                          <div className="w-28 text-gray-600 font-medium flex-shrink-0">{dateLabel}</div>
-                          <div className="flex-1 text-gray-400 truncate">{l.shift_name || '—'}</div>
-                          <div className="text-gray-500 flex-shrink-0">{fmtT(l.clock_in)} – {l.clock_out ? fmtT(l.clock_out) : '?'}</div>
-                          <div className="text-gray-600 font-medium flex-shrink-0 w-12 text-right">{l.total_hours != null ? l.total_hours.toFixed(2) + 'h' : '—'}</div>
-                          <div className="flex-shrink-0 w-20 text-right">
-                            {isLate
-                              ? <span className="px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full font-bold">{l.late_minutes} min</span>
-                              : <span className="text-emerald-500">✓</span>}
+                        <div key={l.date + l.clock_in} className={`rounded-lg text-xs px-3 py-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2 ${isLate ? 'bg-red-50 border border-red-100' : 'bg-gray-50'}`}>
+                          <div className="flex items-center justify-between gap-2 sm:contents">
+                            <div className="text-gray-600 font-medium flex-shrink-0 sm:order-1 sm:w-28">{dateLabel}</div>
+                            <div className="flex-shrink-0 sm:order-5 sm:w-20 sm:text-right">
+                              {isLate
+                                ? <span className="px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full font-bold">{l.late_minutes} min</span>
+                                : <span className="text-emerald-500 font-bold">✓</span>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 sm:contents">
+                            <div className="flex-1 min-w-0 truncate text-gray-400 sm:order-2 sm:flex-1">{l.shift_name || '—'}</div>
+                            <div className="flex-shrink-0 whitespace-nowrap text-gray-500 sm:order-3">{fmtT(l.clock_in)} – {l.clock_out ? fmtT(l.clock_out) : '?'}</div>
+                            <div className="flex-shrink-0 text-gray-600 font-medium sm:order-4 sm:w-12 sm:text-right">{l.total_hours != null ? l.total_hours.toFixed(2) + 'h' : '—'}</div>
                           </div>
                         </div>
                       )

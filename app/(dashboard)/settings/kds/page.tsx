@@ -15,6 +15,7 @@ type KdsStation = {
   name: string
   is_active: boolean
   show_receipt: boolean
+  show_ingredients: boolean
   sort_order: number
   kds_station_categories: { category_id: string }[]
 }
@@ -95,6 +96,9 @@ export default function KdsStationsPage() {
                       {station.show_receipt && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">Full Receipt</span>
                       )}
+                      {station.show_ingredients && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">Ingredients ✓</span>
+                      )}
                       {assignedCats.length === 0 ? (
                         <span className="text-[10px] text-amber-500">⚠ No categories assigned</span>
                       ) : assignedCats.map(c => (
@@ -140,6 +144,7 @@ function StationEditor({
   const [name, setName] = useState(station?.name ?? '')
   const [isActive, setIsActive] = useState(station?.is_active ?? true)
   const [showReceipt, setShowReceipt] = useState(station?.show_receipt ?? false)
+  const [showIngredients, setShowIngredients] = useState(station?.show_ingredients ?? false)
   const [assignedCatIds, setAssignedCatIds] = useState<Set<string>>(
     new Set(station?.kds_station_categories.map(sc => sc.category_id) ?? [])
   )
@@ -154,14 +159,14 @@ function StationEditor({
       if (isNew) {
         const { data, error } = await supabase
           .from('kds_stations')
-          .insert({ shop_id: shopId, name: name.trim(), is_active: isActive, show_receipt: showReceipt })
+          .insert({ shop_id: shopId, name: name.trim(), is_active: isActive, show_receipt: showReceipt, show_ingredients: showIngredients })
           .select('id').single()
         if (error) throw error
         stationId = data.id
       } else {
         const { error } = await supabase
           .from('kds_stations')
-          .update({ name: name.trim(), is_active: isActive, show_receipt: showReceipt })
+          .update({ name: name.trim(), is_active: isActive, show_receipt: showReceipt, show_ingredients: showIngredients })
           .eq('id', station!.id)
         if (error) throw error
       }
@@ -228,6 +233,13 @@ function StationEditor({
                 <p className="text-xs text-gray-400">Display all items instead of filtering by category</p>
               </div>
               <Switch checked={showReceipt} onCheckedChange={setShowReceipt} />
+            </div>
+            <div className="flex items-center justify-between px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-gray-800">Show Item Ingredients</p>
+                <p className="text-xs text-gray-400">Display each item's ingredients below it on the ticket</p>
+              </div>
+              <Switch checked={showIngredients} onCheckedChange={setShowIngredients} />
             </div>
           </div>
 

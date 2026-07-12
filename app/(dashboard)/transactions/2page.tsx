@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -878,8 +878,8 @@ export default function TransactionsPage() {
     })
   }, [])
 
-  const loadData = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true)
+  const loadData = useCallback(async () => {
+    setLoading(true)
 
     const tz = shopTimezone
 
@@ -938,7 +938,7 @@ export default function TransactionsPage() {
 
     const [receiptsRes, movementsRes] = await Promise.all([receiptsQuery, movementsQuery])
 
-    if (receiptsRes.error) { toast.error('Failed to load transactions'); if (!silent) setLoading(false); return }
+    if (receiptsRes.error) { toast.error('Failed to load transactions'); setLoading(false); return }
 
     const rxs = receiptsRes.data || []
     setReceipts(rxs)
@@ -950,20 +950,10 @@ export default function TransactionsPage() {
     }
     setReceiptItems(byReceipt)
 
-    if (!silent) setLoading(false)
+    setLoading(false)
   }, [dateFrom, dateTo, shopTimezone])
 
   useEffect(() => { loadData() }, [loadData])
-
-  // Auto refresh every 10 seconds — matches the KDS/Dashboard/Inventory Log/Reports pages' pattern.
-  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  useEffect(() => {
-    if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
-    autoRefreshRef.current = setInterval(() => { loadData(true) }, 10_000)
-    return () => {
-      if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
-    }
-  }, [loadData])
 
   function setPreset(preset: string) {
     const now = new Date()
@@ -1257,7 +1247,7 @@ export default function TransactionsPage() {
           <p className="text-sm text-gray-500 mt-1">All sales, refunds, and cash movements</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => loadData()} className="p-2 rounded-xl border border-gray-200 text-gray-400 hover:bg-gray-50 transition-colors" title="Refresh">
+          <button onClick={loadData} className="p-2 rounded-xl border border-gray-200 text-gray-400 hover:bg-gray-50 transition-colors" title="Refresh">
             <RefreshCw className="w-4 h-4" />
           </button>
           <Button size="sm" variant="outline" onClick={exportCSV}>

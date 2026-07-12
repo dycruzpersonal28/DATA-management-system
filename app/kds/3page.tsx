@@ -437,7 +437,7 @@ function OrderCard({ order, onAdvance, criticalSeconds }: {
                     {a.ingredients && a.ingredients.length > 0 && (
                       <div className="pl-3 space-y-0.5">
                         {a.ingredients.map((ing, j) => (
-                          <p key={j} className="text-[11px] text-gray-500">– {ing.name} ×{ing.quantity}</p>
+                          <p key={j} className="text-[11px] text-gray-500">– {ing.name}{ing.quantity > 1 ? ` ×${ing.quantity}` : ''}</p>
                         ))}
                       </div>
                     )}
@@ -448,7 +448,7 @@ function OrderCard({ order, onAdvance, criticalSeconds }: {
             {item.ingredients && item.ingredients.length > 0 && (
               <div className="mt-0.5 space-y-0.5">
                 {item.ingredients.map((ing, i) => (
-                  <p key={i} className="text-xs text-gray-500">– {ing.name} ×{ing.quantity}</p>
+                  <p key={i} className="text-xs text-gray-500">– {ing.name}{ing.quantity > 1 ? ` ×${ing.quantity}` : ''}</p>
                 ))}
               </div>
             )}

@@ -215,9 +215,9 @@ export default function InventoryLogPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/shop-settings')
+    fetch('/api/shop')
       .then(r => r.json())
-      .then(data => { if (data?.timezone) setShopTimezone(data.timezone) })
+      .then(data => { if (data?.shop?.timezone) setShopTimezone(data.shop.timezone) })
       .catch(() => {})
   }, [])
 
@@ -298,23 +298,47 @@ export default function InventoryLogPage() {
 
     const rows: GroupedRow[] = singles.map(log => ({ isGroup: false, log }))
 
-    for (const [receiptKey, productMap] of byReceipt) {
+    // A "shell": exactly one dispense log, and that log's ingredient IS
+    // the sold product itself (self-decrement — no recipe expansion). This
+    // can occasionally match MORE than one product in a receipt (e.g. a
+    // real combo shell like "HMB 1" AND a plain product that simply has no
+    // recipe configured, like a plain pizza) — in that case whichever one
+    // happens to come first in array order wins. A sale and its later void
+    // share the exact same set of products, so we resolve 'sale' receipts
+    // first and cache which product won the anchor pick per receipt_number;
+    // the matching 'void' receipt then reuses that same anchor instead of
+    // re-guessing from its own (differently-ordered) array. This keeps the
+    // "final product" row consistently on top for both sale and void.
+    const anchorByReceiptNumber = new Map<string, string>()
+    const receiptEntries = [...byReceipt.entries()].sort(
+      ([a], [b]) => (a.startsWith('sale:') ? 0 : 1) - (b.startsWith('sale:') ? 0 : 1)
+    )
+
+    for (const [receiptKey, productMap] of receiptEntries) {
+      const receiptNumber = receiptKey.slice(receiptKey.indexOf(':') + 1)
+      const isSaleReceipt = receiptKey.startsWith('sale:')
+
       const productGroups = [...productMap.entries()].map(([productKey, logs]) => ({
         productKey,
         name: logs[0].product_name ?? logs[0].item_name,
         logs: [...logs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
       }))
 
-      // A "shell": exactly one dispense log, and that log's ingredient IS
-      // the sold product itself (self-decrement — no recipe expansion).
       const isShell = (g: typeof productGroups[number]) =>
         g.logs.length === 1 && g.logs[0].item_name === g.name
 
-      const anchorIdx = productGroups.findIndex(isShell)
+      // Prefer the anchor already established by this receipt's sale (if
+      // we've seen it), falling back to the shape-based guess otherwise
+      // (e.g. the sale row fell outside the current date filter).
+      const cachedKey = anchorByReceiptNumber.get(receiptNumber)
+      let anchorIdx = cachedKey ? productGroups.findIndex(g => g.productKey === cachedKey) : -1
+      if (anchorIdx === -1) anchorIdx = productGroups.findIndex(isShell)
+
       const hasBundle = anchorIdx !== -1 && productGroups.length > 1
 
       if (hasBundle) {
         const anchor = productGroups[anchorIdx]
+        if (isSaleReceipt) anchorByReceiptNumber.set(receiptNumber, anchor.productKey)
         const included = productGroups.filter((_, i) => i !== anchorIdx)
         const allLogs = productGroups.flatMap(g => g.logs)
         const first = [...allLogs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
@@ -625,76 +649,52 @@ export default function InventoryLogPage() {
                       {/* Expanded detail — vertical breakdown, inline like the Transactions page */}
                       {isExpanded && (
                         <tr>
-                          <td colSpan={10} className="px-4 pb-4 bg-gray-50">
-                            <div className="border border-gray-200 rounded-xl bg-white p-4 mt-1 space-y-3 max-w-lg">
-                              <div className="space-y-1.5 text-sm">
-                                <div className="flex justify-between">
-                                  <span className="text-gray-500">Receipt #</span>
-                                  <span className="text-indigo-600 font-medium">{row.receipt_number}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-gray-500">By</span>
-                                  <span className="font-medium text-gray-900">{row.created_by || '—'}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-gray-500">Date</span>
-                                  <span className="text-gray-700">
-                                    {new Intl.DateTimeFormat('en-GB', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(row.created_at))}
-                                  </span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-gray-500">Total change</span>
-                                  <ChangeBadge qty={row.totalChange} />
-                                </div>
-                              </div>
-
-                              {isBundle ? (
-                                <div className="border-t border-gray-100 pt-3 space-y-3">
-                                  <p className="text-xs font-semibold text-gray-500">
-                                    {row.subItems.length} item{row.subItems.length !== 1 ? 's' : ''} included
-                                  </p>
-                                  {row.subItems.map(sub => (
-                                    <div key={sub.key} className="space-y-1.5">
-                                      <p className="text-xs font-medium text-gray-700">{sub.name}</p>
-                                      <div className="space-y-1">
-                                        {sub.logs.map(item => (
-                                          <div key={item.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5 gap-3">
-                                            <div className="min-w-0">
-                                              <p className="text-sm text-gray-900 truncate">{item.item_name}</p>
-                                              {(item.before_qty != null || item.after_qty != null) && (
-                                                <p className="text-xs text-gray-400">
-                                                  {item.before_qty != null ? item.before_qty : '—'} → {item.after_qty != null ? item.after_qty : '—'}
-                                                </p>
-                                              )}
-                                            </div>
-                                            <ChangeBadge qty={item.change_qty} />
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="border-t border-gray-100 pt-3 space-y-1.5">
-                                  <p className="text-xs font-semibold text-gray-500">
-                                    {row.items.length} ingredient{row.items.length !== 1 ? 's' : ''} dispensed
-                                  </p>
-                                  {row.items.map(item => (
-                                    <div key={item.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 gap-3">
-                                      <div className="min-w-0">
-                                        <p className="text-sm font-medium text-gray-900 truncate">{item.item_name}</p>
-                                        {(item.before_qty != null || item.after_qty != null) && (
-                                          <p className="text-xs text-gray-400">
-                                            {item.before_qty != null ? item.before_qty : '—'} → {item.after_qty != null ? item.after_qty : '—'}
-                                          </p>
-                                        )}
-                                      </div>
-                                      <ChangeBadge qty={item.change_qty} />
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
+                          <td colSpan={10} className="px-4 pb-3 bg-gray-50">
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 py-2">
+                              <span>Receipt # <span className="text-indigo-600 font-medium">{row.receipt_number}</span></span>
+                              <span>By <span className="font-medium text-gray-700">{row.created_by || '—'}</span></span>
+                              <span>
+                                {new Intl.DateTimeFormat('en-GB', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(row.created_at))}
+                              </span>
+                              <span className="flex items-center gap-1">Total <ChangeBadge qty={row.totalChange} /></span>
                             </div>
+
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-gray-200">
+                                  <th className="text-left text-xs font-medium text-gray-400 py-1.5">
+                                    {isBundle ? 'Item' : 'Ingredient'}
+                                  </th>
+                                  <th className="text-right text-xs font-medium text-gray-400 py-1.5">Before</th>
+                                  <th className="text-right text-xs font-medium text-gray-400 py-1.5">After</th>
+                                  <th className="text-right text-xs font-medium text-gray-400 py-1.5">Change</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {isBundle
+                                  ? row.subItems.flatMap(sub => ([
+                                      <tr key={`${sub.key}-h`}>
+                                        <td colSpan={4} className="pt-2 pb-0.5 text-xs font-semibold text-gray-600">{sub.name}</td>
+                                      </tr>,
+                                      ...sub.logs.map(item => (
+                                        <tr key={item.id}>
+                                          <td className="py-1.5 text-gray-700 pl-2">{item.item_name}</td>
+                                          <td className="py-1.5 text-right text-gray-500 tabular-nums">{item.before_qty ?? '—'}</td>
+                                          <td className="py-1.5 text-right text-gray-700 tabular-nums font-medium">{item.after_qty ?? '—'}</td>
+                                          <td className="py-1.5 text-right"><ChangeBadge qty={item.change_qty} /></td>
+                                        </tr>
+                                      )),
+                                    ]))
+                                  : row.items.map(item => (
+                                      <tr key={item.id}>
+                                        <td className="py-1.5 text-gray-700">{item.item_name}</td>
+                                        <td className="py-1.5 text-right text-gray-500 tabular-nums">{item.before_qty ?? '—'}</td>
+                                        <td className="py-1.5 text-right text-gray-700 tabular-nums font-medium">{item.after_qty ?? '—'}</td>
+                                        <td className="py-1.5 text-right"><ChangeBadge qty={item.change_qty} /></td>
+                                      </tr>
+                                    ))}
+                              </tbody>
+                            </table>
                           </td>
                         </tr>
                       )}
@@ -798,8 +798,8 @@ export default function InventoryLogPage() {
                     {/* Expanded detail — vertical breakdown, inline like the Transactions page */}
                     {isExpanded && (
                       <tr>
-                        <td colSpan={10} className="px-4 pb-4 bg-gray-50">
-                          <div className="border border-gray-200 rounded-xl bg-white p-4 mt-1 space-y-2 text-sm max-w-lg">
+                        <td colSpan={10} className="px-4 pb-3 bg-gray-50">
+                          <div className="text-sm py-2 space-y-1">
                             {log.product_name && (
                               <div className="flex justify-between">
                                 <span className="text-gray-500">Product Sold</span>
@@ -821,20 +821,17 @@ export default function InventoryLogPage() {
                               <span className="font-medium text-gray-900">{log.created_by || '—'}</span>
                             </div>
 
-                            {/* Batch details block */}
+                            {/* Batch details */}
                             {log.batch_id && (
-                              <div className="bg-indigo-50 rounded-xl p-3 space-y-2">
-                                <p className="text-xs font-semibold text-indigo-700 flex items-center gap-1">
-                                  <Layers className="w-3 h-3" /> Batch Details
-                                </p>
+                              <>
                                 {log.batch_no && (
-                                  <div className="flex justify-between text-xs">
+                                  <div className="flex justify-between">
                                     <span className="text-gray-500">Batch no.</span>
                                     <span className="font-medium text-gray-900">{log.batch_no}</span>
                                   </div>
                                 )}
                                 {log.expiry_date && (
-                                  <div className="flex justify-between text-xs">
+                                  <div className="flex justify-between">
                                     <span className="text-gray-500">Expiry</span>
                                     <span className={`font-medium ${isExpired ? 'text-red-600' : 'text-gray-900'}`}>
                                       {new Date(log.expiry_date).toLocaleDateString('en-GB')}
@@ -843,7 +840,7 @@ export default function InventoryLogPage() {
                                   </div>
                                 )}
                                 {log.qty_packs != null && (
-                                  <div className="flex justify-between text-xs">
+                                  <div className="flex justify-between">
                                     <span className="text-gray-500">Packs received</span>
                                     <span className="font-medium text-gray-900">
                                       {log.qty_packs} {log.pack_unit || 'pcs'}
@@ -852,15 +849,14 @@ export default function InventoryLogPage() {
                                   </div>
                                 )}
                                 {log.qty_base != null && (
-                                  <div className="flex justify-between text-xs">
+                                  <div className="flex justify-between">
                                     <span className="text-gray-500">Total base units</span>
                                     <span className="font-medium text-gray-900">{log.qty_base}</span>
                                   </div>
                                 )}
-                              </div>
+                              </>
                             )}
 
-                            {/* Receipt ref (for sales) */}
                             {log.receipt_number && (
                               <div className="flex justify-between">
                                 <span className="text-gray-500">Receipt #</span>

@@ -33,6 +33,8 @@ type OrderItem = {
 type OrderDetail = {
   receipt_number: string
   created_at: string
+  dining_option?: { name: string }
+  note?: string
   items: OrderItem[]
 }
 
@@ -88,6 +90,8 @@ function OrderDetailModal({
               id,
               receipt_number,
               created_at,
+              note,
+              dining_options(name),
               receipt_items(
                 id, item_name, variant_name, quantity, note, modifiers, addons
               )
@@ -101,6 +105,8 @@ function OrderDetailModal({
           setDetail({
             receipt_number: receipt.receipt_number,
             created_at: receipt.created_at,
+            dining_option: receipt.dining_options ?? undefined,
+            note: receipt.note ?? undefined,
             items: (receipt.receipt_items ?? []).map((i: any) => ({
               ...i,
               modifiers: Array.isArray(i.modifiers) ? i.modifiers : [],
@@ -124,8 +130,13 @@ function OrderDetailModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <div>
-            <p className="text-sm font-bold text-gray-900">
+            <p className="text-sm font-bold text-gray-900 flex items-center gap-2">
               #{detail?.receipt_number ?? (log.kds_order as any)?.receipt?.receipt_number ?? '—'}
+              {detail?.dining_option?.name && (
+                <span className="text-[10px] font-semibold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                  {detail.dining_option.name}
+                </span>
+              )}
             </p>
             <p className="text-xs text-gray-400 mt-0.5">
               {detail?.created_at
@@ -163,6 +174,15 @@ function OrderDetailModal({
             </span>
           )}
         </div>
+
+        {/* Order note */}
+        {detail?.note && (
+          <div className="px-5 pt-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <p className="text-xs text-amber-700 font-medium">Order note: {detail.note}</p>
+            </div>
+          </div>
+        )}
 
         {/* Items */}
         <div className="flex-1 overflow-y-auto px-5 py-4">

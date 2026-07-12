@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useState, useMemo, useCallback } from 'react'
+import { Fragment, useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -223,8 +223,8 @@ export default function InventoryLogPage() {
 
   const tz = shopTimezone
 
-  const loadAll = useCallback(async () => {
-    setLoading(true)
+  const loadAll = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const params = new URLSearchParams()
       if (dateFrom)    params.set('from', dateFrom)
@@ -244,11 +244,21 @@ export default function InventoryLogPage() {
     } catch {
       toast.error('Failed to load inventory log')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [dateFrom, dateTo, typeFilter, tz])
 
   useEffect(() => { loadAll() }, [loadAll])
+
+  // Auto refresh every 10 seconds — matches the KDS/Dashboard pages' pattern.
+  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  useEffect(() => {
+    if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
+    autoRefreshRef.current = setInterval(() => { loadAll(true) }, 10_000)
+    return () => {
+      if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
+    }
+  }, [loadAll])
 
   const filtered = useMemo(() =>
     logs.filter(l => {

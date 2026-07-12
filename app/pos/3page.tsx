@@ -496,8 +496,8 @@ function ShiftModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[90vh] flex flex-col overflow-hidden">
-        <div className="flex items-center gap-3 px-6 pt-6 pb-5 flex-shrink-0">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <div className="flex items-center gap-3 mb-5">
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${colorMap[mode]}`}>
             <IconComp className="w-5 h-5" />
           </div>
@@ -505,7 +505,7 @@ function ShiftModal({
           <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>
         </div>
 
-        <div className="space-y-4 overflow-y-auto px-6 pb-4 min-h-0">
+        <div className="space-y-4">
           {mode === 'clockin' && (
             <>
               <div className="bg-gray-50 rounded-xl px-4 py-3 flex items-center gap-3">
@@ -609,7 +609,7 @@ function ShiftModal({
           )}
         </div>
 
-        <div className="flex gap-2 px-6 pt-4 pb-6 flex-shrink-0">
+        <div className="flex gap-2 mt-6">
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
           <button
             onClick={handleSubmit}

@@ -1100,8 +1100,8 @@ export default function DashboardPage() {
     }
   }
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true)
+  const load = useCallback(async () => {
+    setLoading(true)
     setError('')
     try {
       // ── Shop settings (currency + timezone) ──────────────────────────────
@@ -1478,21 +1478,11 @@ export default function DashboardPage() {
     } catch (e: any) {
       setError(e.message || 'Failed to load dashboard')
     } finally {
-      if (!silent) setLoading(false)
+      setLoading(false)
     }
   }, [dateFrom, dateTo])
 
   useEffect(() => { load() }, [load])
-
-  // Auto refresh every 10 seconds — matches the KDS page's pattern.
-  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  useEffect(() => {
-    if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
-    autoRefreshRef.current = setInterval(() => { load(true) }, 10_000)
-    return () => {
-      if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
-    }
-  }, [load])
 
   async function handleVoid(voidType: 'return_stock' | 'wastage') {
     if (!voidTarget) return
@@ -1584,7 +1574,7 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-bold text-gray-900">Sales Dashboard</h1>
           <p className="text-sm text-gray-500 mt-0.5">Real-time P&L from POS transactions</p>
         </div>
-        <button onClick={() => load()} disabled={loading}
+        <button onClick={load} disabled={loading}
           className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40 self-start sm:self-auto">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh

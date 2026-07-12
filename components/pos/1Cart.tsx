@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useCart } from '@/lib/hooks/useCart'
-import { Trash2, Plus, Minus, ShoppingCart, Tag, Percent, ChevronDown, X, Check, FileText, Pencil, ChevronRight, Camera, RotateCcw } from 'lucide-react'
+import { Trash2, Plus, Minus, ShoppingCart, Tag, Percent, ChevronDown, X, Check, FileText, Pencil, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useShop } from '@/lib/hooks/useShop'
 import { createClient } from '@/lib/supabase/client'
@@ -18,7 +18,7 @@ interface CartProps {
 
 type TaxRate = { id: string; name: string; rate: number; is_active: boolean }
 export type Discount = { id: string; name: string; type: 'percent' | 'fixed'; value: number; is_active: boolean }
-export type ItemDiscount = { discount: Discount; amount: number; idRef?: string; idPhoto?: string }
+export type ItemDiscount = { discount: Discount; amount: number; idRef?: string }
 
 // ── Discount Picker Modal ─────────────────────────────────────────────────────
 function DiscountPickerModal({
@@ -33,100 +33,27 @@ function DiscountPickerModal({
   currentDiscount: ItemDiscount | null
   currencySymbol: string
   lineTotal: number
-  onSelect: (discount: Discount | null, idRef?: string, idPhoto?: string) => void
+  onSelect: (discount: Discount | null, idRef?: string) => void
   onClose: () => void
 }) {
   const [selected, setSelected] = useState<Discount | null>(currentDiscount?.discount || null)
   const [pwdId, setPwdId] = useState(currentDiscount?.idRef || '')
   const [pwdError, setPwdError] = useState(false)
 
-  // ID photo capture state — mirrors the kiosk clock-in/out camera flow
-  const videoRef = useRef<HTMLVideoElement | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(currentDiscount?.idPhoto || null)
-  const [cameraActive, setCameraActive] = useState(false)
-  const [cameraReady, setCameraReady] = useState(false)
-  const [cameraError, setCameraError] = useState(false)
-
   const isPwd = (d: Discount | null) =>
     d?.name?.toLowerCase().includes('pwd') ?? false
-  const isSenior = (d: Discount | null) =>
-    d?.name?.toLowerCase().includes('senior') ?? false
-  const requiresIdCapture = (d: Discount | null) => isPwd(d) || isSenior(d)
-  const idLabel = (d: Discount | null) => isPwd(d) ? 'PWD ID Number' : 'Senior Citizen ID Number'
-
-  const stopCamera = useCallback(() => {
-    streamRef.current?.getTracks().forEach(t => t.stop())
-    streamRef.current = null
-    setCameraReady(false)
-    setCameraActive(false)
-  }, [])
-
-  const startCamera = useCallback(async () => {
-    setCameraReady(false)
-    setCameraError(false)
-    setCameraActive(true)
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      })
-      streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play()
-          setCameraReady(true)
-        }
-      }
-    } catch (err) {
-      console.warn('Camera unavailable:', err)
-      setCameraError(true)
-    }
-  }, [])
-
-  const takeSnapshot = useCallback(() => {
-    const video = videoRef.current
-    if (!video) return
-    const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth || 640
-    canvas.height = video.videoHeight || 480
-    canvas.getContext('2d')?.drawImage(video, 0, 0)
-    setCapturedPhoto(canvas.toDataURL('image/jpeg', 0.85))
-    stopCamera()
-  }, [stopCamera])
-
-  const retakePhoto = useCallback(() => {
-    setCapturedPhoto(null)
-    startCamera()
-  }, [startCamera])
-
-  // Start the camera automatically once a Senior/PWD discount is picked
-  // (and no photo has been captured yet); stop it if the discount is cleared.
-  useEffect(() => {
-    if (requiresIdCapture(selected) && !capturedPhoto && !cameraActive) {
-      startCamera()
-    }
-    if (!requiresIdCapture(selected) && cameraActive) {
-      stopCamera()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected])
-
-  // Stop the camera stream if the modal is closed while it's running
-  useEffect(() => {
-    return () => { streamRef.current?.getTracks().forEach(t => t.stop()) }
-  }, [])
 
   function handleApply() {
     if (!selected) {
       onSelect(null)
       return
     }
-    if (requiresIdCapture(selected)) {
-      if (!pwdId.trim()) { setPwdError(true); return }
-      if (!capturedPhoto) return
-      onSelect(selected, pwdId.trim(), capturedPhoto)
+    if (isPwd(selected)) {
+      if (!pwdId.trim()) {
+        setPwdError(true)
+        return
+      }
+      onSelect(selected, pwdId.trim())
     } else {
       onSelect(selected)
     }
@@ -136,11 +63,8 @@ function DiscountPickerModal({
     const picking = selected?.id === d.id ? null : d
     setSelected(picking)
     setPwdError(false)
-    // Reset ID number + photo when switching away from a Senior/PWD discount
-    if (!requiresIdCapture(picking)) {
-      setPwdId('')
-      setCapturedPhoto(null)
-    }
+    // Reset PWD id when switching away from a PWD discount
+    if (!isPwd(picking)) setPwdId('')
   }
 
   return (
@@ -200,77 +124,24 @@ function DiscountPickerModal({
             )
           })}
 
-          {/* ID number field — shown when a Senior/PWD discount is selected */}
-          {requiresIdCapture(selected) && (
+          {/* PWD ID field — shown when a PWD discount is selected */}
+          {isPwd(selected) && (
             <div className="pt-1">
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1.5">
-                {idLabel(selected)} <span className="text-red-500">*</span>
+                PWD ID Number <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 value={pwdId}
                 onChange={e => { setPwdId(e.target.value); setPwdError(false) }}
-                placeholder={`Enter ${idLabel(selected).toLowerCase()}`}
+                placeholder="Enter PWD ID number"
                 className={`w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-300 ${
                   pwdError ? 'border-red-400 bg-red-50' : 'border-gray-200'
                 }`}
               />
               {pwdError && (
-                <p className="text-xs text-red-500 mt-1">{idLabel(selected)} is required</p>
+                <p className="text-xs text-red-500 mt-1">PWD ID number is required</p>
               )}
-            </div>
-          )}
-
-          {/* ID photo capture — required alongside the ID number */}
-          {requiresIdCapture(selected) && (
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1.5">
-                Photo of ID <span className="text-red-500">*</span>
-              </label>
-              <div className="relative bg-gray-900 rounded-xl overflow-hidden" style={{ aspectRatio: '4/3' }}>
-                {!capturedPhoto ? (
-                  <>
-                    <video
-                      ref={videoRef}
-                      className="w-full h-full object-cover"
-                      muted
-                      playsInline
-                    />
-                    {!cameraReady && !cameraError && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                        <div className="w-6 h-6 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />
-                        <span className="text-xs text-gray-300">Starting camera…</span>
-                      </div>
-                    )}
-                    {cameraError && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
-                        <Camera className="w-6 h-6 text-gray-400" />
-                        <span className="text-xs text-gray-300">Camera unavailable — allow camera access</span>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <img src={capturedPhoto} alt="Captured ID" className="w-full h-full object-cover" />
-                )}
-              </div>
-              <div className="mt-1.5">
-                {!capturedPhoto ? (
-                  <button
-                    onClick={takeSnapshot}
-                    disabled={!cameraReady}
-                    className="w-full py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-                  >
-                    <Camera className="w-3.5 h-3.5" /> Take Photo
-                  </button>
-                ) : (
-                  <button
-                    onClick={retakePhoto}
-                    className="w-full py-2 rounded-xl border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" /> Retake
-                  </button>
-                )}
-              </div>
             </div>
           )}
         </div>
@@ -284,7 +155,7 @@ function DiscountPickerModal({
           </button>
           <button
             onClick={handleApply}
-            disabled={requiresIdCapture(selected) && (!pwdId.trim() || !capturedPhoto)}
+            disabled={isPwd(selected) && !pwdId.trim()}
             className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Apply
@@ -312,7 +183,7 @@ function ItemEditModal({
   currentDiscount: ItemDiscount | null
   currentNote: string
   currencySymbol: string
-  onApply: (discount: Discount | null, note: string, idRef?: string, idPhoto?: string) => void
+  onApply: (discount: Discount | null, note: string, idRef?: string) => void
   onRemove: () => void
   onClose: () => void
   onEditVariants?: () => void
@@ -321,14 +192,14 @@ function ItemEditModal({
   const [note, setNote] = useState(currentNote)
   const [showDiscountPicker, setShowDiscountPicker] = useState(false)
 
-  function handleDiscountSelect(discount: Discount | null, idRef?: string, idPhoto?: string) {
+  function handleDiscountSelect(discount: Discount | null, idRef?: string) {
     if (!discount) {
       setSelectedDiscount(null)
     } else {
       const amount = discount.type === 'percent'
         ? Math.min(item.lineTotal * (discount.value / 100), item.lineTotal)
         : Math.min(discount.value, item.lineTotal)
-      setSelectedDiscount({ discount, amount, idRef, idPhoto })
+      setSelectedDiscount({ discount, amount, idRef })
     }
     setShowDiscountPicker(false)
   }
@@ -427,7 +298,7 @@ function ItemEditModal({
               </button>
             )}
             <button
-              onClick={() => onApply(selectedDiscount?.discount ?? null, note.trim(), selectedDiscount?.idRef, selectedDiscount?.idPhoto)}
+              onClick={() => onApply(selectedDiscount?.discount ?? null, note.trim(), selectedDiscount?.idRef)}
               className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all"
             >
               Save
@@ -476,10 +347,6 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
   // Per-item note state: itemId → note string
   const [itemNotes, setItemNotes] = useState<Map<string, string>>(new Map())
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
-
-  // Order-level note (one note for the whole sale, e.g. "birthday, add candle")
-  const [orderNote, setOrderNote] = useState('')
-  const [showOrderNote, setShowOrderNote] = useState(false)
 
   // Ingredient stock limits: itemId → max makeable qty
   const [stockLimits, setStockLimits] = useState<Map<string, number>>(new Map())
@@ -686,12 +553,12 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
     setShowDiscountDropdown(false)
   }
 
-  function handleApplyItemEdit(itemId: string, lineTotal: number, discount: Discount | null, note: string, idRef?: string, idPhoto?: string) {
+  function handleApplyItemEdit(itemId: string, lineTotal: number, discount: Discount | null, note: string, idRef?: string) {
     if (discount) {
       const amount = discount.type === 'percent'
         ? Math.min(lineTotal * (discount.value / 100), lineTotal)
         : Math.min(discount.value, lineTotal)
-      setItemDiscounts(prev => new Map(prev).set(itemId, { discount, amount, idRef, idPhoto }))
+      setItemDiscounts(prev => new Map(prev).set(itemId, { discount, amount, idRef }))
     } else {
       setItemDiscounts(prev => { const next = new Map(prev); next.delete(itemId); return next })
     }
@@ -757,7 +624,7 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
           currentDiscount={itemDiscounts.get(editingItem.id) || null}
           currentNote={itemNotes.get(editingItem.id) || editingItem.note || ''}
           currencySymbol={currencySymbol}
-          onApply={(discount, note, idRef, idPhoto) => handleApplyItemEdit(editingItem.id, editingItem.lineTotal, discount, note, idRef, idPhoto)}
+          onApply={(discount, note, idRef) => handleApplyItemEdit(editingItem.id, editingItem.lineTotal, discount, note, idRef)}
           onRemove={() => handleRemoveItemEdit(editingItem.id)}
           onClose={() => setEditingItemId(null)}
           onEditVariants={onEditItem ? () => onEditItem(editingItem.id) : undefined}
@@ -1023,43 +890,6 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
           <p className="text-[10px] text-gray-400 text-center -mt-1">Tap any item to add a discount or note</p>
         )}
 
-        {items.length > 0 && (
-          <div>
-            {showOrderNote ? (
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                    <FileText className="w-3 h-3" /> Order note
-                  </label>
-                  {!orderNote && (
-                    <button
-                      onClick={() => setShowOrderNote(false)}
-                      className="text-xs text-gray-400 hover:text-gray-600"
-                    >
-                      Hide
-                    </button>
-                  )}
-                </div>
-                <textarea
-                  rows={2}
-                  value={orderNote}
-                  onChange={e => setOrderNote(e.target.value)}
-                  placeholder="e.g. Birthday — add a candle"
-                  autoFocus
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 placeholder:text-gray-300"
-                />
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowOrderNote(true)}
-                className="w-full flex items-center justify-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 py-1"
-              >
-                <FileText className="w-3 h-3" /> Add a note for this order
-              </button>
-            )}
-          </div>
-        )}
-
         <Button
           className="w-full"
           size="lg"
@@ -1077,13 +907,9 @@ export default function Cart({ diningOption, activeShiftId, cashierName, onPayme
           itemDiscounts={itemDiscounts}
           employeeId={currentUserId ?? undefined}
           cashierName={cashierName}
-          diningOption={diningOption}
-          orderNote={orderNote}
           onClose={() => setShowPayment(false)}
           onPaymentComplete={() => {
             setShowPayment(false)
-            setOrderNote('')
-            setShowOrderNote(false)
             onPaymentComplete?.()
           }}
         />

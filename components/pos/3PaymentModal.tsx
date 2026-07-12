@@ -188,98 +188,6 @@ function buildKitchenTicket(
   return new Uint8Array(cmd)
 }
 
-// Builds a single-item "sticker" ticket — one per physical unit, meant to be
-// cut and stuck directly onto the product. Layout: transaction # up top,
-// a divider, the item (with add-ons and its note if any), another divider,
-// then an optional printer-configured footer note (shop name, "Thank you!", etc).
-function buildStickerTicket(
-  receipt: any,
-  item: { item_name: string; note?: string; addons: Array<{ name: string; quantity: number }> },
-  paperWidth: number,
-  footerNote?: string | null,
-): Uint8Array {
-  const ESC = 0x1b
-  const GS  = 0x1d
-  const charWidth = paperWidth >= 80 ? 48 : 32
-  const div = '-'.repeat(charWidth)
-  const cmd: number[] = []
-
-  cmd.push(ESC, 0x40) // initialize
-
-  // Transaction number — centered, bold
-  cmd.push(ESC, 0x61, 0x01) // align center
-  cmd.push(ESC, 0x45, 0x01) // bold on
-  const header = `#${receipt.receipt_number}`
-  for (const c of header) cmd.push(c.charCodeAt(0))
-  cmd.push(0x0a)
-  cmd.push(ESC, 0x45, 0x00) // bold off
-  cmd.push(ESC, 0x61, 0x00) // align left
-
-  for (const c of div) cmd.push(c.charCodeAt(0))
-  cmd.push(0x0a)
-
-  // Product details
-  cmd.push(ESC, 0x45, 0x01) // bold on
-  for (const c of `1x ${item.item_name}`) cmd.push(c.charCodeAt(0))
-  cmd.push(0x0a)
-  cmd.push(ESC, 0x45, 0x00) // bold off
-
-  if (item.addons && item.addons.length > 0) {
-    for (const addon of item.addons) {
-      const addonLine = `  + ${addon.name}${addon.quantity > 1 ? ` x${addon.quantity}` : ''}`
-      for (const c of addonLine) cmd.push(c.charCodeAt(0))
-      cmd.push(0x0a)
-    }
-  }
-
-  if (item.note) {
-    const noteLine = `>> ${item.note}`
-    for (const c of noteLine) cmd.push(c.charCodeAt(0))
-    cmd.push(0x0a)
-  }
-
-  for (const c of div) cmd.push(c.charCodeAt(0))
-  cmd.push(0x0a)
-
-  if (footerNote) {
-    cmd.push(ESC, 0x61, 0x01) // align center
-    for (const c of footerNote) cmd.push(c.charCodeAt(0))
-    cmd.push(0x0a)
-    cmd.push(ESC, 0x61, 0x00) // align left
-  }
-
-  cmd.push(0x0a, 0x0a)
-  cmd.push(GS, 0x56, 0x42, 0x00) // cut
-
-  return new Uint8Array(cmd)
-}
-
-// Plain-text fallback version of buildStickerTicket — used for network/wifi
-// printers and when a Bluetooth sticker print fails and falls back to the
-// browser print window.
-function buildStickerFallbackText(
-  receipt: any,
-  item: { item_name: string; note?: string; addons: Array<{ name: string; quantity: number }> },
-  footerNote?: string | null,
-): string {
-  const div = '--------------------------------'
-  const lines = [
-    `#${receipt.receipt_number}`,
-    div,
-    `1x ${item.item_name}`,
-  ]
-  if (item.addons && item.addons.length > 0) {
-    for (const addon of item.addons) {
-      lines.push(`  + ${addon.name}${addon.quantity > 1 ? ` x${addon.quantity}` : ''}`)
-    }
-  }
-  if (item.note) lines.push(`>> ${item.note}`)
-  lines.push(div)
-  if (footerNote) lines.push(footerNote)
-  lines.push('', '')
-  return lines.join('\n')
-}
-
 // Cache paired BT devices so we can reconnect without re-prompting
 const btDeviceCache = new Map<string, any>()
 
@@ -449,7 +357,7 @@ async function triggerKitchenPrint(
   try {
     const [{ data: groups }, { data: pgc }] = await Promise.all([
       supabase.from('printer_groups')
-        .select('id, name, printer_type, printer_address, paper_width, show_amounts, show_ingredients, print_per_item, sticker_footer_note')
+        .select('id, name, printer_type, printer_address, paper_width, show_amounts, show_ingredients')
         .eq('shop_id', shopId)
         .eq('is_active', true),
       supabase.from('printer_group_categories').select('*'),
@@ -521,40 +429,6 @@ async function triggerKitchenPrint(
           ingredients: ingredientsByItem.get(resolveAddonItemId(a) || '') || [],
         })) : [],
       }))
-
-      if (group.print_per_item) {
-        // Sticker mode: one sticker per physical unit, not per line item —
-        // a "3x Burger" line becomes 3 separate single-item stickers.
-        let groupFailed = false
-        let stickerCount = 0
-        for (const ki of kitchenItems) {
-          const units = Math.max(1, Math.round(ki.quantity))
-          for (let u = 0; u < units; u++) {
-            stickerCount++
-            const stickerItem = { item_name: ki.item_name, note: ki.note, addons: ki.addons }
-            if (group.printer_type === 'bluetooth') {
-              const data = buildStickerTicket(receipt, stickerItem, paperWidth, group.sticker_footer_note)
-              const ok = await sendToBluetoothPrinter(group.printer_address || '', data)
-              if (!ok) {
-                groupFailed = true
-                const text = buildStickerFallbackText(receipt, stickerItem, group.sticker_footer_note)
-                printViaWindow(text, `Sticker - ${group.name}`)
-              }
-            } else if (group.printer_type === 'network' || group.printer_type === 'wifi') {
-              const text = buildStickerFallbackText(receipt, stickerItem, group.sticker_footer_note)
-              const ok = await sendToNetworkPrinter(group.printer_address, text)
-              if (!ok) groupFailed = true
-            }
-          }
-        }
-        if (groupFailed) {
-          anyFailed = true
-          toast.warning(`${group.name}: one or more stickers failed to print`, { duration: 6000 })
-        } else {
-          toast.success(`Printed ${stickerCount} sticker${stickerCount !== 1 ? 's' : ''} to ${group.name}`)
-        }
-        continue
-      }
 
       if (group.printer_type === 'bluetooth') {
         const data = buildKitchenTicket(receipt, kitchenItems, group.name, paperWidth, showAmounts, showIngreds, currencySymbol, diningOptionName, orderNote)

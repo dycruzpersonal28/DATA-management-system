@@ -21,8 +21,6 @@ type PrinterGroup = {
   show_ingredients: boolean
   print_per_item: boolean
   sticker_footer_note: string
-  sticker_show_addons: boolean
-  sticker_show_ingredients: boolean
   categories?: string[]
 }
 
@@ -66,8 +64,6 @@ function PrinterGroupForm({
     show_ingredients: initial?.show_ingredients ?? true,
     print_per_item: initial?.print_per_item ?? false,
     sticker_footer_note: initial?.sticker_footer_note || '',
-    sticker_show_addons: initial?.sticker_show_addons ?? true,
-    sticker_show_ingredients: initial?.sticker_show_ingredients ?? false,
   })
   const [selectedCats, setSelectedCats] = useState<string[]>(initial?.categories || [])
   const [btScanning, setBtScanning] = useState(false)
@@ -278,28 +274,10 @@ function PrinterGroupForm({
             </div>
           </label>
           {form.print_per_item && (
-            <div className="px-3 py-2.5 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-3">
+            <div className="px-3 py-2.5 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-2">
               <p className="text-[11px] text-indigo-700 leading-relaxed">
-                Each sticker prints: transaction # at top, a divider line, then the item (with add-ons/ingredients per the options below) and its note, another divider line, then the footer note below.
+                Each sticker prints: transaction # at top, a divider line, then the item (with add-ons if any) and its note, another divider line, then the footer note below.
               </p>
-              <label className="flex items-center justify-between px-3 py-2 bg-white border border-gray-200 rounded-xl cursor-pointer hover:border-gray-300 transition-colors">
-                <p className="text-sm font-medium text-gray-700">Show add-ons on sticker</p>
-                <div
-                  onClick={() => setForm(p => ({ ...p, sticker_show_addons: !p.sticker_show_addons }))}
-                  className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${form.sticker_show_addons ? 'bg-indigo-500' : 'bg-gray-200'}`}
-                >
-                  <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.sticker_show_addons ? 'translate-x-5' : 'translate-x-1'}`} />
-                </div>
-              </label>
-              <label className="flex items-center justify-between px-3 py-2 bg-white border border-gray-200 rounded-xl cursor-pointer hover:border-gray-300 transition-colors">
-                <p className="text-sm font-medium text-gray-700">Show ingredients on sticker</p>
-                <div
-                  onClick={() => setForm(p => ({ ...p, sticker_show_ingredients: !p.sticker_show_ingredients }))}
-                  className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${form.sticker_show_ingredients ? 'bg-indigo-500' : 'bg-gray-200'}`}
-                >
-                  <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.sticker_show_ingredients ? 'translate-x-5' : 'translate-x-1'}`} />
-                </div>
-              </label>
               <div>
                 <label className="text-xs font-medium text-gray-500 block mb-1">Sticker Footer Note</label>
                 <Input

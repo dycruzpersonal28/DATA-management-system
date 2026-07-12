@@ -27,12 +27,20 @@ function buildReceiptText(receipt: any, items: any[], shop: any, currencySymbol:
   const center = (s: string) => s.padStart(Math.floor((32 + s.length) / 2)).padEnd(32)
   const row = (left: string, right: string) => {
     const space = 32 - left.length - right.length
-    return left + ' '.repeat(Math.max(1, space)) + right
+    if (space < 1) {
+      const trimmedLeft = left.substring(0, Math.max(0, 32 - right.length - 1))
+      return trimmedLeft + ' ' + right
+    }
+    return left + ' '.repeat(space) + right
   }
-  const lines: string[] = [
+  const headerLines: string[] = [
     center(shop?.name || 'Receipt'),
     shop?.address ? center(shop.address) : '',
     shop?.phone ? center(shop.phone) : '',
+    ...(shop?.receipt_header ? String(shop.receipt_header).split('\n').map((l: string) => center(l)) : []),
+  ]
+  const lines: string[] = [
+    ...headerLines,
     '',
     center(`Receipt #${receipt.receipt_number}`),
     center(new Date(receipt.created_at).toLocaleString()),
@@ -71,6 +79,7 @@ function buildKitchenTicket(
     unit_price?: number
     line_total?: number
     ingredients: Array<{ name: string; quantity: number }>
+    addons: Array<{ name: string; quantity: number; ingredients: Array<{ name: string; quantity: number }> }>
   }>,
   printerName: string,
   paperWidth: number,
@@ -126,6 +135,21 @@ function buildKitchenTicket(
         const ingLine = `  - ${ing.name} (x${ing.quantity})`
         for (const c of ingLine) cmd.push(c.charCodeAt(0))
         cmd.push(0x0a)
+      }
+    }
+
+    if (item.addons && item.addons.length > 0) {
+      for (const addon of item.addons) {
+        const addonLine = `  + ${addon.name}${addon.quantity > 1 ? ` x${addon.quantity}` : ''}`
+        for (const c of addonLine) cmd.push(c.charCodeAt(0))
+        cmd.push(0x0a)
+        if (showIngredients && addon.ingredients && addon.ingredients.length > 0) {
+          for (const ing of addon.ingredients) {
+            const ingLine = `    - ${ing.name} (x${ing.quantity})`
+            for (const c of ingLine) cmd.push(c.charCodeAt(0))
+            cmd.push(0x0a)
+          }
+        }
       }
     }
 
@@ -256,13 +280,20 @@ function printViaWindow(text: string, title: string, logoUrl?: string | null) {
       .logo { text-align: center; margin-bottom: 6px; }
       .logo img { max-height: 52px; max-width: 150px; object-fit: contain; }
       .store-name { text-align: center; font-size: 15px; font-weight: bold; letter-spacing: 0.5px; margin-bottom: 2px; white-space: normal; }
-      .total-line { font-size: 14px; font-weight: bold; white-space: pre; }
+      .total-line { font-size: 12px; font-weight: bold; white-space: pre; }
       hr.thin  { border: none; border-top: 1px dashed #666; margin: 3px 0; }
       hr.thick { border: none; border-top: 2px solid #000; margin: 3px 0; }
       @media print { @page { size: 58mm auto; margin: 0; } body { padding: 2mm; } }
     </style></head>
     <body>${logoHtml}${bodyHtml}</body></html>`)
   win.document.close(); win.focus(); win.print()
+}
+
+// Confirmed against /api/receipts: each addon is persisted as
+// { id, name, price, quantity } where `id` is the referenced item's id
+// (same field the receipts route itself uses for ingredient/COGS lookups).
+function resolveAddonItemId(a: any): string | undefined {
+  return a?.id ?? undefined
 }
 
 async function triggerKitchenPrint(
@@ -285,7 +316,12 @@ async function triggerKitchenPrint(
     const catToPrinter = new Map<string, string>()
     for (const row of (pgc || [])) catToPrinter.set(row.category_id, row.printer_group_id)
 
-    const itemIds = receiptItems.map((ri: any) => ri.item_id).filter(Boolean)
+    const baseItemIds = receiptItems.map((ri: any) => ri.item_id).filter(Boolean)
+    const addonItemIds = receiptItems
+      .flatMap((ri: any) => Array.isArray(ri.addons) ? ri.addons.map(resolveAddonItemId) : [])
+      .filter(Boolean) as string[]
+    const itemIds = [...new Set([...baseItemIds, ...addonItemIds])]
+
     const { data: ingredientRows } = await supabase
       .from('item_ingredients')
       .select('item_id, quantity, items!item_ingredients_ingredient_id_fkey(name)')
@@ -314,7 +350,12 @@ async function triggerKitchenPrint(
       if (!printerItems.has(pgId)) printerItems.set(pgId, [])
       printerItems.get(pgId)!.push(ri)
     }
-    if (printerItems.size === 0) return
+    if (printerItems.size === 0) {
+      toast.warning('No kitchen printer is assigned to the categories in this order', { duration: 6000 })
+      return
+    }
+
+    let anyFailed = false
 
     for (const group of groups) {
       const items = printerItems.get(group.id)
@@ -331,26 +372,42 @@ async function triggerKitchenPrint(
         unit_price:  Number(ri.unit_price),
         line_total:  Number(ri.line_total),
         ingredients: ingredientsByItem.get(ri.item_id) || [],
+        addons: Array.isArray(ri.addons) ? ri.addons.map((a: any) => ({
+          name: a.name,
+          quantity: Number(a.quantity) || 1,
+          ingredients: ingredientsByItem.get(resolveAddonItemId(a) || '') || [],
+        })) : [],
       }))
 
       if (group.printer_type === 'bluetooth') {
         const data = buildKitchenTicket(receipt, kitchenItems, group.name, paperWidth, showAmounts, showIngreds, currencySymbol)
         const ok = await sendToBluetoothPrinter(group.printer_address || '', data)
         if (!ok) {
+          anyFailed = true
           const text = buildFallbackText(receipt, kitchenItems, group.name, showAmounts, showIngreds, currencySymbol)
           printViaWindow(text, `Kitchen - ${group.name}`)
-          toast.warning(`${group.name}: Bluetooth failed, opened print window`)
+          toast.warning(`${group.name}: Bluetooth failed, opened print window instead`, { duration: 6000 })
         } else {
           toast.success(`Sent to ${group.name}`)
         }
       } else if (group.printer_type === 'network' || group.printer_type === 'wifi') {
         const text = buildFallbackText(receipt, kitchenItems, group.name, showAmounts, showIngreds, currencySymbol)
         const ok = await sendToNetworkPrinter(group.printer_address, text)
-        if (!ok) toast.warning(`${group.name}: Network print failed`)
+        if (!ok) {
+          anyFailed = true
+          toast.warning(`${group.name}: Network print failed — check the printer's connection`, { duration: 6000 })
+        } else {
+          toast.success(`Sent to ${group.name}`)
+        }
       }
+    }
+
+    if (anyFailed) {
+      toast.error('One or more kitchen tickets failed to print — use "Reprint to Kitchen" once fixed', { duration: 6000 })
     }
   } catch (err) {
     console.error('Kitchen print error:', err)
+    toast.error('Kitchen print failed to send — check your printer setup', { duration: 6000 })
   }
 }
 
@@ -375,6 +432,14 @@ function buildFallbackText(
     lines.push(`${item.quantity}x ${item.item_name}${amtPart}`)
     if (showIngredients && item.ingredients?.length > 0) {
       for (const ing of item.ingredients) lines.push(`  - ${ing.name} (x${ing.quantity})`)
+    }
+    if (item.addons?.length > 0) {
+      for (const addon of item.addons) {
+        lines.push(`  + ${addon.name}${addon.quantity > 1 ? ` x${addon.quantity}` : ''}`)
+        if (showIngredients && addon.ingredients?.length > 0) {
+          for (const ing of addon.ingredients) lines.push(`    - ${ing.name} (x${ing.quantity})`)
+        }
+      }
     }
     if (item.note) lines.push(`  >> ${item.note}`)
     lines.push('')
@@ -422,7 +487,7 @@ function buildReceiptESCPOS(
 
   // ── Store name — centered, bold, double-height ──────────────────────────────
   cmd.push(ESC, 0x61, 0x01)           // align center
-  cmd.push(GS,  0x21, 0x10)           // double height only (keeps 32-char width)
+  cmd.push(GS,  0x21, 0x01)           // double height only (keeps 32-char width)
   cmd.push(ESC, 0x45, 0x01)           // bold on
   line(shop?.name || 'Receipt')
   cmd.push(GS,  0x21, 0x00)           // normal size
@@ -430,6 +495,9 @@ function buildReceiptESCPOS(
 
   if (shop?.address) line(shop.address)
   if (shop?.phone)   line(shop.phone)
+  if (shop?.receipt_header) {
+    for (const l of String(shop.receipt_header).split('\n')) line(l)
+  }
   blank()
 
   // ── Meta — left aligned ─────────────────────────────────────────────────────
@@ -460,7 +528,7 @@ function buildReceiptESCPOS(
 
   // ── TOTAL — bold, double-height ──────────────────────────────────────────────
   line('='.repeat(W))
-  cmd.push(GS,  0x21, 0x10)           // double height
+  cmd.push(GS,  0x21, 0x01)           // double height only (keeps 32-char width)
   cmd.push(ESC, 0x45, 0x01)           // bold on
   line(twoCol('TOTAL', `${sym}${Number(receipt.total).toFixed(2)}`))
   cmd.push(GS,  0x21, 0x00)           // normal size
@@ -499,6 +567,7 @@ export default function PaymentModal({ total, onClose, onPaymentComplete, itemNo
   const [cashierName, setCashierName] = useState<string | null>(cashierNameProp ?? null)
   const [kitchenPrinting, setKitchenPrinting] = useState(false)
   const [kitchenPrintArgs, setKitchenPrintArgs] = useState<{ receipt: any; receiptItems: any[]; shopId: string } | null>(null)
+  const [confirmKitchenReprint, setConfirmKitchenReprint] = useState(false)
   const { shop: shopFromHook, currencySymbol } = useShop()
 
   useEffect(() => { if (shopFromHook) setShop(shopFromHook) }, [shopFromHook])
@@ -674,6 +743,15 @@ export default function PaymentModal({ total, onClose, onPaymentComplete, itemNo
       }
 
       setKitchenPrintArgs({ receipt, receiptItems, shopId: shop.id })
+      setKitchenPrinting(true)
+      try {
+        await triggerKitchenPrint(supabase, receipt, receiptItems, shop.id, currencySymbol)
+      } catch (err) {
+        console.error('Kitchen print failed:', err)
+      } finally {
+        setKitchenPrinting(false)
+      }
+
       setLastReceipt(receipt)
       setLastReceiptItems(receiptItems)
       setChange(changeAmount)
@@ -715,24 +793,51 @@ export default function PaymentModal({ total, onClose, onPaymentComplete, itemNo
             <Button className="flex-1" onClick={onPaymentComplete ?? onClose}>New order</Button>
           </div>
           {kitchenPrintArgs && (
-            <Button
-              variant="outline"
-              className="w-full"
-              disabled={kitchenPrinting}
-              onClick={async () => {
-                setKitchenPrinting(true)
-                try {
-                  await triggerKitchenPrint(supabase, kitchenPrintArgs.receipt, kitchenPrintArgs.receiptItems, kitchenPrintArgs.shopId, currencySymbol)
-                } catch (err) {
-                  console.error('Kitchen print failed:', err)
-                } finally {
-                  setKitchenPrinting(false)
-                }
-              }}
-            >
-              <Printer className="w-4 h-4 mr-1.5" />
-              {kitchenPrinting ? 'Sending to kitchen…' : 'Print to Kitchen'}
-            </Button>
+            confirmKitchenReprint ? (
+              <div className="w-full space-y-2 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                <p className="text-xs text-amber-700 text-left">
+                  This resends the ticket to the kitchen printer(s). Check the kitchen before using this — only resend if the ticket didn't come out the first time, so the kitchen doesn't get a duplicate.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    disabled={kitchenPrinting}
+                    onClick={() => setConfirmKitchenReprint(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    disabled={kitchenPrinting}
+                    onClick={async () => {
+                      setKitchenPrinting(true)
+                      try {
+                        await triggerKitchenPrint(supabase, kitchenPrintArgs.receipt, kitchenPrintArgs.receiptItems, kitchenPrintArgs.shopId, currencySymbol)
+                      } catch (err) {
+                        console.error('Kitchen print failed:', err)
+                      } finally {
+                        setKitchenPrinting(false)
+                        setConfirmKitchenReprint(false)
+                      }
+                    }}
+                  >
+                    <Printer className="w-4 h-4 mr-1.5" />
+                    {kitchenPrinting ? 'Resending…' : 'Yes, resend'}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={kitchenPrinting}
+                onClick={() => setConfirmKitchenReprint(true)}
+              >
+                <Printer className="w-4 h-4 mr-1.5" />
+                Reprint to Kitchen
+              </Button>
+            )
           )}
         </div>
       </div>
