@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,6 +9,7 @@ import {
   Download, Search, ChevronDown, ChevronUp, Receipt,
   X, Printer, Ban, Edit2, RefreshCw, ShieldCheck,
   ArrowDownCircle, ArrowUpCircle, DollarSign, TrendingUp, Trash2,
+  LayoutDashboard, Calendar as CalendarIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -829,6 +831,7 @@ type TxType = 'all' | 'sale' | 'refund' | 'cash_in' | 'cash_out'
 type StatusFilter = 'all' | 'completed' | 'voided'
 
 export default function TransactionsPage() {
+  const router = useRouter()
   const [receipts, setReceipts]             = useState<any[]>([])
   const [cashMovements, setCashMovements]   = useState<any[]>([])
   const [receiptItems, setReceiptItems]     = useState<Record<string, any[]>>({})
@@ -844,6 +847,20 @@ export default function TransactionsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [staffFilter, setStaffFilter]   = useState('')
   const [paymentFilter, setPaymentFilter] = useState('')
+
+  // Compact date picker popover
+  const [showDatePicker, setShowDatePicker] = useState(false)
+  const datePickerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
+        setShowDatePicker(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Expand / receipt actions
   const [expanded, setExpanded]   = useState<string | null>(null)
@@ -884,17 +901,8 @@ export default function TransactionsPage() {
     const tz = shopTimezone
 
     function toUtcBound(dateStr: string, endOfDay: boolean): string {
-      // Build the wall-clock time we want in the shop's timezone, then find
-      // its UTC equivalent — without touching new Date(string) which would
-      // interpret the string in the *browser's* local timezone instead of
-      // the shop's timezone, causing the wrong UTC offset on clients not in
-      // the same timezone as the shop.
       const time = endOfDay ? 'T23:59:59' : 'T00:00:00'
-
-      // 1. Use a known UTC epoch and ask Intl what the shop's local time is
-      //    at that moment, then compute the UTC↔shop offset from the delta.
-      //    We use the date itself as the probe point so DST is handled correctly.
-      const probeUtc = new Date(`${dateStr}${time}Z`) // treat as UTC first (probe only)
+      const probeUtc = new Date(`${dateStr}${time}Z`)
       const formatter = new Intl.DateTimeFormat('en-CA', {
         timeZone: tz,
         year: 'numeric', month: '2-digit', day: '2-digit',
@@ -903,14 +911,8 @@ export default function TransactionsPage() {
       })
       const parts = formatter.formatToParts(probeUtc)
       const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
-      // What the shop's local time reads when UTC is probeUtc
       const shopLocalIso = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`
-      // Offset in ms: positive = shop is ahead of UTC (e.g. Asia/Manila = +8h)
       const offsetMs = probeUtc.getTime() - new Date(shopLocalIso + 'Z').getTime()
-
-      // 2. The UTC moment that corresponds to dateStr+time in the shop timezone
-      //    is: treat dateStr+time as if it were UTC (gives us the wall-clock ms),
-      //    then add the shop's offset to shift it to true UTC.
       const wallClockUtcMs = new Date(`${dateStr}${time}Z`).getTime()
       return new Date(wallClockUtcMs + offsetMs).toISOString()
     }
@@ -1125,11 +1127,6 @@ export default function TransactionsPage() {
   async function handleCashMovementDelete(movement: any) {
     setCashDeleteModal(null)
 
-    // If this cash movement has a linked journal (expense) entry, delete that
-    // first — /api/journal's DELETE handler cascades to remove the
-    // financial_entries mirror too, which is what the P&L page reads from.
-    // Without this step the journal/financial rows are orphaned and the
-    // "deleted" expense keeps showing up on the P&L page forever.
     if (movement.journal_entry_id) {
       const res = await fetch(`/api/journal?id=${movement.journal_entry_id}`, {
         method: 'DELETE',
@@ -1257,6 +1254,14 @@ export default function TransactionsPage() {
           <p className="text-sm text-gray-500 mt-1">All sales, refunds, and cash movements</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.push('/staff')}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+            title="Back to Dashboard"
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            Dashboard
+          </button>
           <button onClick={() => loadData()} className="p-2 rounded-xl border border-gray-200 text-gray-400 hover:bg-gray-50 transition-colors" title="Refresh">
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -1290,23 +1295,47 @@ export default function TransactionsPage() {
             )
           })}
         </div>
+
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-500 w-8">From</label>
-            <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-40 text-sm" />
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-500 w-5">To</label>
-            <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-40 text-sm" />
-          </div>
-          {(dateFrom || dateTo) && (
+          <div className="relative" ref={datePickerRef}>
             <button
-              onClick={() => { setDateFrom(''); setDateTo('') }}
-              className="text-xs text-gray-400 hover:text-gray-600 underline transition-colors"
+              onClick={() => setShowDatePicker(v => !v)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
             >
-              Clear dates
+              <CalendarIcon className="w-3.5 h-3.5 text-gray-400" />
+              {dateFrom || dateTo
+                ? `${dateFrom || '…'} → ${dateTo || '…'}`
+                : 'Custom range'}
+              <ChevronDown className="w-3 h-3 text-gray-400" />
             </button>
-          )}
+
+            {showDatePicker && (
+              <div className="absolute z-20 mt-2 left-0 bg-white border border-gray-200 rounded-xl shadow-lg p-4 w-72 space-y-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500 w-8">From</label>
+                  <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="flex-1 text-sm" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500 w-8">To</label>
+                  <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="flex-1 text-sm" />
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <button
+                    onClick={() => { setDateFrom(''); setDateTo('') }}
+                    className="text-xs text-gray-400 hover:text-gray-600 underline"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    onClick={() => setShowDatePicker(false)}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition-all"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

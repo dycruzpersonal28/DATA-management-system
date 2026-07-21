@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import DashboardShell from '@/components/shared/DashboardShell'
+import Sidebar from '@/components/shared/Sidebar'
 
 export default async function DashboardLayout({
   children,
@@ -31,12 +31,7 @@ export default async function DashboardLayout({
     redirect('/login')
   }
 
-  // Role/permission gating for this route is handled centrally in
-  // middleware.ts (ROUTE_PERMISSION_MAP + FULL_ACCESS_ROLES), so it stays in
-  // sync with the employee permissions page. Don't duplicate a role check
-  // here — a hardcoded owner/manager-only gate would override staff who've
-  // been explicitly granted access to a page under this layout.
-
+ 
   // 5. Fetch shop
   const { data: shop } = await admin
     .from('shops')
@@ -45,8 +40,16 @@ export default async function DashboardLayout({
     .single()
 
   return (
-    <DashboardShell role={appUser.role} shop={shop} userName={appUser.name}>
-      {children}
-    </DashboardShell>
+    <div className="flex h-screen bg-gray-50 overflow-hidden">
+      <Sidebar
+        shop={shop}
+        userName={appUser.name}
+        userRole={appUser.role}
+      />
+      {/* pt-14 on mobile gives room for the hamburger button; removed on lg+ */}
+      <main className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 pt-14 lg:pt-0">
+        {children}
+      </main>
+    </div>
   )
 }

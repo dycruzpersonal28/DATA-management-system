@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Clock, TrendingUp, ChefHat, CheckCircle2, X, Package, LayoutDashboard } from 'lucide-react'
+import { Clock, TrendingUp, ChefHat, CheckCircle2, X, Package } from 'lucide-react'
 
 type LogRow = {
   id: string
@@ -246,7 +246,6 @@ function OrderDetailModal({
 
 export default function KdsLogsPage() {
   const supabase = createClient()
-  const router = useRouter()
   const [logs, setLogs] = useState<LogRow[]>([])
   const [stats, setStats] = useState<SummaryStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -337,13 +336,12 @@ export default function KdsLogsPage() {
         </div>
         <button
           onClick={() => router.push('/staff')}
-          className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-indigo-600 bg-white hover:bg-indigo-50 border border-gray-200 hover:border-indigo-200 rounded-lg px-3 py-1.5 transition-colors shrink-0"
+          className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-indigo-600 bg-white hover:bg-indigo-50 border border-gray-200 hover:border-indigo-200 rounded-lg px-3 py-1.5 transition-colors"
         >
           <LayoutDashboard className="w-4 h-4" />
           Dashboard
         </button>
       </div>
-
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
         <input

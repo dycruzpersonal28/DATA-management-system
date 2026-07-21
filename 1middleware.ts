@@ -175,27 +175,19 @@ export async function middleware(request: NextRequest) {
     // 3. Check if this role gets full access
     isFullAccess = FULL_ACCESS_ROLES.includes(roleName?.toLowerCase() ?? '')
 
-    if (!isFullAccess) {
-      // 4. Find employee by auth_user_id (stable FK) — same key used above in
-      // getMustChangePassword. Matching by email was fragile: any mismatch in
-      // casing/whitespace between app_users.email and employees.email would
-      // silently return no employee row, leaving `allowed` empty even when
-      // permissions were correctly granted in employee_permissions.
-      const { data: employee, error: employeeError } = await admin
+    if (!isFullAccess && appUser?.email) {
+      // 4. Find employee by email and load their permissions
+      const { data: employee } = await admin
         .from('employees')
         .select('id')
-        .eq('auth_user_id', user.id)
+        .eq('email', appUser.email)
         .single()
 
-      if (employeeError) console.error('🔍 EMPLOYEE LOOKUP ERROR:', employeeError.message)
-
       if (employee?.id) {
-        const { data: perms, error: permsError } = await admin
+        const { data: perms } = await admin
           .from('employee_permissions')
           .select('permissions(name)')
           .eq('employee_id', employee.id)
-
-        if (permsError) console.error('🔍 PERMISSIONS ERROR:', permsError.message)
 
         allowed = (perms ?? [])
           .map((p: any) => p.permissions?.name)
