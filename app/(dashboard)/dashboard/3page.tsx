@@ -9,7 +9,7 @@ import {
   Printer, Trash2, AlertTriangle, ChevronRight,
   BarChart2, ArrowUpCircle, CreditCard,
   Banknote, Smartphone, ArrowDownCircle, Lock, Flame, Warehouse, RotateCcw,
-  Calendar, ChevronDown, Plus, Pencil, Clock, Check,
+  Calendar, ChevronDown,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -78,16 +78,6 @@ type CashMovementRow = {
 
 type TopItem = { name: string; qty: number; revenue: number }
 type ChartPoint = { label: string; sales: number; txCount: number }
-type ShiftOption = { id: string; label: string; cashier: string }
-type PaymentTypeOption = { id: string; name: string }
-
-// ── Expense categories (mirrors POS + Finance/Journal page) ──────────────────
-const EXPENSE_CATEGORIES = [
-  'Rent', 'Utilities', 'Electricity', 'Water', 'Internet',
-  'Supplies', 'Repairs & Maintenance', 'Marketing', 'Transportation',
-  'Licenses & Permits', 'Insurance', 'Cleaning', 'Packaging',
-  'Equipment', 'Professional Fees', 'Other Expense',
-]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmt(n: number) {
@@ -127,15 +117,6 @@ function buildRefNumber(date: Date, sequence: number): string {
   const d = String(date.getDate()).padStart(2, '0')
   const y = String(date.getFullYear())
   return `${m}${d}${y}-${String(sequence).padStart(5, '0')}`
-}
-// Returns the UTC offset string (e.g. "+08:00") for an IANA timezone, used to
-// build timestamps that Supabase will interpret in the shop's local time.
-function tzOffsetStr(tz: string): string {
-  const parts = new Intl.DateTimeFormat('en', {
-    timeZone: tz, timeZoneName: 'shortOffset',
-  }).formatToParts(new Date())
-  const raw = parts.find(p => p.type === 'timeZoneName')?.value ?? 'GMT+0'
-  return raw.replace('GMT', '') || '+00:00'
 }
 function canSeeCogs(role: UserRole) {
   const r = role?.toLowerCase()
@@ -413,104 +394,6 @@ function PaymentModal({ breakdown, total, onClose }: {
   )
 }
 
-// ── Edit Payment Type Modal ────────────────────────────────────────────────────
-function EditPaymentModal({
-  receipt, paymentTypes, onClose, onSave, saving, error,
-}: {
-  receipt: ReceiptRow
-  paymentTypes: PaymentTypeOption[]
-  onClose: () => void
-  onSave: (paymentTypeId: string) => void
-  saving: boolean
-  error: string
-}) {
-  const icons: Record<string, any> = { Cash: Banknote, GCash: Smartphone, Card: CreditCard }
-  // Try to preselect whichever payment type matches the receipt's current one
-  const currentMatch = paymentTypes.find(
-    p => p.name?.toLowerCase().trim() === receipt.payment_name?.toLowerCase().trim()
-  )
-  const [selectedId, setSelectedId] = useState<string>(currentMatch?.id || '')
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-indigo-50">
-          <div className="w-9 h-9 bg-indigo-100 rounded-xl flex items-center justify-center">
-            <Pencil className="w-5 h-5 text-indigo-600" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">Edit Payment Type</h3>
-            <p className="text-xs text-gray-500">{receipt.receipt_number}</p>
-          </div>
-          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="px-5 pt-4">
-          <div className="bg-gray-50 rounded-xl p-3 flex justify-between mb-4">
-            <span className="text-sm text-gray-500">Amount</span>
-            <span className="text-sm font-bold text-gray-900">{fmt(receipt.total)}</span>
-          </div>
-
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Payment method</p>
-          <div className="space-y-2 mb-2">
-            {paymentTypes.length === 0 && (
-              <p className="text-sm text-gray-400 text-center py-3">No payment types found</p>
-            )}
-            {paymentTypes.map(pt => {
-              const IconComp = icons[pt.name] || CreditCard
-              const active = selectedId === pt.id
-              return (
-                <button
-                  key={pt.id}
-                  onClick={() => setSelectedId(pt.id)}
-                  disabled={saving}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
-                    active ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-gray-300 bg-white'
-                  }`}
-                >
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                    active ? 'bg-indigo-100' : 'bg-gray-100'
-                  }`}>
-                    <IconComp className={`w-4 h-4 ${active ? 'text-indigo-600' : 'text-gray-400'}`} />
-                  </div>
-                  <span className={`text-sm font-medium flex-1 text-left ${active ? 'text-indigo-700' : 'text-gray-700'}`}>
-                    {pt.name}
-                  </span>
-                  {active && <Check className="w-4 h-4 text-indigo-600" />}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        {error && (
-          <div className="mx-5 mb-2 px-3 py-2 rounded-lg bg-red-50 border border-red-100 text-xs text-red-600">
-            {error}
-          </div>
-        )}
-
-        <div className="flex gap-2 px-5 py-4 border-t border-gray-100 mt-2">
-          <button onClick={onClose} disabled={saving}
-            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-            Cancel
-          </button>
-          <button
-            onClick={() => selectedId && onSave(selectedId)}
-            disabled={saving || !selectedId || selectedId === currentMatch?.id}
-            className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2 transition-colors"
-          >
-            {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-            {saving ? 'Saving…' : 'Save Changes'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ── Cashout Breakdown Modal ───────────────────────────────────────────────────
 function CashoutModal({ breakdown, total, onClose }: {
   breakdown: { note: string; amount: number; date: string; shift: string }[]
@@ -746,212 +629,6 @@ function CashDetailModal({ movement, onClose }: {
           <button onClick={onClose}
             className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
             Close
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Add Cash Movement Modal ───────────────────────────────────────────────────
-// Lets an admin/manager log a cash-in or cash-out that a cashier forgot to
-// record on the POS, backdated to a specific date/time and attributed to the
-// shift that was active then.
-function AddCashMovementModal({
-  shopTimezone, shifts, shiftsLoading, onDateChange, onClose, onSave, saving, error,
-}: {
-  shopTimezone: string
-  shifts: ShiftOption[]
-  shiftsLoading: boolean
-  onDateChange: (dateStr: string) => void
-  onClose: () => void
-  onSave: (payload: {
-    type: 'cash_in' | 'cash_out'
-    amount: number
-    note: string
-    date: string
-    time: string
-    shiftId: string
-    category: string
-  }) => void
-  saving: boolean
-  error: string
-}) {
-  const [type, setType] = useState<'cash_in' | 'cash_out'>('cash_out')
-  const [amount, setAmount] = useState('')
-  const [note, setNote] = useState('')
-  const [date, setDate] = useState(() => todayTz(shopTimezone))
-  const [time, setTime] = useState(() => new Date().toTimeString().slice(0, 5))
-  const [shiftId, setShiftId] = useState('')
-  const [category, setCategory] = useState('')
-
-  useEffect(() => {
-    onDateChange(date)
-    setShiftId('')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date])
-
-  const amountNum = parseFloat(amount)
-  const canSubmit = amountNum > 0 && !!shiftId && !saving && (type === 'cash_in' || !!category)
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden max-h-[90vh] flex flex-col">
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gray-50 flex-shrink-0">
-          <div className="w-9 h-9 bg-white border border-gray-200 rounded-xl flex items-center justify-center">
-            <Plus className="w-5 h-5 text-gray-600" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">Add Cash Movement</h3>
-            <p className="text-xs text-gray-500">Backdate a cash in/out the cashier missed</p>
-          </div>
-          <button onClick={onClose} className="ml-auto p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="p-5 space-y-4 overflow-y-auto">
-          {/* Type toggle */}
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => setType('cash_in')}
-              disabled={saving}
-              className={`flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all ${
-                type === 'cash_in' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'
-              }`}>
-              <ArrowDownCircle className="w-4 h-4" /> Cash In
-            </button>
-            <button
-              onClick={() => setType('cash_out')}
-              disabled={saving}
-              className={`flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all ${
-                type === 'cash_out' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'
-              }`}>
-              <ArrowUpCircle className="w-4 h-4" /> Cash Out
-            </button>
-          </div>
-
-          {/* Amount */}
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">Amount</label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">₱</span>
-              <input
-                type="number" min="0" step="0.01" value={amount}
-                onChange={e => setAmount(e.target.value)}
-                disabled={saving}
-                placeholder="0.00"
-                className="w-full pl-7 pr-3 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
-              />
-            </div>
-          </div>
-
-          {/* Expense category — required for cash-out so it syncs to the Journal, same as POS */}
-          {type === 'cash_out' && (
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">
-                Expense Category <span className="text-red-400">*</span>
-              </label>
-              <select
-                value={category} disabled={saving}
-                onChange={e => setCategory(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 bg-white"
-              >
-                <option value="">Select category...</option>
-                {EXPENSE_CATEGORIES.map(cat => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
-              <p className="text-[11px] text-gray-400 mt-1">This entry will also post as an expense in the Journal, same as a Cash Out on the POS.</p>
-            </div>
-          )}
-
-          {/* Date + Time */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">Date</label>
-              <div className="relative">
-                <Calendar className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="date" value={date} disabled={saving}
-                  onChange={e => setDate(e.target.value)}
-                  className="w-full pl-8 pr-2 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">Time</label>
-              <div className="relative">
-                <Clock className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="time" value={time} disabled={saving}
-                  onChange={e => setTime(e.target.value)}
-                  className="w-full pl-8 pr-2 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Shift */}
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">
-              Attribute to shift
-            </label>
-            {shiftsLoading ? (
-              <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading shifts for this date…
-              </div>
-            ) : shifts.length === 0 ? (
-              <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-                No shifts found on this date. Pick a date that has a clocked-in shift.
-              </p>
-            ) : (
-              <select
-                value={shiftId} disabled={saving}
-                onChange={e => setShiftId(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 bg-white"
-              >
-                <option value="">Select a shift…</option>
-                {shifts.map(s => (
-                  <option key={s.id} value={s.id}>{s.label}</option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          {/* Note */}
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">Note</label>
-            <input
-              type="text" value={note} disabled={saving}
-              onChange={e => setNote(e.target.value)}
-              placeholder={type === 'cash_in' ? 'e.g. Change fund top-up' : 'e.g. Sugar wash and white tig 1/2'}
-              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
-            />
-          </div>
-
-          {error && (
-            <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-100 text-xs text-red-600">
-              {error}
-            </div>
-          )}
-        </div>
-
-        <div className="flex gap-2 px-5 py-4 border-t border-gray-100 flex-shrink-0">
-          <button onClick={onClose} disabled={saving}
-            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-            Cancel
-          </button>
-          <button
-            onClick={() => canSubmit && onSave({ type, amount: amountNum, note, date, time, shiftId, category })}
-            disabled={!canSubmit}
-            className={`flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2 transition-colors ${
-              type === 'cash_in' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-500 hover:bg-red-600'
-            }`}
-          >
-            {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-            {saving ? 'Saving…' : `Add ${type === 'cash_in' ? 'Cash In' : 'Cash Out'}`}
           </button>
         </div>
       </div>
@@ -1331,7 +1008,6 @@ function VoidModal({ receipt, onConfirm, onCancel, voiding }: {
 export default function DashboardPage() {
   const supabase = createClient()
 
-  const [shopId, setShopId] = useState<string>('')
   const [shopTimezone, setShopTimezone] = useState<string>('Asia/Manila')
   const [dateFrom, setDateFrom] = useState(() => startOfMonthTz('Asia/Manila'))
   const [dateTo, setDateTo] = useState(() => todayTz('Asia/Manila'))
@@ -1364,19 +1040,6 @@ export default function DashboardPage() {
   const [voiding, setVoiding] = useState(false)
   const [revertVoidTarget, setRevertVoidTarget] = useState<ReceiptRow | null>(null)
   const [reverting, setReverting] = useState(false)
-
-  // Add Cash Movement (manual backdated entry)
-  const [showAddCash, setShowAddCash] = useState(false)
-  const [addingCash, setAddingCash] = useState(false)
-  const [addCashError, setAddCashError] = useState('')
-  const [addCashShifts, setAddCashShifts] = useState<ShiftOption[]>([])
-  const [addCashShiftsLoading, setAddCashShiftsLoading] = useState(false)
-
-  // Edit Payment Type
-  const [editPaymentTarget, setEditPaymentTarget] = useState<ReceiptRow | null>(null)
-  const [savingPayment, setSavingPayment] = useState(false)
-  const [editPaymentError, setEditPaymentError] = useState('')
-  const [paymentTypes, setPaymentTypes] = useState<PaymentTypeOption[]>([])
 
   // Fetch user role on mount — guard page access
   useEffect(() => {
@@ -1445,7 +1108,6 @@ export default function DashboardPage() {
       const { data: shop } = await supabase.from('shops').select('id, currency_symbol, timezone').single()
       if (shop?.currency_symbol) setCurrencySymbol(shop.currency_symbol)
       const shopId = shop?.id
-      setShopId(shopId || '')
       const tz = shop?.timezone || 'Asia/Manila'
       setShopTimezone(tz)
 
@@ -1453,7 +1115,14 @@ export default function DashboardPage() {
       // Append the shop UTC offset so Supabase filters created_at correctly.
       // Without this, "today" in Manila (UTC+8) is treated as UTC midnight,
       // causing sales made in Manila time to appear under the wrong day.
-      const tzOffset = tzOffsetStr(tz)
+      const tzOffset = (() => {
+        // Get the UTC offset string for this timezone (e.g. "+08:00")
+        const parts = new Intl.DateTimeFormat('en', {
+          timeZone: tz, timeZoneName: 'shortOffset',
+        }).formatToParts(new Date())
+        const raw = parts.find(p => p.type === 'timeZoneName')?.value ?? 'GMT+0'
+        return raw.replace('GMT', '') || '+00:00'
+      })()
       const fromTs = `${dateFrom}T00:00:00${tzOffset}`
       const toTs   = `${dateTo}T23:59:59${tzOffset}`
 
@@ -1869,131 +1538,6 @@ export default function DashboardPage() {
     }
   }
 
-  // Payment types for the edit-payment dropdown — fetched once
-  useEffect(() => {
-    async function fetchPaymentTypes() {
-      const { data } = await supabase.from('payment_types').select('id, name')
-      setPaymentTypes((data || []).map((p: any) => ({ id: p.id, name: p.name })))
-    }
-    fetchPaymentTypes()
-  }, [])
-
-  // Loads the shifts active on a given date, in the shop's timezone, so the
-  // "Add Cash Movement" modal can attribute a backdated entry to the right shift.
-  const loadShiftsForDate = useCallback(async (dateStr: string) => {
-    setAddCashShiftsLoading(true)
-    try {
-      const offset = tzOffsetStr(shopTimezone)
-      const fromTs = `${dateStr}T00:00:00${offset}`
-      const toTs = `${dateStr}T23:59:59${offset}`
-      const { data, error: shiftErr } = await supabase
-        .from('shifts')
-        .select('id, clock_in, app_users(name)')
-        .gte('clock_in', fromTs)
-        .lte('clock_in', toTs)
-        .order('clock_in', { ascending: false })
-      if (shiftErr) throw shiftErr
-      const opts: ShiftOption[] = (data || []).map((s: any) => {
-        const d = new Date(s.clock_in)
-        const timeStr = d.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })
-        const cashierName = s.app_users?.name || 'Staff'
-        return { id: s.id, cashier: cashierName, label: `${cashierName} · ${timeStr}` }
-      })
-      setAddCashShifts(opts)
-    } catch {
-      setAddCashShifts([])
-    } finally {
-      setAddCashShiftsLoading(false)
-    }
-  }, [shopTimezone])
-
-  async function handleAddCashMovement(payload: {
-    type: 'cash_in' | 'cash_out'; amount: number; note: string; date: string; time: string; shiftId: string; category: string
-  }) {
-    setAddingCash(true)
-    setAddCashError('')
-    try {
-      const offset = tzOffsetStr(shopTimezone)
-      const createdAt = `${payload.date}T${payload.time}:00${offset}`
-
-      // 1. Record the cash movement — same table + shape the POS writes to,
-      //    so it shows up identically in this tab and on the POS shift report.
-      const { data: movement, error: insertErr } = await supabase
-        .from('shift_cash_movements')
-        .insert({
-          shift_id: payload.shiftId,
-          shop_id: shopId || null,
-          type: payload.type,
-          amount: payload.amount,
-          note: payload.note || null,
-          created_at: createdAt,
-        })
-        .select()
-        .single()
-      if (insertErr) throw insertErr
-
-      // 2. Cash-outs also post to the Journal as an expense, exactly like the
-      //    POS's Cash Out flow, so Finance stays in sync regardless of where
-      //    the entry was recorded.
-      if (payload.type === 'cash_out') {
-        try {
-          const journalRes = await fetch('/api/journal', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              type: 'expense',
-              category: payload.category,
-              amount: payload.amount,
-              description: payload.note || null,
-              reference_no: null,
-              date: payload.date,
-              is_recurring: false,
-              recurring_day: null,
-            }),
-          })
-          const journalData = await journalRes.json()
-          if (journalRes.ok && journalData?.entry?.id && movement?.id) {
-            await supabase
-              .from('shift_cash_movements')
-              .update({ journal_entry_id: journalData.entry.id })
-              .eq('id', movement.id)
-          } else {
-            console.error('[handleAddCashMovement] Journal entry response missing id:', journalData)
-          }
-        } catch (err) {
-          // Journal write failure shouldn't block recording the cash movement
-          console.error('[handleAddCashMovement] Journal entry failed:', err)
-        }
-      }
-
-      setShowAddCash(false)
-      load()
-    } catch (e: any) {
-      setAddCashError(e.message || 'Failed to add cash movement')
-    } finally {
-      setAddingCash(false)
-    }
-  }
-
-  async function handleSavePaymentType(paymentTypeId: string) {
-    if (!editPaymentTarget) return
-    setSavingPayment(true)
-    setEditPaymentError('')
-    try {
-      const { error: updateErr } = await supabase
-        .from('receipts')
-        .update({ payment_type_id: paymentTypeId })
-        .eq('id', editPaymentTarget.id)
-      if (updateErr) throw updateErr
-      setEditPaymentTarget(null)
-      load()
-    } catch (e: any) {
-      setEditPaymentError(e.message || 'Failed to update payment type')
-    } finally {
-      setSavingPayment(false)
-    }
-  }
-
   const PRESETS = [
     { key: 'today', label: 'Today' },
     { key: 'last_7', label: '7 days' },
@@ -2388,25 +1932,15 @@ export default function DashboardPage() {
               }`}>{cashMovements.length}</span>
             </button>
           </div>
-          {tableTab === 'cash' && (
-            <div className="flex items-center gap-3">
-              {cashMovements.length > 0 && (
-                <div className="flex items-center gap-3 text-xs">
-                  <span className="flex items-center gap-1 text-emerald-600 font-semibold">
-                    <ArrowDownCircle className="w-3.5 h-3.5" /> {fmt(cashInTotal)}
-                  </span>
-                  <span className="text-gray-300">|</span>
-                  <span className="flex items-center gap-1 text-red-600 font-semibold">
-                    <ArrowUpCircle className="w-3.5 h-3.5" /> {fmt(cashOutTotal)}
-                  </span>
-                </div>
-              )}
-              <button
-                onClick={() => setShowAddCash(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add Cash Movement
-              </button>
+          {tableTab === 'cash' && cashMovements.length > 0 && (
+            <div className="flex items-center gap-3 text-xs">
+              <span className="flex items-center gap-1 text-emerald-600 font-semibold">
+                <ArrowDownCircle className="w-3.5 h-3.5" /> {fmt(cashInTotal)}
+              </span>
+              <span className="text-gray-300">|</span>
+              <span className="flex items-center gap-1 text-red-600 font-semibold">
+                <ArrowUpCircle className="w-3.5 h-3.5" /> {fmt(cashOutTotal)}
+              </span>
             </div>
           )}
         </div>
@@ -2511,12 +2045,6 @@ export default function DashboardPage() {
                               className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
                               <Eye className="w-3.5 h-3.5" />
                             </button>
-                            {r.status !== 'voided' && (
-                              <button onClick={() => setEditPaymentTarget(r)} title="Edit payment method"
-                                className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                            )}
                             <button title="Reprint" onClick={() => window.print()}
                               className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
                               <Printer className="w-3.5 h-3.5" />
@@ -2679,28 +2207,6 @@ export default function DashboardPage() {
       )}
       {modal === 'stockvalue' && (
         <StockValueModal items={stockValueItems} total={stockValue ?? 0} onClose={() => setModal(null)} />
-      )}
-      {editPaymentTarget && (
-        <EditPaymentModal
-          receipt={editPaymentTarget}
-          paymentTypes={paymentTypes}
-          onClose={() => { setEditPaymentTarget(null); setEditPaymentError('') }}
-          onSave={handleSavePaymentType}
-          saving={savingPayment}
-          error={editPaymentError}
-        />
-      )}
-      {showAddCash && (
-        <AddCashMovementModal
-          shopTimezone={shopTimezone}
-          shifts={addCashShifts}
-          shiftsLoading={addCashShiftsLoading}
-          onDateChange={loadShiftsForDate}
-          onClose={() => { setShowAddCash(false); setAddCashError('') }}
-          onSave={handleAddCashMovement}
-          saving={addingCash}
-          error={addCashError}
-        />
       )}
     </div>
   )
