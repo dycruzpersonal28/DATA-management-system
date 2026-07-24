@@ -46,7 +46,6 @@ type Variant = {
 type AddonCategory = {
   category_id: string
   multiple_select: boolean
-  required: boolean
 }
 
 type FormState = {
@@ -160,13 +159,13 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
       // Load per-variant addon categories
       const variantIds = (variantRows ?? []).map(v => v.id)
       const { data: variantAddonRows } = variantIds.length > 0
-        ? await supabase.from('item_variant_addon_categories').select('variant_id, category_id, multiple_select, required').in('variant_id', variantIds)
+        ? await supabase.from('item_variant_addon_categories').select('variant_id, category_id, multiple_select').in('variant_id', variantIds)
         : { data: [] }
 
       const variantAddonMap: Record<string, AddonCategory[]> = {}
       for (const row of (variantAddonRows ?? [])) {
         if (!variantAddonMap[row.variant_id]) variantAddonMap[row.variant_id] = []
-        variantAddonMap[row.variant_id].push({ category_id: row.category_id, multiple_select: row.multiple_select ?? false, required: row.required ?? false })
+        variantAddonMap[row.variant_id].push({ category_id: row.category_id, multiple_select: row.multiple_select ?? false })
       }
 
       const variants: Variant[] = (variantRows ?? []).map(v => ({
@@ -188,19 +187,18 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
       // Load assigned addon categories from junction table
       const { data: addonCatRows } = await supabase
         .from('item_addon_categories')
-        .select('category_id, multiple_select, required')
+        .select('category_id, multiple_select')
         .eq('item_id', item!.id)
 
       const addonCategories: AddonCategory[] = (addonCatRows ?? []).map((r: any) => ({
         category_id: r.category_id,
         multiple_select: r.multiple_select ?? false,
-        required: r.required ?? false,
       }))
 
       // Fallback: if no junction rows but old addon_category_id exists, migrate it
       const legacyAddonCatId = (item as any).addon_category_id
       const finalAddonCategories = addonCategories.length === 0 && legacyAddonCatId
-        ? [{ category_id: legacyAddonCatId, multiple_select: false, required: false }]
+        ? [{ category_id: legacyAddonCatId, multiple_select: false }]
         : addonCategories
 
       setForm({
@@ -457,7 +455,6 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
               variant_id: variantId!,
               category_id: ac.category_id,
               multiple_select: ac.multiple_select,
-              required: ac.required,
             }))
             const { error: addonError } = await supabase.from('item_variant_addon_categories').insert(addonRows)
             if (addonError) throw addonError
@@ -476,7 +473,6 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
             item_id: itemId!,
             category_id: ac.category_id,
             multiple_select: ac.multiple_select,
-            required: ac.required,
           }))
         )
       }
@@ -942,44 +938,27 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                                               checked={isOn}
                                               onCheckedChange={val => {
                                                 const updated = val
-                                                  ? [...v.addon_categories, { category_id: cat.id, multiple_select: false, required: false }]
+                                                  ? [...v.addon_categories, { category_id: cat.id, multiple_select: false }]
                                                   : v.addon_categories.filter(ac => ac.category_id !== cat.id)
                                                 updateVariant(vi, { addon_categories: updated })
                                               }}
                                             />
                                           </div>
                                           {isOn && (
-                                            <div className="mt-2 ml-4 space-y-2">
-                                              <div className="flex items-center gap-2">
-                                                <Switch
-                                                  checked={assigned!.multiple_select}
-                                                  onCheckedChange={val => {
-                                                    updateVariant(vi, {
-                                                      addon_categories: v.addon_categories.map(ac =>
-                                                        ac.category_id === cat.id ? { ...ac, multiple_select: val } : ac
-                                                      ),
-                                                    })
-                                                  }}
-                                                />
-                                                <span className="text-xs text-gray-500">
-                                                  {assigned!.multiple_select ? 'Multi-select' : 'Single-select'}
-                                                </span>
-                                              </div>
-                                              <div className="flex items-center gap-2">
-                                                <Switch
-                                                  checked={assigned!.required}
-                                                  onCheckedChange={val => {
-                                                    updateVariant(vi, {
-                                                      addon_categories: v.addon_categories.map(ac =>
-                                                        ac.category_id === cat.id ? { ...ac, required: val } : ac
-                                                      ),
-                                                    })
-                                                  }}
-                                                />
-                                                <span className="text-xs text-gray-500">
-                                                  {assigned!.required ? 'Mandatory' : 'Optional'}
-                                                </span>
-                                              </div>
+                                            <div className="mt-2 ml-4 flex items-center gap-2">
+                                              <Switch
+                                                checked={assigned!.multiple_select}
+                                                onCheckedChange={val => {
+                                                  updateVariant(vi, {
+                                                    addon_categories: v.addon_categories.map(ac =>
+                                                      ac.category_id === cat.id ? { ...ac, multiple_select: val } : ac
+                                                    ),
+                                                  })
+                                                }}
+                                              />
+                                              <span className="text-xs text-gray-500">
+                                                {assigned!.multiple_select ? 'Multi-select' : 'Single-select'}
+                                              </span>
                                             </div>
                                           )}
                                         </div>
@@ -1085,7 +1064,7 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                               checked={isOn}
                               onCheckedChange={v => {
                                 if (v) {
-                                  set('addon_categories', [...form.addon_categories, { category_id: cat.id, multiple_select: false, required: false }])
+                                  set('addon_categories', [...form.addon_categories, { category_id: cat.id, multiple_select: false }])
                                 } else {
                                   set('addon_categories', form.addon_categories.filter(ac => ac.category_id !== cat.id))
                                 }
@@ -1093,33 +1072,18 @@ export default function ItemEditor({ item, allItems, levels, categories, shopId,
                             />
                           </div>
                           {isOn && (
-                            <div className="mt-2 ml-4 space-y-2">
-                              <div className="flex items-center gap-2">
-                                <Switch
-                                  checked={assigned!.multiple_select}
-                                  onCheckedChange={v => {
-                                    set('addon_categories', form.addon_categories.map(ac =>
-                                      ac.category_id === cat.id ? { ...ac, multiple_select: v } : ac
-                                    ))
-                                  }}
-                                />
-                                <span className="text-xs text-gray-500">
-                                  {assigned!.multiple_select ? 'Multi-select (customer can pick multiple items)' : 'Single-select (customer picks one item)'}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Switch
-                                  checked={assigned!.required}
-                                  onCheckedChange={v => {
-                                    set('addon_categories', form.addon_categories.map(ac =>
-                                      ac.category_id === cat.id ? { ...ac, required: v } : ac
-                                    ))
-                                  }}
-                                />
-                                <span className="text-xs text-gray-500">
-                                  {assigned!.required ? 'Mandatory (customer must choose before checkout)' : 'Optional (customer may skip this add-on)'}
-                                </span>
-                              </div>
+                            <div className="mt-2 ml-4 flex items-center gap-2">
+                              <Switch
+                                checked={assigned!.multiple_select}
+                                onCheckedChange={v => {
+                                  set('addon_categories', form.addon_categories.map(ac =>
+                                    ac.category_id === cat.id ? { ...ac, multiple_select: v } : ac
+                                  ))
+                                }}
+                              />
+                              <span className="text-xs text-gray-500">
+                                {assigned!.multiple_select ? 'Multi-select (customer can pick multiple items)' : 'Single-select (customer picks one item)'}
+                              </span>
                             </div>
                           )}
                         </div>
