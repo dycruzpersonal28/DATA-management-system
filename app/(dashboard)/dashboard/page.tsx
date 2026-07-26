@@ -2506,7 +2506,7 @@ export default function DashboardPage() {
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                             <button onClick={() => setReceiptDetail(r)} title="View receipt"
                               className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
                               <Eye className="w-3.5 h-3.5" />
