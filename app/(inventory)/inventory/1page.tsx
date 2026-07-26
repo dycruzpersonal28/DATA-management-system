@@ -1111,8 +1111,7 @@ export default function InventoryPage() {
   const [drawerItem, setDrawerItem] = useState<InventoryItem | null>(null)
   const [presetMap, setPresetMap] = useState<Record<string, { label: string }>>({})
 
-  const isOwnerOrManager = ['owner', 'manager'].includes((userRole ?? '').toLowerCase())
-  const canViewPricing = isOwnerOrManager
+  const canViewPricing = ['owner', 'manager'].includes((userRole ?? '').toLowerCase())
 
   useEffect(() => {
     async function fetchRole() {
@@ -1440,12 +1439,10 @@ export default function InventoryPage() {
                               className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors" title="View history">
                               <History className="w-4 h-4" />
                             </button>
-                            {isOwnerOrManager && (
-                              <button onClick={e => { e.stopPropagation(); setAdjustItem(item) }}
-                                className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors" title="Adjust stock">
-                                <Plus className="w-4 h-4" />
-                              </button>
-                            )}
+                            <button onClick={e => { e.stopPropagation(); setAdjustItem(item) }}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors" title="Adjust stock">
+                              <Plus className="w-4 h-4" />
+                            </button>
                             {canViewPricing && (
                               <ChevronRight className="w-4 h-4 text-gray-300" />
                             )}
@@ -1524,7 +1521,7 @@ export default function InventoryPage() {
           onSaved={load}
         />
       )}
-      {adjustItem && isOwnerOrManager && <AdjustModal item={adjustItem} onClose={() => setAdjustItem(null)} onSaved={load} />}
+      {adjustItem && <AdjustModal item={adjustItem} onClose={() => setAdjustItem(null)} onSaved={load} />}
       {historyItem && <HistoryModal item={historyItem} onClose={() => setHistoryItem(null)} />}
       {drawerItem && canViewPricing && (
         <ItemDrawer item={drawerItem} onClose={() => setDrawerItem(null)} onSaved={load} />

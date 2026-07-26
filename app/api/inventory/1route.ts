@@ -16,16 +16,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { shopId, role } = await (async () => {
+  const shopId = await (async () => {
     const { data } = await admin
       .from('app_users')
-      .select('shop_id, role')
+      .select('shop_id')
       .eq('auth_user_id', user.id)
       .single()
-    return { shopId: data?.shop_id ?? null, role: data?.role ?? null }
+    return data?.shop_id ?? null
   })()
   if (!shopId) return NextResponse.json({ error: 'Shop not found' }, { status: 404 })
-  const canViewPricing = ['owner', 'manager'].includes((role ?? '').toLowerCase())
 
   const { searchParams } = new URL(req.url)
   const category = searchParams.get('category')
@@ -109,13 +108,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Strip pricing fields for anyone who isn't an owner/manager — this must
-  // happen server-side; hiding it in the UI alone still leaks it via the
-  // raw network response.
-  if (!canViewPricing) {
-    items = items.map(({ cost, price, ...rest }: any) => rest)
-  }
-
   return NextResponse.json({
     items,
     batches: batchMap,
@@ -147,17 +139,12 @@ export async function POST(req: NextRequest) {
 
   const { data: appUser } = await admin
     .from('app_users')
-    .select('shop_id, name, role')
+    .select('shop_id, name')
     .eq('auth_user_id', user.id)
     .single()
 
   const shopId = appUser?.shop_id ?? null
   if (!shopId) return NextResponse.json({ error: 'Shop not found' }, { status: 404 })
-
-  const canManageStock = ['owner', 'manager'].includes((appUser?.role ?? '').toLowerCase())
-  if (!canManageStock) {
-    return NextResponse.json({ error: 'Forbidden — owner or manager access required' }, { status: 403 })
-  }
 
   const createdByName: string | null = appUser?.name ?? null
 
