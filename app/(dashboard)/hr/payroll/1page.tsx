@@ -2449,25 +2449,6 @@ type AttendanceLog = {
   advances?: { id: string; label: string; amount: number }[]
 }
 
-// The "other deductions" list on the Generate Payslip screen has two independent
-// sources that can each update it: (1) advances recorded on attendance/time logs,
-// re-derived every time the logs are (re)fetched, and (2) other_deductions already
-// persisted on a saved draft payslip, hydrated when an existing draft is found for
-// the selected employee/period. Both effects run off the same [employeeId,
-// periodStart, periodEnd] deps and resolve at different times (the draft lookup is
-// a 2-step fetch and is almost always slower), so whichever one used to fire last
-// would blow away whatever the other had just set with setOtherDeductions(...).
-// Merging by id — instead of replacing the array outright — means neither source
-// can silently erase what the other contributed, regardless of fetch ordering.
-function mergeDeductions(
-  base: { id: string; label: string; amount: number }[],
-  incoming: { id: string; label: string; amount: number }[],
-) {
-  const byId = new Map(base.map(d => [d.id, d]))
-  for (const item of incoming) byId.set(item.id, item)
-  return Array.from(byId.values())
-}
-
 function QuickPayslipGenerator() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [empLoading, setEmpLoading] = useState(true)
@@ -2692,16 +2673,11 @@ function QuickPayslipGenerator() {
           }
         }
 
-        // Merge in advances recorded on time logs (manual time log entries). This
-        // used to only run "if (!savedPayslipId)", which meant that once the
-        // draft-load effect (below) found an existing payslip for this employee/
-        // period, freshly recorded advances stopped being picked up entirely — and
-        // if that effect happened to resolve first, this line never ran at all for
-        // the first render, so the advance never made it into the total. Merging
-        // unconditionally (by id) means a live advance always shows up, whichever
-        // effect finishes first, and never clobbers a manually-added deduction that
-        // isn't tied to any log.
-        setOtherDeductions(prev => mergeDeductions(prev, logAdvances))
+        // Only seed if no saved payslip has been hydrated yet — avoid overwriting
+        // already-saved deductions when the logs effect races with the draft-load effect.
+        if (!savedPayslipId) {
+          setOtherDeductions([...logAdvances])
+        }
       })
       .catch(() => setLogsError('Failed to load attendance logs'))
       .finally(() => setLogsLoading(false))
@@ -2764,15 +2740,7 @@ function QuickPayslipGenerator() {
         setPhilhealth(slip.philhealth_contribution)
         setPagibig(slip.pagibig_contribution)
         setTax(slip.tax_withheld)
-        // Merge (not replace) — the attendance-logs effect above may have already
-        // seeded a live advance from a time log into otherDeductions, and it can
-        // resolve either before or after this fetch depending on network timing.
-        // Overwriting here would silently drop that advance whenever this slower,
-        // two-step fetch happens to finish last (which is the common case — see
-        // mergeDeductions for the full explanation).
-        if (Array.isArray(slip.other_deductions)) {
-          setOtherDeductions(prev => mergeDeductions(prev, slip.other_deductions))
-        }
+        if (Array.isArray(slip.other_deductions)) setOtherDeductions(slip.other_deductions)
       } catch {
         // Silently ignore — user just won't see draft indicator
       }
