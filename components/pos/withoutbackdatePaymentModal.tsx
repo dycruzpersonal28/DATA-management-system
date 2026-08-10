@@ -22,9 +22,6 @@ interface Props {
   cashierName?: string
   diningOption?: { id: string; name: string } | null
   orderNote?: string
-  // ISO date-time string to backdate this sale to (admin-only, entering past days' sales).
-  // Null/undefined = record the transaction with the current date/time.
-  transactionDate?: string | null
 }
 
 function buildReceiptText(receipt: any, items: any[], shop: any, currencySymbol: string, change: number, paymentName: string, cashierName?: string | null, diningOptionName?: string | null, orderNote?: string | null): string {
@@ -745,7 +742,7 @@ function buildReceiptESCPOS(
   return new Uint8Array(cmd)
 }
 
-export default function PaymentModal({ total, onClose, onPaymentComplete, itemNotes, itemDiscounts, cashierName: cashierNameProp, diningOption, orderNote, transactionDate }: Props) {
+export default function PaymentModal({ total, onClose, onPaymentComplete, itemNotes, itemDiscounts, cashierName: cashierNameProp, diningOption, orderNote }: Props) {
   const supabase = createClient()
   const { items, customerId, discountAmount, clearCart, subtotal } = useCart()
   const [paymentTypes, setPaymentTypes] = useState<any[]>([])
@@ -907,9 +904,6 @@ export default function PaymentModal({ total, onClose, onPaymentComplete, itemNo
           shift_id: activeShiftId, status: 'completed',
           dining_option_id: diningOption?.id ?? null,
           note: orderNote?.trim() || null,
-          // Admin-only backdating: when set, records this sale under a past date/time
-          // instead of the current one (e.g. entering sales from previous days).
-          ...(transactionDate ? { created_at: transactionDate } : {}),
           items: items.map(item => {
             const itemDisc = itemDiscounts?.get(item.id)
             return {

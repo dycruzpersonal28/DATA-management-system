@@ -635,10 +635,11 @@ export default function EmployeesPage() {
             {search ? 'No employees match your search.' : 'No employees yet. Add one to get started.'}
           </div>
         ) : (
+          <div style={{ maxHeight: '600px', overflowY: 'auto', overflowX: 'auto' }}>
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Employee</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide sticky left-0 z-20 bg-gray-50 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">Employee</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Role</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide hidden md:table-cell">Emp. No.</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide hidden md:table-cell">Type</th>
@@ -650,8 +651,8 @@ export default function EmployeesPage() {
               {filtered.map(emp => {
                 const roleObj = emp.role_id ? roleMap[emp.role_id] : null
                 return (
-                  <tr key={emp.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3">
+                  <tr key={emp.id} className="group hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3 sticky left-0 z-10 bg-white group-hover:bg-gray-50 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">
                       <div className="font-medium text-gray-900">{emp.name}</div>
                       <div className="text-gray-400 text-xs">{emp.email}</div>
                     </td>
@@ -722,6 +723,7 @@ export default function EmployeesPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

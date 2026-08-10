@@ -12,9 +12,6 @@ interface CartProps {
   diningOption?: any
   activeShiftId?: string | null
   cashierName?: string
-  // ISO date-time string to backdate this sale to (e.g. entering a past day's sales).
-  // Null/undefined = record the transaction with the current date/time.
-  transactionDate?: string | null
   onPaymentComplete?: () => void
   onEditItem?: (cartItemId: string) => void
 }
@@ -454,7 +451,7 @@ function ItemEditModal({
   )
 }
 
-export default function Cart({ diningOption, activeShiftId, cashierName, transactionDate, onPaymentComplete, onEditItem }: CartProps) {
+export default function Cart({ diningOption, activeShiftId, cashierName, onPaymentComplete, onEditItem }: CartProps) {
   const supabase = createClient()
   const { items, removeItem, updateQuantity, subtotal, discountAmount, setDiscount, clearCart } = useCart()
   const { currencySymbol } = useShop()
@@ -1082,7 +1079,6 @@ export default function Cart({ diningOption, activeShiftId, cashierName, transac
           cashierName={cashierName}
           diningOption={diningOption}
           orderNote={orderNote}
-          transactionDate={transactionDate}
           onClose={() => setShowPayment(false)}
           onPaymentComplete={() => {
             setShowPayment(false)

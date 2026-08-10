@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { createClient as createServerClient } from '@/lib/supabase/server'
 
 // ─── Helper: current date in shop's timezone ─────────────────────────────────
 function getShopDate(timezone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
+}
+
+// ─── Helper: date (in shop's timezone) for a specific instant ────────────────
+// Used so backdated receipts attribute revenue/COGS to the correct shop-local day.
+function getShopDateForInstant(timezone: string, instant: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(instant)
 }
 
 // ─── Helper: resolve BOM rows for an item, preferring variant ingredients ────
@@ -41,11 +48,54 @@ export async function POST(req: NextRequest) {
     shop_id, employee_id, customer_id, receipt_number, subtotal,
     discount_amount, tax_amount, total, payment_type_id, amount_tendered,
     change_amount, loyalty_points_earned, loyalty_points_redeemed,
-    shift_id, status, items, dining_option_id, note,
+    shift_id, status, items, dining_option_id, note, created_at,
   } = body
 
   if (!shop_id || !items?.length) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+  }
+
+  // Admin-only backdating: if a created_at was supplied (from the POS's
+  // "backdate this sale" picker), only honor it if the actual authenticated
+  // caller has the 'pos_backdate_sale' permission — the client-side UI
+  // hiding the control isn't enough, since this endpoint can be called directly.
+  let createdAt: string | null = null
+  if (created_at) {
+    const userClient = await createServerClient()
+    const { data: { user } } = await userClient.auth.getUser()
+    let canBackdate = false
+    if (user) {
+      // /api/employee-permissions expects `employees.id`, not `app_users.id` —
+      // the two tables have different primary keys, linked via auth_user_id.
+      const { data: employeeRow } = await userClient
+        .from('employees')
+        .select('id')
+        .eq('auth_user_id', user.id)
+        .single()
+
+      if (employeeRow?.id) {
+        try {
+          const permRes = await fetch(
+            `${req.nextUrl.origin}/api/employee-permissions?employee_id=${employeeRow.id}`,
+            { headers: { cookie: req.headers.get('cookie') ?? '' } }
+          )
+          const permData = await permRes.json()
+          const permList: any[] = Array.isArray(permData) ? permData : (permData.flat ?? [])
+          canBackdate = permList.some(p => p.name === 'pos_backdate_sale' && p.granted)
+        } catch (err) {
+          console.error('[POST /api/receipts] permission check failed:', err)
+        }
+      }
+    }
+
+    if (canBackdate) {
+      const parsed = new Date(created_at)
+      if (!isNaN(parsed.getTime()) && parsed.getTime() <= Date.now()) {
+        createdAt = parsed.toISOString()
+      }
+    } else {
+      console.warn('[POST /api/receipts] created_at supplied by caller without pos_backdate_sale permission — ignoring')
+    }
   }
 
   try {
@@ -55,7 +105,9 @@ export async function POST(req: NextRequest) {
       .select('timezone')
       .eq('id', shop_id)
       .single()
-    const entryDate = getShopDate(shopRow?.timezone ?? 'Asia/Manila')
+    const entryDate = createdAt
+      ? getShopDateForInstant(shopRow?.timezone ?? 'Asia/Manila', new Date(createdAt))
+      : getShopDate(shopRow?.timezone ?? 'Asia/Manila')
 
     // ── 1. Insert receipt ──────────────────────────────────────────────────────
     const { data: receipt, error: receiptError } = await supabase
@@ -68,6 +120,9 @@ export async function POST(req: NextRequest) {
         loyalty_points_redeemed: loyalty_points_redeemed || 0,
         shift_id: shift_id || null, status: status || 'completed',
         dining_option_id: dining_option_id || null, note: note || null,
+        // Admin-only backdating: only overrides the DB default (now()) when
+        // a validated past date/time was supplied by the POS.
+        ...(createdAt ? { created_at: createdAt } : {}),
       })
       .select().single()
 

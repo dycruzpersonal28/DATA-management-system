@@ -29,6 +29,12 @@ type AddonItem = {
 }
 type AddonCategory = { id: string; name: string; multiple_select: boolean; items: AddonItem[] }
 
+// Formats a Date as a value usable by <input type="datetime-local">, in the browser's local time.
+function toLocalInputValue(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 // ── Expense categories (mirrors Finance/Journal page) ─────────────────────────
 const EXPENSE_CATEGORIES = [
   'Rent', 'Utilities', 'Electricity', 'Water', 'Internet',
@@ -366,6 +372,7 @@ function ShiftModal({
   mode,
   currentUser,
   currencySymbol,
+  canBackdate,
   onClockIn,
   onClockOut,
   onCashIn,
@@ -375,13 +382,15 @@ function ShiftModal({
   mode: 'clockin' | 'clockout' | 'cashin' | 'cashout'
   currentUser: any
   currencySymbol: string
-  onClockIn: (openingCash: number) => void
+  canBackdate?: boolean
+  onClockIn: (openingCash: number, shiftDate: string | null) => void
   onClockOut: (shiftId: string, closingCash: number, note: string) => void
   onCashIn: (shiftId: string, amount: number, note: string) => void
   onCashOut: (shiftId: string, amount: number, note: string, category: string, photo: string) => void
   onClose: () => void
 }) {
   const [openingCash, setOpeningCash] = useState('')
+  const [shiftDate, setShiftDate] = useState('') // blank = use current date/time; set to backdate the shift's clock-in
   const [closingCash, setClosingCash] = useState('')
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
@@ -473,7 +482,7 @@ function ShiftModal({
 
   function handleSubmit() {
     if (mode === 'clockin') {
-      onClockIn(parseFloat(openingCash) || 0)
+      onClockIn(parseFloat(openingCash) || 0, canBackdate && shiftDate ? new Date(shiftDate).toISOString() : null)
     } else if (mode === 'clockout') {
       onClockOut(activeShiftId, parseFloat(closingCash) || 0, note)
     } else if (mode === 'cashin') {
@@ -521,6 +530,19 @@ function ShiftModal({
                 <label className="text-xs font-medium text-gray-500 block mb-1.5">Opening Cash ({currencySymbol})</label>
                 <input type="number" min="0" step="0.01" value={openingCash} onChange={e => setOpeningCash(e.target.value)} placeholder="0.00" autoFocus className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
               </div>
+              {canBackdate && (
+                <div>
+                  <label className="text-xs font-medium text-gray-500 block mb-1.5">Shift Date &amp; Time</label>
+                  <input
+                    type="datetime-local"
+                    value={shiftDate}
+                    onChange={e => setShiftDate(e.target.value)}
+                    max={toLocalInputValue(new Date())}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  />
+                  <p className="text-[11px] text-gray-400 mt-1">Leave blank to use the current time, or pick an earlier date to backdate this shift (e.g. entering past sales).</p>
+                </div>
+              )}
             </>
           )}
           {mode === 'clockout' && (
@@ -751,6 +773,7 @@ function CartBottomSheet({
   diningOption,
   activeShiftId,
   cashierName,
+  transactionDate,
   onEditItem,
   onPaymentComplete,
 }: {
@@ -762,6 +785,7 @@ function CartBottomSheet({
   diningOption?: any
   activeShiftId?: string | null
   cashierName?: string
+  transactionDate?: string | null
   onEditItem?: (cartItemId: string) => void
   onPaymentComplete?: () => void
 }) {
@@ -803,6 +827,7 @@ function CartBottomSheet({
             diningOption={diningOption}
             activeShiftId={activeShiftId}
             cashierName={cashierName}
+            transactionDate={transactionDate}
             onEditItem={onEditItem}
             onPaymentComplete={() => {
               onClose()
@@ -837,6 +862,12 @@ export default function POSPage() {
   const [featureShifts, setFeatureShifts] = useState(false)
   const [featureDiningOptions, setFeatureDiningOptions] = useState(false)
   const [featureOpenTickets, setFeatureOpenTickets] = useState(false)
+
+  // Backdating: gated by the 'pos_backdate_sale' permission (see Employee Settings)
+  const [canBackdate, setCanBackdate] = useState(false)
+  // When set, new sales are recorded with this date/time instead of now.
+  // Blank string = use the current date/time.
+  const [transactionDate, setTransactionDate] = useState('')
 
   // Shift state
   const [activeShift, setActiveShift] = useState<any | null>(null)
@@ -902,6 +933,25 @@ export default function POSPage() {
       if (appUser) {
         setCurrentUser(appUser)
         setUserName(appUser.name)
+
+        // Check whether this employee has the 'pos_backdate_sale' permission.
+        // /api/employee-permissions expects `employees.id`, not `app_users.id` —
+        // the two tables have different primary keys, linked via auth_user_id.
+        supabase
+          .from('employees')
+          .select('id')
+          .eq('auth_user_id', user.id)
+          .single()
+          .then(({ data: employeeRow }) => {
+            if (!employeeRow?.id) { setCanBackdate(false); return }
+            fetch(`/api/employee-permissions?employee_id=${employeeRow.id}`)
+              .then(r => r.json())
+              .then(data => {
+                const list: any[] = Array.isArray(data) ? data : (data.flat ?? [])
+                setCanBackdate(list.some(p => p.name === 'pos_backdate_sale' && p.granted))
+              })
+              .catch(() => setCanBackdate(false))
+          })
       } else {
         router.push('/login')
         return
@@ -1113,7 +1163,7 @@ export default function POSPage() {
 
   // ── Shift Handlers ─────────────────────────────────────────────────────────
   // Called after terminal is selected and opening cash is entered
-  async function handleClockIn(openingCash: number) {
+  async function handleClockIn(openingCash: number, shiftDate: string | null) {
     if (!currentUser) { toast.error('User not loaded'); return }
     const { data, error } = await supabase.from('shifts').insert({
       shop_id: shopId,
@@ -1121,7 +1171,7 @@ export default function POSPage() {
       employee_id: null,
       opening_cash: openingCash,
       status: 'open',
-      clock_in: new Date().toISOString(),
+      clock_in: shiftDate || new Date().toISOString(),
       pos_terminal_id: selectedTerminal?.id ?? null,
     }).select().single()
     if (error) { toast.error('Failed to open shift'); return }
@@ -1485,6 +1535,7 @@ export default function POSPage() {
           mode={shiftModal}
           currentUser={currentUser}
           currencySymbol={currencySymbol}
+          canBackdate={canBackdate}
           onClockIn={handleClockIn}
           onClockOut={handleClockOut}
           onCashIn={handleCashIn}
@@ -1608,6 +1659,27 @@ export default function POSPage() {
                   <span className="absolute -top-1 -right-1 w-4 h-4 bg-purple-600 text-white rounded-full text-[9px] font-bold flex items-center justify-center">{openTickets.length}</span>
                 )}
               </button>
+            </div>
+          )}
+
+          {/* Backdate transaction — admin only: pick a past date/time to record this sale under */}
+          {canBackdate && readyToOrder && (
+            <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold ${
+              transactionDate ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-gray-50 border-gray-200 text-gray-500'
+            }`} title="Backdate this sale — leave blank to use the current date and time">
+              <Clock className="w-3.5 h-3.5 flex-shrink-0" />
+              <input
+                type="datetime-local"
+                value={transactionDate}
+                onChange={e => setTransactionDate(e.target.value)}
+                max={toLocalInputValue(new Date())}
+                className="bg-transparent focus:outline-none w-[120px] sm:w-[150px]"
+              />
+              {transactionDate && (
+                <button onClick={() => setTransactionDate('')} className="text-amber-500 hover:text-amber-700 flex-shrink-0" title="Reset to now">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           )}
 
@@ -1841,6 +1913,7 @@ export default function POSPage() {
           diningOption={selectedDiningOption}
           activeShiftId={activeShift?.id || null}
           cashierName={userName}
+          transactionDate={canBackdate && transactionDate ? new Date(transactionDate).toISOString() : null}
           onEditItem={handleEditCartItem}
           onPaymentComplete={() => {
             handleNewTransaction()
@@ -1880,6 +1953,7 @@ export default function POSPage() {
         diningOption={selectedDiningOption}
         activeShiftId={activeShift?.id || null}
         cashierName={userName}
+        transactionDate={canBackdate && transactionDate ? new Date(transactionDate).toISOString() : null}
         onEditItem={handleEditCartItem}
         onPaymentComplete={() => {
           setCartSheetOpen(false)

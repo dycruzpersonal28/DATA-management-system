@@ -76,6 +76,7 @@ const NAV_TREE = [
       { name: 'pos_refund',            label: 'Process Refunds' },
       { name: 'pos_open_drawer',       label: 'Open Cash Drawer' },
       { name: 'pos_override_price',    label: 'Override Item Price' },
+      { name: 'pos_backdate_sale',     label: 'Backdate Sales & Shifts' },
     ],
   },
   {

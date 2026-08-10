@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
         role,
         role_id,
         pin: pin || null,
-        employee_no: employee_no || null, // '' → null, avoids unique-constraint collisions between blank numbers
+        employee_no: employee_no || null,
         address: address || null,
         mobile_number: mobile_number || null,
         hourly_rate: hourly_rate || 0,
@@ -174,12 +174,6 @@ export async function POST(req: NextRequest) {
     if (employeeError) {
       await admin.from('app_users').delete().eq('id', appUser.id)
       await admin.auth.admin.deleteUser(authUserId)
-      if (employeeError.code === '23505' && employeeError.message.includes('employee_no')) {
-        return NextResponse.json(
-          { error: `Employee number "${employee_no}" is already used by another employee.` },
-          { status: 409 }
-        )
-      }
       return NextResponse.json({ error: `Failed to create employee: ${employeeError.message}` }, { status: 400 })
     }
 
@@ -244,14 +238,6 @@ export async function PATCH(req: NextRequest) {
 
     const admin = createAdminClient()
 
-    // Normalize a blank employee_no to null — Postgres treats multiple NULLs as
-    // distinct under a unique constraint, but multiple '' (empty string) values
-    // collide, which is what was causing "duplicate key value" on unrelated saves
-    // (e.g. just toggling a permission) when two employees both had a blank number.
-    if ('employee_no' in updates && !updates.employee_no) {
-      updates.employee_no = null
-    }
-
     // require_manager_approval is a plain boolean column — passes through `updates` automatically
     const { data: employee, error: empError } = await admin
       .from('employees')
@@ -261,15 +247,7 @@ export async function PATCH(req: NextRequest) {
       .select('id, name, email, role, role_id')
       .single()
 
-    if (empError) {
-      if (empError.code === '23505' && empError.message.includes('employee_no')) {
-        return NextResponse.json(
-          { error: `Employee number "${updates.employee_no}" is already used by another employee.` },
-          { status: 409 }
-        )
-      }
-      return NextResponse.json({ error: empError.message }, { status: 400 })
-    }
+    if (empError) return NextResponse.json({ error: empError.message }, { status: 400 })
 
     // Sync role + role_id to app_users if changed
     if ((updates.role || updates.role_id) && employee) {
