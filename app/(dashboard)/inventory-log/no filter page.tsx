@@ -206,9 +206,6 @@ export default function InventoryLogPage() {
   const [loading, setLoading]       = useState(true)
   const [search, setSearch]         = useState('')
   const [typeFilter, setTypeFilter] = useState<string>('')
-  const [staffFilter, setStaffFilter]         = useState<string>('')
-  const [directionFilter, setDirectionFilter] = useState<'' | 'in' | 'out'>('')
-  const [itemFilter, setItemFilter]           = useState<string>('')
   const [shopTimezone, setShopTimezone] = useState('Asia/Manila')
   const [dateFrom, setDateFrom]     = useState<string>('')
   const [dateTo, setDateTo]         = useState<string>('')
@@ -263,43 +260,17 @@ export default function InventoryLogPage() {
     }
   }, [loadAll])
 
-  // Distinct staff names present in the currently loaded logs, for the
-  // "Staff" filter dropdown — derived from data rather than hardcoded so it
-  // stays correct as employees are added/removed.
-  const staffOptions = useMemo(() => {
-    const names = new Set<string>()
-    for (const l of logs) if (l.created_by) names.add(l.created_by)
-    return [...names].sort((a, b) => a.localeCompare(b))
-  }, [logs])
-
-  // Distinct item names present in the currently loaded logs, for the
-  // "Item" filter dropdown.
-  const itemOptions = useMemo(() => {
-    const names = new Set<string>()
-    for (const l of logs) if (l.item_name) names.add(l.item_name)
-    return [...names].sort((a, b) => a.localeCompare(b))
-  }, [logs])
-
   const filtered = useMemo(() =>
     logs.filter(l => {
-      if (search) {
-        const q = search.toLowerCase()
-        const matches =
-          l.item_name.toLowerCase().includes(q) ||
-          (l.product_name ?? '').toLowerCase().includes(q) ||
-          (l.receipt_number ?? '').toLowerCase().includes(q) ||
-          (l.batch_no ?? '').toLowerCase().includes(q) ||
-          (l.note ?? '').toLowerCase().includes(q) ||
-          (l.created_by ?? '').toLowerCase().includes(q)
-        if (!matches) return false
-      }
-      if (staffFilter && l.created_by !== staffFilter) return false
-      if (itemFilter && l.item_name !== itemFilter) return false
-      if (directionFilter === 'in'  && l.change_qty <= 0) return false
-      if (directionFilter === 'out' && l.change_qty >= 0) return false
-      return true
+      if (!search) return true
+      return (
+        l.item_name.toLowerCase().includes(search.toLowerCase()) ||
+        (l.product_name ?? '').toLowerCase().includes(search.toLowerCase()) ||
+        (l.receipt_number ?? '').toLowerCase().includes(search.toLowerCase()) ||
+        (l.batch_no ?? '').toLowerCase().includes(search.toLowerCase())
+      )
     }),
-    [logs, search, staffFilter, itemFilter, directionFilter]
+    [logs, search]
   )
 
   // Group sale/void logs that share a receipt_number into a single row.
@@ -529,7 +500,7 @@ export default function InventoryLogPage() {
         <div className="relative flex-1 min-w-[180px] max-w-xs">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
           <Input
-            placeholder="Search item, receipt, batch, staff or note…"
+            placeholder="Search item, receipt or batch…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="pl-8 text-sm"
@@ -547,43 +518,6 @@ export default function InventoryLogPage() {
           <option value="loss">Losses</option>
           <option value="void">Voids</option>
         </select>
-        <select
-          value={directionFilter}
-          onChange={e => setDirectionFilter(e.target.value as '' | 'in' | 'out')}
-          className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-        >
-          <option value="">In &amp; out</option>
-          <option value="in">Stock in only</option>
-          <option value="out">Stock out only</option>
-        </select>
-        <select
-          value={itemFilter}
-          onChange={e => setItemFilter(e.target.value)}
-          className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-        >
-          <option value="">All items</option>
-          {itemOptions.map(name => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-        </select>
-        <select
-          value={staffFilter}
-          onChange={e => setStaffFilter(e.target.value)}
-          className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-        >
-          <option value="">All staff</option>
-          {staffOptions.map(name => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-        </select>
-        {(search || typeFilter || staffFilter || itemFilter || directionFilter) && (
-          <button
-            onClick={() => { setSearch(''); setTypeFilter(''); setStaffFilter(''); setItemFilter(''); setDirectionFilter('') }}
-            className="text-xs text-gray-400 hover:text-gray-600 underline transition-colors"
-          >
-            Clear filters
-          </button>
-        )}
       </div>
 
       {/* Table */}
